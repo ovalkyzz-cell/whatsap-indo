@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Whatsap Indo - chat real-time, kirim foto, video, dan file hingga 2GB" />
+  <title>Whatsap Indo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- ============ AUTH ============ -->
+  <section id="authView" class="auth-view hidden">
+    <div class="auth-hero">
+      <div class="auth-logo">📱</div>
+      <h1>Whatsap Indo</h1>
+      <p>Chat real-time • Kirim foto, video &amp; file hingga <strong>2GB</strong></p>
+    </div>
+
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Masuk</button>
+        <button class="auth-tab" data-tab="register">Daftar</button>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <label>Email
+          <input type="email" name="email" placeholder="nama@email.com" required autocomplete="email" />
+        </label>
+        <label>Password
+          <input type="password" name="password" placeholder="••••••••" required autocomplete="current-password" />
+        </label>
+        <button type="submit" class="btn-primary">Masuk</button>
+      </form>
+
+      <form id="registerForm" class="auth-form hidden">
+        <label>Nama
+          <input type="text" name="name" placeholder="Nama lengkap" required minlength="2" autocomplete="name" />
+        </label>
+        <label>Email
+          <input type="email" name="email" placeholder="nama@email.com" required autocomplete="email" />
+        </label>
+        <label>Password
+          <input type="password" name="password" placeholder="Minimal 6 karakter" required minlength="6" autocomplete="new-password" />
+        </label>
+        <button type="submit" class="btn-primary">Daftar</button>
+      </form>
+
+      <p id="authError" class="auth-error hidden"></p>
+    </div>
+  </section>
+
+  <!-- ============ APP ============ -->
+  <section id="appView" class="app hidden">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <header class="sidebar-header">
+        <div class="me" id="meBox">
+          <div class="avatar" id="meAvatar"><span>?</span></div>
+          <div class="me-info">
+            <strong id="meName">—</strong>
+            <small id="meEmail">—</small>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button id="btnNewChat" class="icon-btn" title="Chat baru">✏️</button>
+          <button id="btnProfile" class="icon-btn" title="Profil &amp; pengaturan">⚙️</button>
+          <button id="btnLogout" class="icon-btn" title="Keluar">🚪</button>
+        </div>
+      </header>
+
+      <div class="search-wrap">
+        <input type="search" id="searchInput" placeholder="Cari chat atau orang (email)..." />
+      </div>
+
+      <div class="chat-list" id="chatList">
+        <div class="empty-state">Memuat chat...</div>
+      </div>
+    </aside>
+
+    <!-- Chat pane -->
+    <main class="chat-pane" id="chatPane">
+      <div class="chat-empty" id="chatEmpty">
+        <div class="chat-empty-logo">💬</div>
+        <h2>Whatsap Indo</h2>
+        <p>Pilih chat untuk mulai mengobrol, atau tekan ✏️ untuk chat baru.<br/>
+        Kirim pesan, foto, video, dan file hingga <strong>2GB</strong> secara real-time.</p>
+      </div>
+
+      <div class="chat-active hidden" id="chatActive">
+        <header class="chat-header">
+          <button class="icon-btn back-btn" id="btnBack" title="Kembali">‹</button>
+          <div class="avatar" id="chatAvatar"><span>?</span></div>
+          <div class="chat-title">
+            <strong id="chatName">—</strong>
+            <small id="chatStatus">—</small>
+          </div>
+          <div class="header-actions">
+            <button class="icon-btn" id="btnCallVoice" title="Panggilan suara">📞</button>
+            <button class="icon-btn" id="btnCallVideo" title="Panggilan video">🎥</button>
+          </div>
+        </header>
+
+        <div class="messages" id="messages"></div>
+
+        <footer class="composer">
+          <button class="icon-btn" id="btnAttach" title="Lampirkan file">📎</button>
+          <div class="attach-menu hidden" id="attachMenu">
+            <button data-kind="image">📷 Foto</button>
+            <button data-kind="video">🎬 Video</button>
+            <button data-kind="audio">🎵 Audio</button>
+            <button data-kind="file">📄 Dokumen</button>
+          </div>
+          <input type="file" id="fileInput" class="hidden" />
+          <div class="attach-preview hidden" id="attachPreview">
+            <div class="attach-preview-info" id="attachInfo"></div>
+            <button class="icon-btn" id="btnCancelAttach" title="Batal">✖</button>
+          </div>
+          <textarea id="messageInput" rows="1" placeholder="Ketik pesan"></textarea>
+          <button class="icon-btn send-btn" id="btnSend" title="Kirim">➤</button>
+        </footer>
+      </div>
+    </main>
+
+    <!-- New chat / contact search drawer -->
+    <div class="drawer hidden" id="newChatDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn" id="btnCloseDrawer">‹</button>
+        <strong>Chat baru</strong>
+      </header>
+      <div class="search-wrap">
+        <input type="search" id="userSearchInput" placeholder="Cari berdasarkan email atau nama..." />
+      </div>
+      <div class="chat-list" id="userSearchResults">
+        <div class="empty-state">Ketik email atau nama teman untuk mulai chat.</div>
+      </div>
+    </div>
+
+    <!-- Profile drawer -->
+    <div class="drawer hidden" id="profileDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn" id="btnCloseProfile">‹</button>
+        <strong>Profil</strong>
+      </header>
+      <div class="profile-body">
+        <label class="avatar-upload">
+          <div class="avatar avatar-xl" id="profileAvatar"><span>?</span></div>
+          <input type="file" id="avatarInput" accept="image/*" class="hidden" />
+          <small>Ketuk untuk ganti foto profil</small>
+        </label>
+        <label>Nama
+          <input type="text" id="profileName" maxlength="40" />
+        </label>
+        <label>Status
+          <input type="text" id="profileAbout" maxlength="140" />
+        </label>
+        <label>Email
+          <input type="email" id="profileEmail" disabled />
+        </label>
+        <button class="btn-primary" id="btnSaveProfile">Simpan</button>
+        <p id="profileMsg" class="auth-error hidden"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INCOMING CALL ============ -->
+  <div class="call-modal hidden" id="incomingCall">
+    <div class="call-box">
+      <div class="avatar avatar-xl" id="inCallerAvatar"><span>?</span></div>
+      <h3 id="inCallerName">—</h3>
+      <p id="inCallKind">Panggilan masuk...</p>
+      <div class="call-actions">
+        <button class="call-btn decline" id="btnRejectCall">✕ Tolak</button>
+        <button class="call-btn accept" id="btnAcceptCall">✓ Jawab</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ACTIVE CALL ============ -->
+  <div class="call-modal hidden" id="activeCall">
+    <div class="call-box call-box-wide">
+      <div class="call-header">
+        <strong id="callPeerName">—</strong>
+        <span id="callTimer" class="call-timer">00:00</span>
+      </div>
+      <div class="call-videos">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
+        <div id="callAvatarFallback" class="call-avatar-fallback">
+          <div class="avatar avatar-xl" id="callPeerAvatar"><span>?</span></div>
+        </div>
+      </div>
+      <p id="callStateText" class="call-state">Menghubungkan...</p>
+      <div class="call-actions">
+        <button class="call-btn toggle" id="btnToggleMic" title="Mic">🎙️</button>
+        <button class="call-btn toggle" id="btnToggleCam" title="Kamera">🎥</button>
+        <button class="call-btn decline" id="btnHangup">✕ Akhiri</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
