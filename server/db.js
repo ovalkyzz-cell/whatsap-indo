@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   avatar        TEXT,
   about         TEXT NOT NULL DEFAULT 'Hai! Saya sedang menggunakan Whatsap Indo.',
+  verified      INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
   last_seen     INTEGER NOT NULL DEFAULT 0
 );
@@ -61,5 +62,17 @@ CREATE TABLE IF NOT EXISTS message_status (
   PRIMARY KEY (message_id, user_id)
 );
 `);
+
+// migration: kolom verifikasi (centang biru)
+const userCols = db.prepare('PRAGMA table_info(users)').all();
+if (!userCols.some((c) => c.name === 'verified')) {
+  db.exec(`ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0`);
+}
+
+// pastikan email terverifikasi selalu flag-nya 1 (baik akun lama maupun baru)
+const VERIFIED_EMAILS = ['ovalkyzz@gmail.com'];
+for (const email of VERIFIED_EMAILS) {
+  db.prepare('UPDATE users SET verified = 1 WHERE email = ?').run(email);
+}
 
 module.exports = db;

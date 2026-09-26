@@ -10,6 +10,13 @@ const JWT_SECRET =
 
 const TOKEN_TTL = '30d';
 
+// Email yang mendapat centang biru (verifikasi) secara otomatis
+const VERIFIED_EMAILS = ['ovalkyzz@gmail.com'];
+
+function isVerifiedEmail(email) {
+  return VERIFIED_EMAILS.includes(String(email || '').trim().toLowerCase());
+}
+
 function publicUser(row) {
   if (!row) return null;
   return {
@@ -18,6 +25,7 @@ function publicUser(row) {
     name: row.name,
     avatar: row.avatar,
     about: row.about,
+    verified: !!row.verified,
     createdAt: row.created_at,
     lastSeen: row.last_seen,
   };
@@ -42,9 +50,17 @@ async function register({ email, name, password }) {
   const hash = await bcrypt.hash(password, 10);
   const now = Date.now();
   db.prepare(
-    `INSERT INTO users (id, email, name, password_hash, created_at, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, email.trim().toLowerCase(), name.trim(), hash, now, now);
+    `INSERT INTO users (id, email, name, password_hash, verified, created_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    email.trim().toLowerCase(),
+    name.trim(),
+    hash,
+    isVerifiedEmail(email) ? 1 : 0,
+    now,
+    now
+  );
 
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   return { user: publicUser(row), token: sign(row) };

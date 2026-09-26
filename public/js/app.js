@@ -27,6 +27,12 @@ function toast(msg, ms = 2600) {
   t._h = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
+const CHECK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M9.64 18.95l-5.7-5.7 1.42-1.41 4.28 4.28 9.65-9.65 1.41 1.42z"/></svg>';
+function badge(verified, big) {
+  if (!verified) return '';
+  return `<span class="verified-badge${big ? ' lg' : ''}" title="Terverifikasi">${CHECK_SVG}</span>`;
+}
+
 function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 }
@@ -137,7 +143,7 @@ async function startApp() {
 }
 
 function renderMe() {
-  $('meName').textContent = S.me.name;
+  $('meName').innerHTML = esc(S.me.name) + badge(S.me.verified);
   $('meEmail').textContent = S.me.email;
   setAvatar($('meAvatar'), S.me);
 }
@@ -192,12 +198,13 @@ function renderChatList() {
     const time = last ? fmtListTime(last.createdAt) : '';
     const mine = last && last.senderId === S.me.id;
     const ticks = mine && !last.deleted ? tickHtml(last.status) : '';
+    const nameBadge = badge(c.peer?.verified);
     return `
     <div class="chat-item ${c.id === S.activeChatId ? 'active' : ''}" data-chat="${c.id}">
       <div class="avatar" data-peer="${esc(c.peer?.id || '')}"></div>
       <div class="chat-item-body">
         <div class="chat-item-top">
-          <strong>${esc(chatTitle(c))}</strong>
+          <strong>${esc(chatTitle(c))}${nameBadge}</strong>
           <time class="${c.unread ? 'unread-time' : ''}">${esc(time)}</time>
         </div>
         <div class="chat-item-bottom">
@@ -235,7 +242,7 @@ async function openChat(chatId) {
   $('chatEmpty').classList.add('hidden');
   $('chatActive').classList.remove('hidden');
 
-  $('chatName').textContent = chatTitle(chat);
+  $('chatName').innerHTML = esc(chatTitle(chat)) + badge(chat.peer?.verified);
   setAvatar($('chatAvatar'), chat.peer);
   updateChatStatus();
   renderChatList();
@@ -653,7 +660,7 @@ async function searchUsers() {
       <div class="chat-item" data-user="${u.id}">
         <div class="avatar"></div>
         <div class="chat-item-body">
-          <div class="chat-item-top"><strong>${esc(u.name)}</strong></div>
+          <div class="chat-item-top"><strong>${esc(u.name)}${badge(u.verified)}</strong></div>
           <div class="chat-item-bottom"><div class="chat-item-preview">${esc(u.email)}</div></div>
         </div>
       </div>`).join('');
@@ -680,6 +687,7 @@ $('btnProfile').addEventListener('click', () => {
   $('profileAbout').value = S.me.about || '';
   $('profileEmail').value = S.me.email || '';
   setAvatar($('profileAvatar'), S.me);
+  $('profileVerified').classList.toggle('hidden', !S.me.verified);
   $('profileMsg').classList.add('hidden');
   $('profileDrawer').classList.remove('hidden');
 });
@@ -754,7 +762,7 @@ function onCallIncoming({ callId, kind, from }) {
     return;
   }
   S.call = { callId, peer: from, kind, incoming: true, state: 'incoming', mic: true, cam: kind === 'video', pendingSignals: [], startedAt: null, timer: null };
-  $('inCallerName').textContent = from.name;
+  $('inCallerName').innerHTML = esc(from.name) + badge(from.verified);
   $('inCallKind').textContent = kind === 'video' ? 'Panggilan video masuk...' : 'Panggilan suara masuk...';
   setAvatar($('inCallerAvatar'), from);
   $('incomingCall').classList.remove('hidden');
@@ -897,7 +905,7 @@ function onCallEnded({ callId, reason }) {
 }
 
 function openCallUI(call) {
-  $('callPeerName').textContent = call.peer.name;
+  $('callPeerName').innerHTML = esc(call.peer.name) + badge(call.peer.verified);
   setAvatar($('callPeerAvatar'), call.peer);
   $('remoteVideo').srcObject = null;
   $('localVideo').srcObject = null;

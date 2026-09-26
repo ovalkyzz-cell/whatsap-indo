@@ -83,6 +83,7 @@ function serializeUser(row) {
     email: row.email,
     avatar: row.avatar,
     about: row.about,
+    verified: !!row.verified,
     lastSeen: row.last_seen,
   };
 }
