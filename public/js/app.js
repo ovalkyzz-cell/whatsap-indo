@@ -378,11 +378,19 @@ function bindMessageActions() {
 /* ================= socket ================= */
 function connectSocket() {
   if (S.socket) S.socket.disconnect();
-  const socket = io({ auth: { token: S.token } });
+  const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const socket = io({
+    auth: { token: S.token },
+    // di hosting Vercel long-polling tidak menempel ke instance yang sama,
+    // jadi wajib pakai transport WebSocket saja
+    ...(isLocalhost ? {} : { transports: ['websocket'] }),
+  });
   S.socket = socket;
 
   socket.on('connect_error', (err) => {
-    if (/auth/i.test(err.message)) logout();
+    // hanya penolakan otentikasi eksplisit (auth:...) yang mengeluarkan user;
+    // gangguan sesaat (server:...) dibiarkan dicoba ulang oleh socket.io
+    if (/^auth:/.test(err.message || '')) logout();
   });
 
   socket.on('message:new', (m) => {
@@ -550,7 +558,36 @@ function sendViaSocket(payload, localId) {
 }
 
 /* upload with progress (XHR for progress events) */
-function uploadFile(file, onProgress) {
+function putPresigned(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300 && data.url) resolve(data);
+        else reject(new Error(data.error || 'Upload gagal'));
+      } catch { reject(new Error('Upload gagal')); }
+    };
+    xhr.onerror = () => reject(new Error('Gagal terhubung ke penyimpanan'));
+    xhr.send(file);
+  });
+}
+
+async function uploadFile(file, onProgress) {
+  // di hosting file dikirim langsung ke Blob (lolos batas 4,5MB per request);
+  // bila endpoint tanda tangan tidak ada (mode lokal) -> upload lewat server
+  try {
+    const sign = await api('/api/uploads/sign', {
+      method: 'POST',
+      body: { name: file.name, size: file.size, mime: file.type },
+    });
+    const stored = await putPresigned(sign.presignedUrl, file, onProgress);
+    return { url: stored.url, name: sign.name, size: file.size, mime: sign.mime, type: sign.type };
+  } catch { /* lanjutkan dengan upload server */ }
+
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/upload');
@@ -729,7 +766,7 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'wallpaper') openWallpaper();
     else if (action === 'about') {
       closeDrawers();
-      toast('Whatsap Indo v1.0.0 — chat real-time, media 2GB, panggilan WebRTC • MIT');
+      toast('Whatsap Indo v1.0.0 — chat real-time, media 2GB, panggilan WebRTC • MIT • © mazval-developer-java', 4200);
     } else if (action === 'logout') {
       closeDrawers();
       logout();

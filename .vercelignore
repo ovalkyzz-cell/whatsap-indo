@@ -1,0 +1,10 @@
+.git
+.gitignore
+.vercel
+node_modules
+data
+uploads
+test
+*.log
+.env
+.DS_Store

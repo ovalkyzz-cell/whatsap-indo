@@ -7,12 +7,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
 
-// Rahasia JWT: pakai JWT_SECRET dari env, kalau tidak ada simpan di data/
-// supaya sesi pengguna tidak hilang setiap server restart.
 const JWT_SECRET = process.env.JWT_SECRET || resolveSecret();
 const TOKEN_TTL = '30d';
 
 function resolveSecret() {
+  if (process.env.VERCEL) {
+    console.error('JWT_SECRET belum diatur: sesi tidak akan bertahan antar cold start');
+    return crypto.randomBytes(48).toString('hex');
+  }
   const file = path.join(__dirname, '..', 'data', '.jwt-secret');
   try {
     const existing = fs.readFileSync(file, 'utf8').trim();
@@ -25,7 +27,6 @@ function resolveSecret() {
   return secret;
 }
 
-// Email yang mendapat centang biru (verifikasi) secara otomatis
 const VERIFIED_EMAILS = ['ovalkyzz@gmail.com'];
 
 function isVerifiedEmail(email) {
@@ -63,18 +64,15 @@ async function register({ email, name, password }) {
   if (!password || password.length < 6) {
     throw httpError(400, 'Password minimal 6 karakter');
   }
-  const existing = db
-    .prepare('SELECT id FROM users WHERE email = ?')
-    .get(email.trim().toLowerCase());
+  const existing = await db.get('SELECT id FROM users WHERE email = ?', email.trim().toLowerCase());
   if (existing) throw httpError(409, 'Email sudah terdaftar');
 
   const id = crypto.randomUUID();
   const hash = await bcrypt.hash(password, 10);
   const now = Date.now();
-  db.prepare(
+  await db.run(
     `INSERT INTO users (id, email, name, password_hash, verified, created_at, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     id,
     email.trim().toLowerCase(),
     name.trim(),
@@ -84,18 +82,19 @@ async function register({ email, name, password }) {
     now
   );
 
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const row = await db.get('SELECT * FROM users WHERE id = ?', id);
   return { user: publicUser(row), token: sign(row) };
 }
 
 async function login({ email, password }) {
-  const row = db
-    .prepare('SELECT * FROM users WHERE email = ?')
-    .get(String(email || '').trim().toLowerCase());
+  const row = await db.get(
+    'SELECT * FROM users WHERE email = ?',
+    String(email || '').trim().toLowerCase()
+  );
   if (!row) throw httpError(401, 'Email atau password salah');
   const ok = await bcrypt.compare(String(password || ''), row.password_hash);
   if (!ok) throw httpError(401, 'Email atau password salah');
-  db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), row.id);
+  await db.run('UPDATE users SET last_seen = ? WHERE id = ?', Date.now(), row.id);
   return { user: publicUser({ ...row, last_seen: Date.now() }), token: sign(row) };
 }
 
@@ -113,15 +112,19 @@ function verifyToken(token) {
   }
 }
 
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  const payload = token && verifyToken(token);
-  if (!payload) return res.status(401).json({ error: 'Tidak terautentikasi' });
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.sub);
-  if (!row) return res.status(401).json({ error: 'Akun tidak ditemukan' });
-  req.user = row;
-  next();
+async function requireAuth(req, res, next) {
+  try {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    const payload = token && verifyToken(token);
+    if (!payload) return res.status(401).json({ error: 'Tidak terautentikasi' });
+    const row = await db.get('SELECT * FROM users WHERE id = ?', payload.sub);
+    if (!row) return res.status(401).json({ error: 'Akun tidak ditemukan' });
+    req.user = row;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 function httpError(status, message) {
