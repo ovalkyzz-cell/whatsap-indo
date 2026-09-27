@@ -10,6 +10,35 @@
 </head>
 <body>
 
+  <!-- ============ SPRITE IKON ============ -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="gradVerified" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#5eb6ff" />
+        <stop offset="50%" stop-color="#1d9bf0" />
+        <stop offset="100%" stop-color="#0a6ed1" />
+      </linearGradient>
+      <symbol id="ic-verified" viewBox="0 0 24 24">
+        <path d="M 12.00,1.40 L 14.17,3.89 L 17.30,2.82 L 17.94,6.06 L 21.18,6.70 L 20.11,9.83 L 22.60,12.00 L 20.11,14.17 L 21.18,17.30 L 17.94,17.94 L 17.30,21.18 L 14.17,20.11 L 12.00,22.60 L 9.83,20.11 L 6.70,21.18 L 6.06,17.94 L 2.82,17.30 L 3.89,14.17 L 1.40,12.00 L 3.89,9.83 L 2.82,6.70 L 6.06,6.06 L 6.70,2.82 L 9.83,3.89 Z"
+          fill="url(#gradVerified)" stroke="#ffffff" stroke-opacity=".65" stroke-width="1.1" stroke-linejoin="round" />
+        <path d="M7.5 12.35 L10.55 15.35 L16.5 9.15" fill="none" stroke="#ffffff" stroke-width="2.25"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-more" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="1.9" fill="currentColor" /><circle cx="12" cy="12" r="1.9" fill="currentColor" /><circle cx="12" cy="19" r="1.9" fill="currentColor" />
+      </symbol>
+      <symbol id="ic-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <circle cx="12" cy="7.8" r="1.25" fill="currentColor" />
+        <path d="M12 10.8v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-back" viewBox="0 0 24 24">
+        <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+    </defs>
+  </svg>
+
   <!-- ============ AUTH ============ -->
   <section id="authView" class="auth-view hidden">
     <div class="auth-hero">
@@ -65,9 +94,12 @@
           </div>
         </div>
         <div class="header-actions">
-          <button id="btnNewChat" class="icon-btn" title="Chat baru">✏️</button>
-          <button id="btnProfile" class="icon-btn" title="Profil &amp; pengaturan">⚙️</button>
-          <button id="btnLogout" class="icon-btn" title="Keluar">🚪</button>
+          <button id="btnNewChat" class="icon-btn" title="Chat baru">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M4 20l4.5-1.2L19.2 8.1a2 2 0 0 0 0-2.8l-.5-.5a2 2 0 0 0-2.8 0L5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </button>
+          <button id="btnMenu" class="icon-btn menu-btn" title="Menu" aria-label="Menu">
+            <svg viewBox="0 0 24 24" class="ico"><use href="#ic-more" /></svg>
+          </button>
         </div>
       </header>
 
@@ -82,6 +114,7 @@
 
     <!-- Chat pane -->
     <main class="chat-pane" id="chatPane">
+      <div class="chat-bg" id="chatBg" aria-hidden="true"></div>
       <div class="chat-empty" id="chatEmpty">
         <div class="chat-empty-logo">💬</div>
         <h2>Whatsap Indo</h2>
@@ -98,8 +131,15 @@
             <small id="chatStatus">—</small>
           </div>
           <div class="header-actions">
-            <button class="icon-btn" id="btnCallVoice" title="Panggilan suara">📞</button>
-            <button class="icon-btn" id="btnCallVideo" title="Panggilan video">🎥</button>
+            <button class="icon-btn" id="btnCallVoice" title="Panggilan suara">
+              <svg viewBox="0 0 24 24" class="ico"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11.4 11.4 0 0 0 3.6.58 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .58 3.6 1 1 0 0 1-.25 1z" fill="currentColor"/></svg>
+            </button>
+            <button class="icon-btn" id="btnCallVideo" title="Panggilan video">
+              <svg viewBox="0 0 24 24" class="ico"><rect x="2.5" y="6.5" width="12.5" height="11" rx="2.5" fill="currentColor"/><path d="M15 11l5-3.2v8.4L15 13z" fill="currentColor"/></svg>
+            </button>
+            <button class="icon-btn" id="btnContactInfo" title="Info kontak">
+              <svg viewBox="0 0 24 24" class="ico"><use href="#ic-info" /></svg>
+            </button>
           </div>
         </header>
 
@@ -138,32 +178,187 @@
       </div>
     </div>
 
-    <!-- Profile drawer -->
-    <div class="drawer hidden" id="profileDrawer">
+    <!-- Scrim / overlay -->
+    <div class="scrim hidden" id="scrim"></div>
+
+    <!-- ============ MENU (sidebar pojok kanan atas) ============ -->
+    <div class="drawer drawer-right hidden" id="menuDrawer">
       <header class="drawer-header">
-        <button class="icon-btn" id="btnCloseProfile">‹</button>
-        <strong>Profil</strong>
+        <strong>Menu</strong>
+        <button class="icon-btn drawer-close" id="btnCloseMenu" title="Tutup">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+
+      <div class="menu-profile">
+        <div class="avatar avatar-lg ring" id="menuAvatar"><span>?</span></div>
+        <div class="menu-profile-info">
+          <div class="menu-name"><strong id="menuName">—</strong></div>
+          <p class="menu-bio" id="menuBio">—</p>
+          <span class="chip chip-verified hidden" id="menuVerified">
+            <svg viewBox="0 0 24 24"><use href="#ic-verified" /></svg> Terverifikasi resmi
+          </span>
+        </div>
+      </div>
+
+      <nav class="menu-list">
+        <button class="menu-item" data-menu="profile">
+          <span class="mi-ico">👤</span>
+          <span class="mi-text"><strong>Profil &amp; Info</strong><small>Nama, bio, foto, verifikasi</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item" data-menu="wallpaper">
+          <span class="mi-ico">🖼️</span>
+          <span class="mi-text"><strong>Latar Belakang Chat</strong><small>Ganti background foto / video</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item" data-menu="about">
+          <span class="mi-ico">ℹ️</span>
+          <span class="mi-text"><strong>Tentang Whatsap Indo</strong><small>Versi 1.0.0 • Lisensi MIT</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item danger" data-menu="logout">
+          <span class="mi-ico">🚪</span>
+          <span class="mi-text"><strong>Keluar</strong><small>Akhiri sesi di perangkat ini</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+      </nav>
+
+      <footer class="menu-footer">Whatsap Indo • Chat real-time, media 2GB, panggilan WebRTC</footer>
+    </div>
+
+    <!-- ============ LATAR BELAKANG CHAT ============ -->
+    <div class="drawer drawer-right hidden" id="wallpaperDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseWallpaper" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Latar Belakang Chat</strong>
+      </header>
+      <div class="wallpaper-body">
+        <div class="wp-preview" id="wpPreview">
+          <div class="wp-preview-layer" id="wpPreviewLayer"></div>
+          <div class="wp-preview-chat">
+            <span class="wp-bubble in">Hai! 👋</span>
+            <span class="wp-bubble out">Halo juga ✓✓</span>
+          </div>
+          <span class="wp-label" id="wpLabel">Bawaan Whatsap Indo</span>
+        </div>
+
+        <div class="wp-options">
+          <button class="wp-option" data-wp="default">
+            <span class="wp-ico">🧩</span>
+            <span class="wp-text"><strong>Bawaan</strong><small>Pola latar standar</small></span>
+          </button>
+          <button class="wp-option" data-wp="image">
+            <span class="wp-ico">📷</span>
+            <span class="wp-text"><strong>Pilih Foto</strong><small>JPG, PNG, WEBP — maks 50MB</small></span>
+          </button>
+          <button class="wp-option" data-wp="video">
+            <span class="wp-ico">🎥</span>
+            <span class="wp-text"><strong>Pilih Video</strong><small>MP4, WEBM — maks 200MB, otomatis diam</small></span>
+          </button>
+          <button class="wp-option danger" data-wp="clear">
+            <span class="wp-ico">🗑️</span>
+            <span class="wp-text"><strong>Hapus Latar</strong><small>Kembalikan ke bawaan</small></span>
+          </button>
+        </div>
+
+        <input type="file" id="wallpaperInput" accept="image/*,video/*" class="hidden" />
+
+        <div class="wp-settings" id="wpSettings">
+          <div class="wp-row">
+            <span class="ps-label">Sesuaikan gambar</span>
+            <div class="seg" id="wpFit" role="group" aria-label="Sesuaikan gambar">
+              <button type="button" data-fit="cover" class="active">Penuh</button>
+              <button type="button" data-fit="contain">Muat</button>
+              <button type="button" data-fit="tile">Ulang</button>
+            </div>
+          </div>
+
+          <label class="wp-slider" for="wpScale">
+            <span class="wp-slider-top">Ukuran gambar <b id="wpScaleVal">100%</b></span>
+            <input type="range" id="wpScale" min="50" max="300" step="5" value="100" />
+            <span class="wp-slider-hint">Perkecil 50% — perbesar 300%</span>
+          </label>
+
+          <label class="wp-slider" for="wpDim">
+            <span class="wp-slider-top">Redupkan latar <b id="wpDimVal">20%</b></span>
+            <input type="range" id="wpDim" min="0" max="70" step="5" value="20" />
+            <span class="wp-slider-hint">0% terang benderang — 70% gelap</span>
+          </label>
+
+          <div class="wp-actions">
+            <button type="button" class="btn-primary" id="btnSaveWallpaper">Terapkan &amp; Simpan</button>
+            <button type="button" class="btn-ghost" id="btnResetWallpaper">Atur Ulang</button>
+          </div>
+          <p class="wp-disabled-note hidden" id="wpDisabledNote">Pilih foto atau video dulu untuk mengatur ukuran &amp; redup.</p>
+        </div>
+
+        <p class="wp-hint">Latar hanya berlaku untuk akun Anda. Video diputar tanpa suara (muted) di belakang percakapan.</p>
+        <p class="wp-status hidden" id="wpStatus"></p>
+      </div>
+    </div>
+
+    <!-- ============ INFO KONTAK ============ -->
+    <div class="drawer drawer-right hidden" id="contactDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseContact" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Info Kontak</strong>
+      </header>
+      <div class="contact-body" id="contactBody"></div>
+    </div>
+
+    <!-- ============ PROFIL & INFO ============ -->
+    <div class="drawer drawer-right hidden" id="profileDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseProfile" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Profil &amp; Info</strong>
       </header>
       <div class="profile-body">
         <label class="avatar-upload">
-          <div class="avatar avatar-xl" id="profileAvatar"><span>?</span></div>
+          <span class="avatar avatar-xl ring" id="profileAvatar"><span>?</span></span>
+          <span class="avatar-badge hidden" id="profileAvatarBadge">
+            <svg viewBox="0 0 24 24"><use href="#ic-verified" /></svg>
+          </span>
           <input type="file" id="avatarInput" accept="image/*" class="hidden" />
           <small>Ketuk untuk ganti foto profil</small>
         </label>
+
         <div class="profile-verified hidden" id="profileVerified">
-          <span class="verified-badge lg"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M9.64 18.95l-5.7-5.7 1.42-1.41 4.28 4.28 9.65-9.65 1.41 1.42z"/></svg></span>
-          <span>Akun ini terverifikasi (centang biru)</span>
+          <span class="verified-badge lg"><svg viewBox="0 0 24 24"><use href="#ic-verified" /></svg></span>
+          <span><strong>Akun resmi terverifikasi</strong><br /><small>Centang biru diterbitkan oleh Whatsap Indo</small></span>
         </div>
-        <label>Nama
-          <input type="text" id="profileName" maxlength="40" />
-        </label>
-        <label>Status
-          <input type="text" id="profileAbout" maxlength="140" />
-        </label>
-        <label>Email
+
+        <div class="profile-section">
+          <span class="ps-label">Nama</span>
+          <input type="text" id="profileName" maxlength="40" placeholder="Nama Anda" />
+        </div>
+
+        <div class="profile-section">
+          <span class="ps-label">Info / Bio</span>
+          <textarea id="profileAbout" rows="3" maxlength="200" placeholder="Ceritakan sedikit tentang Anda..."></textarea>
+          <small class="ps-counter"><span id="bioCount">0</span>/200</small>
+        </div>
+
+        <div class="profile-section">
+          <span class="ps-label">Email</span>
           <input type="email" id="profileEmail" disabled />
-        </label>
-        <button class="btn-primary" id="btnSaveProfile">Simpan</button>
+        </div>
+
+        <div class="profile-facts">
+          <div class="fact"><span>Status</span><strong id="factVerified">—</strong></div>
+          <div class="fact"><span>Bergabung</span><strong id="factJoined">—</strong></div>
+          <div class="fact"><span>ID Pengguna</span><strong class="mono" id="factId">—</strong></div>
+        </div>
+
+        <button class="btn-primary" id="btnSaveProfile">Simpan Perubahan</button>
+        <button class="btn-ghost" id="btnOpenWallpaper">🖼️ Atur Latar Belakang Chat</button>
+        <button class="btn-ghost danger" id="btnLogout">🚪 Keluar</button>
         <p id="profileMsg" class="auth-error hidden"></p>
       </div>
     </div>

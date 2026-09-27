@@ -1,14 +1,29 @@
 'use strict';
 
+const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || crypto.randomBytes(48).toString('hex');
-
+// Rahasia JWT: pakai JWT_SECRET dari env, kalau tidak ada simpan di data/
+// supaya sesi pengguna tidak hilang setiap server restart.
+const JWT_SECRET = process.env.JWT_SECRET || resolveSecret();
 const TOKEN_TTL = '30d';
+
+function resolveSecret() {
+  const file = path.join(__dirname, '..', 'data', '.jwt-secret');
+  try {
+    const existing = fs.readFileSync(file, 'utf8').trim();
+    if (existing.length >= 32) return existing;
+  } catch { /* belum ada */ }
+  const secret = crypto.randomBytes(48).toString('hex');
+  try {
+    fs.writeFileSync(file, secret, { mode: 0o600 });
+  } catch { /* gagal tulis file -> pakai secret di memori */ }
+  return secret;
+}
 
 // Email yang mendapat centang biru (verifikasi) secara otomatis
 const VERIFIED_EMAILS = ['ovalkyzz@gmail.com'];
@@ -28,6 +43,13 @@ function publicUser(row) {
     verified: !!row.verified,
     createdAt: row.created_at,
     lastSeen: row.last_seen,
+    wallpaper: {
+      type: row.wallpaper_type || 'default',
+      url: row.wallpaper_url || null,
+      mode: row.wallpaper_mode || 'cover',
+      scale: Number(row.wallpaper_scale) || 100,
+      dim: row.wallpaper_dim === null || row.wallpaper_dim === undefined ? 20 : Number(row.wallpaper_dim),
+    },
   };
 }
 

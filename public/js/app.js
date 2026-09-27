@@ -27,10 +27,14 @@ function toast(msg, ms = 2600) {
   t._h = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
-const CHECK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M9.64 18.95l-5.7-5.7 1.42-1.41 4.28 4.28 9.65-9.65 1.41 1.42z"/></svg>';
 function badge(verified, big) {
   if (!verified) return '';
-  return `<span class="verified-badge${big ? ' lg' : ''}" title="Terverifikasi">${CHECK_SVG}</span>`;
+  return `<span class="verified-badge${big ? ' lg' : ''}" title="Akun resmi terverifikasi"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-verified"></use></svg></span>`;
+}
+
+function fmtDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function fmtTime(ts) {
@@ -94,6 +98,10 @@ function showApp() {
 }
 
 function logout(callServer = true) {
+  if (S.call) {
+    try { S.socket?.emit('call:hangup', { to: S.call.peer.id, callId: S.call.callId }); } catch { /* noop */ }
+    closeCall();
+  }
   if (callServer && S.socket) S.socket.disconnect();
   S.token = null; S.me = null; S.chats = []; S.activeChatId = null;
   localStorage.removeItem('wa_token');
@@ -138,6 +146,7 @@ async function bootSession(data) {
 async function startApp() {
   showApp();
   renderMe();
+  applyWallpaper();
   await loadChats();
   connectSocket();
 }
@@ -146,6 +155,11 @@ function renderMe() {
   $('meName').innerHTML = esc(S.me.name) + badge(S.me.verified);
   $('meEmail').textContent = S.me.email;
   setAvatar($('meAvatar'), S.me);
+
+  setAvatar($('menuAvatar'), S.me);
+  $('menuName').innerHTML = esc(S.me.name) + badge(S.me.verified);
+  $('menuBio').textContent = S.me.about || 'Belum ada bio. Ketuk Profil & Info untuk menambahkan.';
+  $('menuVerified').classList.toggle('hidden', !S.me.verified);
 }
 
 function setAvatar(el, user) {
@@ -638,9 +652,35 @@ function clearAttachPreview() {
   $('fileInput').value = '';
 }
 
+/* ================= drawer manager ================= */
+const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'contactDrawer'];
+
+function openDrawer(id, withScrim = true) {
+  DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
+  $('scrim').classList.toggle('hidden', !withScrim);
+  $('btnMenu').classList.toggle('open', id === 'menuDrawer');
+}
+
+function closeDrawers() {
+  DRAWERS.forEach((d) => $(d).classList.add('hidden'));
+  $('scrim').classList.add('hidden');
+  $('btnMenu').classList.remove('open');
+}
+
+function anyDrawerOpen() {
+  return DRAWERS.some((d) => !$(d).classList.contains('hidden'));
+}
+
+$('scrim').addEventListener('click', closeDrawers);
+$('btnMenu').addEventListener('click', () => {
+  if ($('menuDrawer').classList.contains('hidden')) openDrawer('menuDrawer');
+  else closeDrawers();
+});
+$('meBox').addEventListener('click', () => openDrawer('menuDrawer'));
+
 /* ================= new chat drawer ================= */
-$('btnNewChat').addEventListener('click', () => { $('newChatDrawer').classList.remove('hidden'); $('userSearchInput').focus(); });
-$('btnCloseDrawer').addEventListener('click', () => $('newChatDrawer').classList.add('hidden'));
+$('btnNewChat').addEventListener('click', () => { openDrawer('newChatDrawer', false); $('userSearchInput').focus(); });
+$('btnCloseDrawer').addEventListener('click', closeDrawers);
 
 let searchTimer;
 $('userSearchInput').addEventListener('input', () => {
@@ -674,24 +714,374 @@ async function searchUsers() {
 async function startDirect(peerId) {
   try {
     const data = await api('/api/chats/direct', { method: 'POST', body: { peerId } });
-    $('newChatDrawer').classList.add('hidden');
+    closeDrawers();
     $('userSearchInput').value = '';
     await loadChats();
     openChat(data.chat.id);
   } catch (err) { toast(err.message); }
 }
 
+/* ================= menu drawer ================= */
+document.querySelectorAll('.menu-item').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.menu;
+    if (action === 'profile') openProfile();
+    else if (action === 'wallpaper') openWallpaper();
+    else if (action === 'about') {
+      closeDrawers();
+      toast('Whatsap Indo v1.0.0 — chat real-time, media 2GB, panggilan WebRTC • MIT');
+    } else if (action === 'logout') {
+      closeDrawers();
+      logout();
+    }
+  });
+});
+
+/* ================= latar belakang chat ================= */
+let pendingWpType = 'image';
+let wpDraft = { mode: 'cover', scale: 100, dim: 20 };
+let wpSaveTimer = null;
+
+function wpSaved() {
+  const w = (S.me && S.me.wallpaper) || {};
+  return {
+    mode: w.mode || 'cover',
+    scale: Number(w.scale) || 100,
+    dim: w.dim === undefined || w.dim === null ? 20 : Number(w.dim),
+  };
+}
+
+function wpHasMedia() {
+  const w = S.me && S.me.wallpaper;
+  return !!(w && w.type !== 'default' && w.url);
+}
+
+function updateRangeFill(el) {
+  const min = Number(el.min), max = Number(el.max), val = Number(el.value);
+  el.style.setProperty('--fill', `${((val - min) / (max - min)) * 100}%`);
+}
+
+function syncWallpaperControls(fromSaved = true) {
+  if (fromSaved) wpDraft = wpSaved();
+  $('wpScale').value = wpDraft.scale;
+  $('wpDim').value = wpDraft.dim;
+  $('wpScaleVal').textContent = `${wpDraft.scale}%`;
+  $('wpDimVal').textContent = `${wpDraft.dim}%`;
+  updateRangeFill($('wpScale'));
+  updateRangeFill($('wpDim'));
+  document.querySelectorAll('#wpFit button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.fit === wpDraft.mode);
+  });
+  const has = wpHasMedia();
+  $('wpSettings').classList.toggle('disabled', !has);
+  $('wpDisabledNote').classList.toggle('hidden', has);
+}
+
+function wpStyle(el, type, mode, scale) {
+  if (type === 'image') {
+    el.style.backgroundSize = mode === 'tile' ? 'auto' : mode;
+    el.style.backgroundRepeat = mode === 'tile' ? 'repeat' : 'no-repeat';
+    el.style.transform = `scale(${scale})`;
+  } else {
+    el.style.objectFit = mode === 'tile' ? 'cover' : mode;
+    el.style.transform = `scale(${scale})`;
+  }
+}
+
+function applyWallpaper() {
+  const box = $('chatBg');
+  const w = S.me && S.me.wallpaper;
+  box.className = 'chat-bg';
+  box.innerHTML = '';
+  box.style.removeProperty('--wp-dim');
+  if (!w || w.type === 'default' || !w.url) return;
+
+  const mode = w.mode || 'cover';
+  const scale = (Number(w.scale) || 100) / 100;
+  const dim = (w.dim === undefined || w.dim === null ? 20 : Number(w.dim)) / 100;
+
+  box.classList.add('custom');
+  box.style.setProperty('--wp-dim', String(dim));
+
+  if (w.type === 'image') {
+    if (mode === 'tile') box.classList.add('tile');
+    const photo = document.createElement('div');
+    photo.className = 'bg-photo';
+    photo.style.backgroundImage = `url("${w.url}")`;
+    wpStyle(photo, 'image', mode, scale);
+    box.appendChild(photo);
+  } else if (w.type === 'video') {
+    box.classList.add('video-mode');
+    const video = document.createElement('video');
+    video.src = w.url;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('muted', '');
+    video.preload = 'auto';
+    wpStyle(video, 'video', mode, scale);
+    box.appendChild(video);
+    safePlay(video);
+  }
+}
+
+function safePlay(el) {
+  try {
+    const p = el.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch { /* autoplay diblokir */ }
+}
+
+function openWallpaper() {
+  $('wpStatus').classList.add('hidden');
+  $('wpStatus').textContent = '';
+  syncWallpaperControls();
+  renderWallpaperPreview();
+  openDrawer('wallpaperDrawer');
+}
+
+function renderWallpaperPreview() {
+  const w = (S.me && S.me.wallpaper) || { type: 'default', url: null };
+  const layer = $('wpPreviewLayer');
+  layer.innerHTML = '';
+  layer.className = 'wp-preview-layer';
+  layer.style.backgroundImage = '';
+  layer.style.transform = '';
+  layer.style.objectFit = '';
+  layer.style.backgroundSize = '';
+  layer.style.backgroundRepeat = '';
+  layer.style.removeProperty('--wp-dim');
+
+  const mode = wpDraft.mode;
+  const scale = wpDraft.scale / 100;
+  let label = 'Bawaan Whatsap Indo';
+
+  if (w.type === 'image' && w.url) {
+    layer.style.backgroundImage = `url("${w.url}")`;
+    wpStyle(layer, 'image', mode, scale);
+    label = 'Foto';
+  } else if (w.type === 'video' && w.url) {
+    const v = document.createElement('video');
+    v.src = w.url; v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    wpStyle(v, 'video', mode, scale);
+    layer.appendChild(v);
+    safePlay(v);
+    label = 'Video';
+  }
+  layer.classList.toggle('has-shade', w.type !== 'default' && !!w.url);
+  layer.style.setProperty('--wp-dim', String(wpDraft.dim / 100));
+  $('wpLabel').textContent = label;
+
+  document.querySelectorAll('.wp-option').forEach((o) => {
+    const kind = o.dataset.wp;
+    const isActive = kind === 'default'
+      ? (!w.url || w.type === 'default')
+      : (kind === w.type && !!w.url);
+    o.classList.toggle('active', isActive);
+  });
+}
+
+async function saveWallpaperSettings(showStatus = true) {
+  const w = (S.me && S.me.wallpaper) || {};
+  try {
+    const data = await api('/api/me', {
+      method: 'PATCH',
+      body: {
+        wallpaper: {
+          type: w.type || 'default',
+          url: w.url || null,
+          mode: wpDraft.mode,
+          scale: wpDraft.scale,
+          dim: wpDraft.dim,
+        },
+      },
+    });
+    S.me = data.user;
+    wpDraft = wpSaved();
+    applyWallpaper();
+    if (showStatus) wpSay('Pengaturan latar tersimpan ✓');
+    return true;
+  } catch (err) {
+    if (showStatus) wpSay(err.message, true);
+    else toast(err.message);
+    return false;
+  }
+}
+
+function wpSay(msg, isError) {
+  const st = $('wpStatus');
+  st.classList.remove('hidden');
+  st.style.color = isError ? '#d5504f' : '';
+  st.textContent = msg;
+}
+
+function scheduleWallpaperSave() {
+  clearTimeout(wpSaveTimer);
+  wpSaveTimer = setTimeout(() => saveWallpaperSettings(true), 550);
+}
+
+async function setWallpaper(type, url, statusEl) {
+  try {
+    const data = await api('/api/me', {
+      method: 'PATCH',
+      body: {
+        wallpaper: {
+          type, url,
+          mode: wpDraft.mode, scale: wpDraft.scale, dim: wpDraft.dim,
+        },
+      },
+    });
+    S.me = data.user;
+    wpDraft = wpSaved();
+    renderWallpaperPreview();
+    applyWallpaper();
+    syncWallpaperControls();
+    if (statusEl) { statusEl.style.color = ''; statusEl.textContent = 'Latar belakang diperbarui ✓'; }
+    else toast(type === 'default' ? 'Latar dikembalikan ke bawaan' : 'Latar belakang diperbarui');
+  } catch (err) {
+    if (statusEl) { statusEl.style.color = '#d5504f'; statusEl.textContent = err.message; }
+    else toast(err.message);
+  }
+}
+
+document.querySelectorAll('.wp-option').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const kind = btn.dataset.wp;
+    if (kind === 'default' || kind === 'clear') { setWallpaper('default', null); return; }
+    pendingWpType = kind;
+    const input = $('wallpaperInput');
+    input.accept = kind === 'image' ? 'image/*' : 'video/*';
+    input.value = '';
+    input.click();
+  });
+});
+
+$('wallpaperInput').addEventListener('change', async () => {
+  const file = $('wallpaperInput').files[0];
+  if (!file) return;
+  const maxMB = pendingWpType === 'image' ? 50 : 200;
+  if (file.size > maxMB * 1024 * 1024) { toast(`Ukuran maksimal ${maxMB}MB`); return; }
+  const expected = pendingWpType === 'image' ? 'image/' : 'video/';
+  if (!file.type.startsWith(expected)) { toast('Format file tidak didukung'); return; }
+  const st = $('wpStatus');
+  st.classList.remove('hidden');
+  st.style.color = '';
+  try {
+    const meta = await uploadFile(file, (p) => { st.textContent = `Mengunggah ${Math.round(p * 100)}%...`; });
+    await setWallpaper(pendingWpType, meta.url, st);
+  } catch (err) {
+    st.style.color = '#d5504f';
+    st.textContent = err.message;
+  }
+});
+
+/* pengaturan ukuran & redup */
+document.querySelectorAll('#wpFit button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    wpDraft.mode = btn.dataset.fit;
+    document.querySelectorAll('#wpFit button').forEach((b) => b.classList.toggle('active', b === btn));
+    renderWallpaperPreview();
+    if (wpHasMedia()) scheduleWallpaperSave();
+  });
+});
+
+$('wpScale').addEventListener('input', () => {
+  wpDraft.scale = Number($('wpScale').value);
+  $('wpScaleVal').textContent = `${wpDraft.scale}%`;
+  updateRangeFill($('wpScale'));
+  renderWallpaperPreview();
+  if (wpHasMedia()) scheduleWallpaperSave();
+});
+
+$('wpDim').addEventListener('input', () => {
+  wpDraft.dim = Number($('wpDim').value);
+  $('wpDimVal').textContent = `${wpDraft.dim}%`;
+  updateRangeFill($('wpDim'));
+  renderWallpaperPreview();
+  if (wpHasMedia()) scheduleWallpaperSave();
+});
+
+$('btnSaveWallpaper').addEventListener('click', () => saveWallpaperSettings(true));
+$('btnResetWallpaper').addEventListener('click', async () => {
+  wpDraft = { mode: 'cover', scale: 100, dim: 20 };
+  syncWallpaperControls(false);
+  renderWallpaperPreview();
+  if (wpHasMedia()) await saveWallpaperSettings(true);
+  else wpSay('Pengaturan diatur ulang');
+});
+
+/* ================= info kontak ================= */
+$('btnContactInfo').addEventListener('click', openContactInfo);
+
+async function openContactInfo() {
+  const chat = currentChat();
+  if (!chat || !chat.peer) return;
+  const body = $('contactBody');
+  body.innerHTML = '<div class="empty-state">Memuat info kontak...</div>';
+  openDrawer('contactDrawer');
+  try {
+    const data = await api(`/api/users/${chat.peer.id}`);
+    const u = data.user;
+    S.peerCache[u.id] = u;
+    const peer = { ...chat.peer, ...u };
+    body.innerHTML = `
+      <div class="contact-hero">
+        <div class="avatar avatar-xl ring" id="contactAvatar"></div>
+        <h3>${esc(u.name)}${badge(u.verified)}</h3>
+        <p class="bio">${esc(u.about || 'Tidak ada bio')}</p>
+        <span class="presence">${peer.online ? 'Online' : (u.lastSeen ? `Terakhir dilihat ${fmtListTime(u.lastSeen)} ${fmtTime(u.lastSeen)}` : 'Offline')}</span>
+        ${u.verified ? '<span class="chip chip-verified"><svg viewBox="0 0 24 24"><use href="#ic-verified"></use></svg> Akun resmi terverifikasi</span>' : ''}
+      </div>
+      <div class="contact-card">
+        <div class="contact-row"><span class="cr-ico">📧</span><div><small>Email</small><strong>${esc(u.email)}</strong></div></div>
+        <div class="contact-row"><span class="cr-ico">🆔</span><div><small>ID Pengguna</small><strong class="mono">${esc(u.id)}</strong></div></div>
+        <div class="contact-row"><span class="cr-ico">📅</span><div><small>Bergabung</small><strong>${fmtDate(u.createdAt)}</strong></div></div>
+        <div class="contact-row"><span class="cr-ico">🔒</span><div><small>Enkripsi</small><strong>Pesan tersimpan aman di server</strong></div></div>
+      </div>
+      <div class="contact-actions">
+        <button class="btn-ghost" id="ciChat">💬 Pesan</button>
+        <button class="btn-ghost" id="ciVoice">📞 Suara</button>
+        <button class="btn-ghost" id="ciVideo">🎥 Video</button>
+      </div>`;
+    setAvatar($('contactAvatar'), peer);
+    $('ciChat').addEventListener('click', () => { closeDrawers(); $('messageInput').focus(); });
+    $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
+    $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
+  }
+}
+$('btnCloseContact').addEventListener('click', closeDrawers);
+$('btnCloseMenu').addEventListener('click', closeDrawers);
+$('btnCloseWallpaper').addEventListener('click', closeDrawers);
+
 /* ================= profile ================= */
-$('btnProfile').addEventListener('click', () => {
+function openProfile() {
   $('profileName').value = S.me.name || '';
   $('profileAbout').value = S.me.about || '';
   $('profileEmail').value = S.me.email || '';
+  $('bioCount').textContent = String(($('profileAbout').value || '').length);
   setAvatar($('profileAvatar'), S.me);
   $('profileVerified').classList.toggle('hidden', !S.me.verified);
+  $('profileAvatarBadge').classList.toggle('hidden', !S.me.verified);
+  $('factVerified').textContent = S.me.verified ? 'Terverifikasi ✓' : 'Belum terverifikasi';
+  $('factVerified').style.color = S.me.verified ? '#0a6ed1' : '';
+  $('factJoined').textContent = fmtDate(S.me.createdAt);
+  $('factId').textContent = S.me.id || '—';
   $('profileMsg').classList.add('hidden');
-  $('profileDrawer').classList.remove('hidden');
+  openDrawer('profileDrawer');
+}
+
+$('btnCloseProfile').addEventListener('click', closeDrawers);
+$('btnOpenWallpaper').addEventListener('click', openWallpaper);
+$('btnLogout').addEventListener('click', () => { closeDrawers(); logout(); });
+$('profileAbout').addEventListener('input', () => {
+  $('bioCount').textContent = String($('profileAbout').value.length);
 });
-$('btnCloseProfile').addEventListener('click', () => $('profileDrawer').classList.add('hidden'));
+
 $('avatarInput').addEventListener('change', async () => {
   const file = $('avatarInput').files[0];
   if (!file) return;
@@ -705,29 +1095,42 @@ $('avatarInput').addEventListener('change', async () => {
     toast('Foto profil diperbarui');
   } catch (err) { toast(err.message); }
 });
+
 $('btnSaveProfile').addEventListener('click', async () => {
+  const msg = $('profileMsg');
   try {
-    const data = await api('/api/me', { method: 'PATCH', body: { name: $('profileName').value, about: $('profileAbout').value } });
+    const data = await api('/api/me', {
+      method: 'PATCH',
+      body: { name: $('profileName').value, about: $('profileAbout').value },
+    });
     S.me = data.user;
     renderMe();
-    const msg = $('profileMsg');
     msg.textContent = 'Tersimpan ✓';
     msg.style.color = '#00a884';
     msg.classList.remove('hidden');
     setTimeout(() => msg.classList.add('hidden'), 2000);
   } catch (err) {
-    const msg = $('profileMsg');
     msg.textContent = err.message;
     msg.style.color = '#d33';
     msg.classList.remove('hidden');
   }
 });
-$('btnLogout').addEventListener('click', () => logout());
 
 /* ================= WebRTC calls ================= */
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
+const RING_TIMEOUT_MS = 60000;    // maksimal menunggu jawaban
+const CONNECT_TIMEOUT_MS = 20000; // maksimal menunggu koneksi WebRTC terbentuk
+const DROP_GRACE_MS = 8000;       // toleransi 'disconnected' sebelum menutup panggilan
 
 function newCallId() { return 'call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+function blankCall(fields) {
+  return {
+    startedAt: null, timer: null, ringTimer: null, connectTimer: null, dropTimer: null,
+    pendingSignals: [], pc: null, localStream: null, peerReady: null,
+    ...fields,
+  };
+}
 
 $('btnCallVoice').addEventListener('click', () => startCall('audio'));
 $('btnCallVideo').addEventListener('click', () => startCall('video'));
@@ -736,85 +1139,136 @@ function startCall(kind) {
   const chat = currentChat();
   if (!chat || !chat.peer) { toast('Pilih chat terlebih dahulu'); return; }
   if (S.call) { toast('Sedang dalam panggilan lain'); return; }
-  const call = {
+  if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
+
+  const call = blankCall({
     callId: newCallId(), peer: chat.peer, kind,
     incoming: false, state: 'calling', mic: true, cam: kind === 'video',
-    startedAt: null, timer: null, pendingSignals: [],
-  };
+  });
   S.call = call;
   openCallUI(call);
   setCallState('Menghubungkan...');
 
   S.socket.emit('call:invite', { to: chat.peer.id, callId: call.callId, kind }, (res) => {
+    if (S.call !== call) return;
     if (!res?.ok) {
       toast(res?.error || 'Tidak dapat menghubungi pengguna');
       closeCall();
-    } else {
-      call.state = 'ringing';
-      setCallState('Berdering...');
+      return;
     }
+    call.state = 'ringing';
+    setCallState('Berdering...');
+    armRingTimeout(call);
+    // aktifkan mic/kamera lebih awal supaya pratinjau tampil saat berdering
+    ensurePeer().catch(() => {});
   });
 }
 
+function armRingTimeout(call) {
+  clearTimeout(call.ringTimer);
+  call.ringTimer = setTimeout(() => {
+    if (S.call !== call) return;
+    S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId, reason: 'timeout' });
+    toast('Panggilan tidak dijawab');
+    closeCall();
+  }, RING_TIMEOUT_MS);
+}
+
+function armConnectTimeout(call) {
+  clearTimeout(call.connectTimer);
+  call.connectTimer = setTimeout(() => {
+    if (S.call !== call || call.startedAt) return;
+    setCallState('Koneksi gagal');
+    S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+    toast('Koneksi panggilan gagal');
+    closeCall();
+  }, CONNECT_TIMEOUT_MS);
+}
+
 function onCallIncoming({ callId, kind, from }) {
-  if (S.call) {
-    S.socket.emit('call:reject', { to: from.id, callId });
+  if (!callId || !from || !from.id) return;
+  if (S.call) { // sudah sibuk -> tolak otomatis
+    S.socket?.emit('call:reject', { to: from.id, callId });
     return;
   }
-  S.call = { callId, peer: from, kind, incoming: true, state: 'incoming', mic: true, cam: kind === 'video', pendingSignals: [], startedAt: null, timer: null };
+  const cleanKind = kind === 'video' ? 'video' : 'audio';
+  S.call = blankCall({
+    callId, peer: from, kind: cleanKind,
+    incoming: true, state: 'incoming', mic: true, cam: cleanKind === 'video',
+  });
   $('inCallerName').innerHTML = esc(from.name) + badge(from.verified);
-  $('inCallKind').textContent = kind === 'video' ? 'Panggilan video masuk...' : 'Panggilan suara masuk...';
+  $('inCallKind').textContent = cleanKind === 'video' ? 'Panggilan video masuk...' : 'Panggilan suara masuk...';
   setAvatar($('inCallerAvatar'), from);
   $('incomingCall').classList.remove('hidden');
   beep('notif');
 }
 
 $('btnRejectCall').addEventListener('click', () => {
-  if (!S.call) return;
-  S.socket.emit('call:reject', { to: S.call.peer.id, callId: S.call.callId });
+  const call = S.call;
+  if (!call) return;
+  S.socket?.emit('call:reject', { to: call.peer.id, callId: call.callId });
   closeCall();
 });
 $('btnAcceptCall').addEventListener('click', async () => {
   const call = S.call;
   if (!call || !call.incoming) return;
+  if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
+
   $('incomingCall').classList.add('hidden');
-  call.state = 'connecting';
   call.incoming = false;
+  call.state = 'connecting';
   openCallUI(call);
   setCallState('Menghubungkan...');
+  S.socket.emit('call:accept', { callId: call.callId });
+
   try {
     await ensurePeer();
-    if (call.kind === 'video') $('localVideo').style.display = 'block';
     const offer = await call.pc.createOffer();
     await call.pc.setLocalDescription(offer);
-    S.socket.emit('call:signal', { to: call.peer.id, callId: call.callId, signal: { type: 'offer', offer: call.pc.localDescription } });
-    setCallState('Berdering...');
+    S.socket.emit('call:signal', {
+      to: call.peer.id, callId: call.callId,
+      signal: { type: 'offer', offer: call.pc.localDescription },
+    });
+    setCallState('Menunggu koneksi...');
+    armConnectTimeout(call);
   } catch (err) {
     console.warn(err);
-    toast('Gagal memulai panggilan');
-    closeCall();
+    if (S.call === call) { // abortCall sudah menangani kasus izin media ditolak
+      toast('Gagal memulai panggilan');
+      S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+      closeCall();
+    }
     return;
   }
   drainSignals();
 });
 
 $('btnHangup').addEventListener('click', () => {
-  if (!S.call) return;
-  S.socket.emit('call:hangup', { to: S.call.peer.id, callId: S.call.callId });
+  const call = S.call;
+  if (!call) return;
+  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
   closeCall();
 });
 
 function onCallSignal({ callId, signal }) {
   if (!S.call || S.call.callId !== callId) return;
-  if (!signal) return;
+  if (!signal || typeof signal !== 'object') return;
   S.call.pendingSignals.push(signal);
   drainSignals();
 }
 
-async function drainSignals() {
+/* Diproses satu per satu (rantai promise) agar offer/answer/ICE tidak
+   saling menabrak ketika getUserMedia masih berjalan. */
+let drainChain = Promise.resolve();
+
+function drainSignals() {
+  drainChain = drainChain.then(runDrain).catch((err) => console.warn('signal drain', err));
+}
+
+async function runDrain() {
   const call = S.call;
   if (!call || !call.pendingSignals.length) return;
-  // buffer selama panggilan masuk belum diterima
+  // sinyal untuk panggilan masuk ditampung sampai ditekan "Jawab"
   if (call.incoming && !$('incomingCall').classList.contains('hidden')) return;
   await ensurePeer();
   while (S.call === call && call.pendingSignals.length) {
@@ -822,45 +1276,99 @@ async function drainSignals() {
   }
 }
 
-async function ensurePeer() {
+function ensurePeer() {
   const call = S.call;
-  if (!call || call.pc) return;
+  if (!call) return Promise.reject(new Error('Panggilan sudah berakhir'));
+  if (!call.peerReady) call.peerReady = createPeer(call);
+  return call.peerReady;
+}
+
+async function createPeer(call) {
   const pc = new RTCPeerConnection(ICE);
   call.pc = pc;
 
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true, video: call.kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
-    });
-    call.localStream = stream;
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-    $('localVideo').srcObject = stream;
-    $('localVideo').style.display = call.kind === 'video' ? 'block' : 'none';
-  } catch (err) {
-    toast('Akses kamera/mikrofon ditolak: ' + err.message);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const err = new Error('Akses kamera/mikrofon butuh HTTPS atau localhost');
+    abortCall(call, err.message);
+    throw err;
   }
 
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: call.kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+    });
+  } catch (err) {
+    abortCall(call, 'Akses kamera/mikrofon ditolak: ' + (err.message || 'izin ditolak'));
+    throw err;
+  }
+
+  if (S.call !== call) { // panggilan sudah ditutup selama meminta izin
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error('Panggilan sudah berakhir');
+  }
+
+  call.localStream = stream;
+  stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+  $('localVideo').srcObject = stream;
+  $('localVideo').style.display = call.kind === 'video' ? 'block' : 'none';
+  $('btnToggleMic').disabled = false;
+  $('btnToggleCam').disabled = call.kind !== 'video';
+
   pc.ontrack = (e) => {
-    $('remoteVideo').srcObject = e.streams[0];
-    $('remoteVideo').style.display = call.kind === 'video' ? 'block' : 'block';
-    $('callAvatarFallback').style.display = 'none';
+    if (S.call !== call || !e.streams || !e.streams[0]) return;
+    if (!$('remoteVideo').srcObject) $('remoteVideo').srcObject = e.streams[0];
+    $('remoteVideo').style.display = 'block';
+    // panggilan suara: avatar tetap tampil; video: avatar hilang saat video tiba
+    if (e.track && e.track.kind === 'video') $('callAvatarFallback').style.display = 'none';
     setCallState('Tersambung');
     if (!call.startedAt) startCallTimer();
   };
+
   pc.onicecandidate = (e) => {
-    if (e.candidate && S.call) {
-      S.socket.emit('call:signal', { to: call.peer.id, callId: call.callId, signal: { type: 'candidate', candidate: e.candidate } });
+    if (e.candidate && S.call === call) {
+      S.socket?.emit('call:signal', {
+        to: call.peer.id, callId: call.callId,
+        signal: { type: 'candidate', candidate: e.candidate },
+      });
     }
   };
+
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected' && !call.startedAt) {
+    if (S.call !== call) return;
+    const st = pc.connectionState;
+    if (st === 'connected') {
+      clearTimeout(call.dropTimer);
       setCallState('Tersambung');
-      startCallTimer();
-    } else if (['failed', 'disconnected'].includes(pc.connectionState)) {
-      setCallState('Koneksi terputus');
-      setTimeout(() => S.call === call && closeCall(), 1500);
+      if (!call.startedAt) startCallTimer();
+    } else if (st === 'failed') {
+      setCallState('Koneksi gagal');
+      finishCall(call, 'Koneksi panggilan gagal');
+    } else if (st === 'disconnected') {
+      setCallState('Koneksi terputus...');
+      clearTimeout(call.dropTimer);
+      call.dropTimer = setTimeout(() => {
+        if (S.call === call && pc.connectionState !== 'connected') finishCall(call, 'Panggilan terputus');
+      }, DROP_GRACE_MS);
     }
   };
+
+  return pc;
+}
+
+function abortCall(call, message) {
+  if (S.call !== call) return;
+  toast(message);
+  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+  closeCall();
+}
+
+function finishCall(call, message) {
+  if (S.call !== call) return;
+  toast(message);
+  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+  closeCall();
 }
 
 async function handleSignal(signal) {
@@ -869,16 +1377,20 @@ async function handleSignal(signal) {
   try {
     if (signal.type === 'offer') {
       await call.pc.setRemoteDescription(new RTCSessionDescription(signal.offer));
-      flushCandidates(call);
+      await flushCandidates(call);
       const answer = await call.pc.createAnswer();
       await call.pc.setLocalDescription(answer);
-      S.socket.emit('call:signal', { to: call.peer.id, callId: call.callId, signal: { type: 'answer', answer: call.pc.localDescription } });
-      setCallState('Tersambung');
-      if (!call.startedAt) startCallTimer();
+      S.socket?.emit('call:signal', {
+        to: call.peer.id, callId: call.callId,
+        signal: { type: 'answer', answer: call.pc.localDescription },
+      });
+      setCallState('Menunggu koneksi...');
+      armConnectTimeout(call);
     } else if (signal.type === 'answer') {
       await call.pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      flushCandidates(call);
-      setCallState('Tersambung');
+      await flushCandidates(call);
+      setCallState('Menunggu koneksi...');
+      armConnectTimeout(call);
     } else if (signal.type === 'candidate') {
       if (!call.pc.remoteDescription) {
         (call.bufferedCandidates = call.bufferedCandidates || []).push(signal.candidate);
@@ -899,8 +1411,14 @@ async function flushCandidates(call) {
 
 function onCallEnded({ callId, reason }) {
   if (!S.call || S.call.callId !== callId) return;
+  // diterima/ditolak di tab lain: cukup tutup layar dering, jangan ganggu panggilan aktif
+  if (reason === 'accepted' || reason === 'cancelled') {
+    if (S.call.incoming) closeCall();
+    return;
+  }
   if (reason === 'rejected') toast('Panggilan ditolak');
-  else if (reason === 'ended') toast('Panggilan diakhiri');
+  else if (reason === 'timeout') toast('Panggilan tidak dijawab');
+  else toast('Panggilan diakhiri');
   closeCall();
 }
 
@@ -910,11 +1428,13 @@ function openCallUI(call) {
   $('remoteVideo').srcObject = null;
   $('localVideo').srcObject = null;
   $('remoteVideo').style.display = 'none';
-  $('callAvatarFallback').style.display = call.kind === 'video' ? 'none' : 'flex';
   $('localVideo').style.display = 'none';
+  $('callAvatarFallback').style.display = 'flex';
   $('btnToggleCam').style.display = call.kind === 'video' ? 'inline-flex' : 'none';
   $('btnToggleMic').classList.remove('off');
   $('btnToggleCam').classList.remove('off');
+  $('btnToggleMic').disabled = true;
+  $('btnToggleCam').disabled = true;
   $('callTimer').textContent = '00:00';
   $('activeCall').classList.remove('hidden');
 }
@@ -926,7 +1446,7 @@ function setCallState(text) {
 
 function startCallTimer() {
   const call = S.call;
-  if (!call) return;
+  if (!call || call.startedAt) return;
   call.startedAt = Date.now();
   clearInterval(call.timer);
   call.timer = setInterval(() => {
@@ -940,25 +1460,44 @@ function closeCall() {
   const call = S.call;
   if (!call) return;
   clearInterval(call.timer);
-  if (call.localStream) call.localStream.getTracks().forEach((t) => t.stop());
-  if (call.pc) call.pc.close();
+  clearTimeout(call.ringTimer);
+  clearTimeout(call.connectTimer);
+  clearTimeout(call.dropTimer);
+  if (call.localStream) call.localStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
+  if (call.pc) {
+    try {
+      call.pc.ontrack = null;
+      call.pc.onicecandidate = null;
+      call.pc.onconnectionstatechange = null;
+      call.pc.close();
+    } catch { /* noop */ }
+  }
   $('activeCall').classList.add('hidden');
   $('incomingCall').classList.add('hidden');
   $('remoteVideo').srcObject = null;
   $('localVideo').srcObject = null;
+  $('remoteVideo').style.display = 'none';
+  $('localVideo').style.display = 'none';
+  $('callAvatarFallback').style.display = 'flex';
   S.call = null;
 }
 
 $('btnToggleMic').addEventListener('click', () => {
-  if (!S.call?.localStream) return;
-  const track = S.call.localStream.getAudioTracks()[0];
-  if (track) { track.enabled = !track.enabled; S.call.mic = track.enabled; }
+  const call = S.call;
+  if (!call?.localStream) { toast('Mikrofon belum siap'); return; }
+  const track = call.localStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  call.mic = track.enabled;
   $('btnToggleMic').classList.toggle('off', !track.enabled);
 });
 $('btnToggleCam').addEventListener('click', () => {
-  if (!S.call?.localStream) return;
-  const track = S.call.localStream.getVideoTracks()[0];
-  if (track) { track.enabled = !track.enabled; S.call.cam = track.enabled; }
+  const call = S.call;
+  if (!call?.localStream) { toast('Kamera belum siap'); return; }
+  const track = call.localStream.getVideoTracks()[0];
+  if (!track) { toast('Kamera tidak tersedia'); return; }
+  track.enabled = !track.enabled;
+  call.cam = track.enabled;
   $('btnToggleCam').classList.toggle('off', !track.enabled);
 });
 
@@ -973,11 +1512,13 @@ $('btnBack').addEventListener('click', () => {
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    $('newChatDrawer').classList.add('hidden');
-    $('profileDrawer').classList.add('hidden');
+    closeDrawers();
     $('attachMenu').classList.add('hidden');
   }
 });
+
+$('chatAvatar').addEventListener('click', openContactInfo);
+$('chatName').parentElement.addEventListener('click', openContactInfo);
 
 /* ================= init ================= */
 (async function init() {

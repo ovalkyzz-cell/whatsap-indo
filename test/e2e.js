@@ -25,6 +25,14 @@ const waitEvent = (sock, event, timeout = 5000) => new Promise((resolve, reject)
   sock.once(event, (payload) => { clearTimeout(t); resolve(payload); });
 });
 
+const expectNoEvent = (sock, event, ms = 350) => new Promise((resolve) => {
+  const handler = (payload) => { clearTimeout(t); sock.off(event, handler); resolve({ got: true, payload }); };
+  const t = setTimeout(() => { sock.off(event, handler); resolve({ got: false }); }, ms);
+  sock.once(event, handler);
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 (async () => {
   const stamp = Date.now();
 
@@ -135,6 +143,96 @@ const waitEvent = (sock, event, timeout = 5000) => new Promise((resolve, reject)
   ok(del.status === 200, 'delete own message');
   const rm2 = await api(`/api/chats/${chatId}/messages`, { token: tokB });
   ok(rm2.data.messages.find((m) => m.id === msg1.id)?.deleted, 'message marked deleted for receiver');
+
+  console.log('\n[11] Call signaling (suara & video WebRTC)');
+  const sockB2 = io(BASE, { auth: { token: tokB } });
+  await new Promise((r) => sockB2.on('connect', r));
+
+  const callId = `call-${stamp}`;
+  const incB = waitEvent(sockB, 'call:incoming');
+  const incB2 = waitEvent(sockB2, 'call:incoming');
+  let inviteAck = null;
+  sockA2.emit('call:invite', { to: userB.id, callId, kind: 'video' }, (res) => { inviteAck = res; });
+  const incoming = await incB;
+  await sleep(100); // tunggu ack sampai (dikirim server setelah event)
+  ok(inviteAck?.ok === true, 'invite acknowledged');
+  ok(incoming.callId === callId && incoming.kind === 'video', 'callee receives video call invite');
+  ok(incoming.from?.id === userA.id && incoming.from?.verified === false, 'caller identity + verified flag delivered');
+  await incB2;
+  ok(true, 'second tab of callee rings too (multi-device)');
+
+  const acceptedEv = waitEvent(sockB2, 'call:ended');
+  sockB.emit('call:accept', { callId });
+  const accepted = await acceptedEv;
+  ok(accepted.reason === 'accepted' && accepted.callId === callId, 'other tab stops ringing after accept');
+
+  const offerEv = waitEvent(sockA2, 'call:signal');
+  sockB.emit('call:signal', { to: userA.id, callId, signal: { type: 'offer', offer: { type: 'offer', sdp: 'v=0\r\nfake-offer' } } });
+  const offer = await offerEv;
+  ok(offer.signal.type === 'offer' && offer.callId === callId, 'caller receives SDP offer');
+
+  const answerEv = waitEvent(sockB, 'call:signal');
+  sockA2.emit('call:signal', { to: userB.id, callId, signal: { type: 'answer', answer: { type: 'answer', sdp: 'v=0\r\nfake-answer' } } });
+  const answer = await answerEv;
+  ok(answer.signal.type === 'answer', 'callee receives SDP answer');
+
+  const candEv = waitEvent(sockA2, 'call:signal');
+  sockB.emit('call:signal', { to: userA.id, callId, signal: { type: 'candidate', candidate: { candidate: 'candidate:1 1 udp 1 1.2.3.4 1234 typ host', sdpMid: '0' } } });
+  const cand = await candEv;
+  ok(cand.signal.type === 'candidate', 'ICE candidate relayed');
+
+  // signal untuk panggilan tak dikenal / bukan peserta -> dibuang, server tetap hidup
+  sockA2.emit('call:signal', { to: userB.id, callId: 'call-tidak-terdaftar', signal: { type: 'offer', offer: {} } });
+  const stale = await expectNoEvent(sockA2, 'call:signal');
+  ok(!stale.got, 'signal for unknown call is dropped');
+
+  // self-call ditolak
+  let selfAck = null;
+  sockA2.emit('call:invite', { to: userA.id, callId: `${callId}-self`, kind: 'audio' }, (r) => { selfAck = r; });
+  await sleep(150);
+  ok(selfAck && selfAck.ok === false, 'self-call rejected');
+
+  // user terdaftar tapi offline -> invite gagal
+  const rC = await api('/api/auth/register', {
+    method: 'POST',
+    body: { email: `calo${stamp}@test.id`, name: 'Calo', password: 'secret123' },
+  });
+  let offlineAck = null;
+  sockA2.emit('call:invite', { to: rC.data.user.id, callId: `${callId}-off`, kind: 'audio' }, (r) => { offlineAck = r; });
+  await sleep(150);
+  ok(offlineAck && offlineAck.ok === false && /offline/i.test(offlineAck.error || ''), 'invite to offline user rejected');
+
+  // tolak -> penelepon diberi tahu
+  const rejectedEv = waitEvent(sockA2, 'call:ended');
+  const cancelledEv = waitEvent(sockB2, 'call:ended');
+  sockB.emit('call:reject', { to: userA.id, callId });
+  const rejected = await rejectedEv;
+  const cancelled = await cancelledEv;
+  ok(rejected.reason === 'rejected', 'caller told call was rejected');
+  ok(cancelled.reason === 'cancelled', 'callee other tab stopped ringing');
+
+  // penelepon keluar saat berdering -> penerima ditutup
+  const sockC = io(BASE, { auth: { token: rC.data.token } });
+  await new Promise((r) => sockC.on('connect', r));
+  const ringEv = waitEvent(sockB, 'call:incoming');
+  const endedEv = waitEvent(sockB, 'call:ended');
+  sockC.emit('call:invite', { to: userB.id, callId: `${callId}-drop`, kind: 'audio' });
+  await ringEv;
+  sockC.disconnect();
+  const endedByLeave = await endedEv;
+  ok(endedByLeave.callId === `${callId}-drop`, 'ringing call ends when caller disconnects');
+  sockB2.close();
+
+  console.log('\n[12] Upload safety (mencegah XSS file buatan pengguna)');
+  const fdHtml = new FormData();
+  fdHtml.append('file', new Blob(['<script>alert(1)</script>'], { type: 'text/html' }), 'evil.html');
+  const upHtml = await fetch(`${BASE}/api/upload`, { method: 'POST', headers: { Authorization: `Bearer ${tokA}` }, body: fdHtml });
+  const upHtmlData = await upHtml.json();
+  ok(upHtml.status === 201 && upHtmlData.url, 'html upload stored');
+  const evilRes = await fetch(BASE + upHtmlData.url);
+  ok(evilRes.headers.get('x-content-type-options') === 'nosniff', 'nosniff header set on /uploads');
+  ok((evilRes.headers.get('content-type') || '').indexOf('text/html') === -1, 'uploaded html is not served as text/html');
+  ok((evilRes.headers.get('content-disposition') || '').includes('attachment'), 'uploaded html forced download');
 
   sockB.close();
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);

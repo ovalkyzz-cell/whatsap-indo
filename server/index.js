@@ -19,12 +19,59 @@ const io = new Server(server, {
 });
 
 app.use(express.json({ limit: '1mb' }));
-app.use('/uploads', express.static(UPLOAD_DIR, { fallthrough: false, acceptRanges: true }));
+
+// File yang aman ditampilkan inline; sisanya dipaksa unduh (mencegah XSS
+// lewat file HTML/SVG buatan pengguna pada origin yang sama).
+const INLINE_SAFE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|opus|aac|flac|pdf|txt|csv)$/i;
+const SVG_EXT = /\.svg$/i;
+app.use('/uploads', express.static(UPLOAD_DIR, {
+  fallthrough: false,
+  acceptRanges: true,
+  setHeaders(res, filePath) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    if (SVG_EXT.test(filePath)) {
+      // SVG tetap bisa dipakai sebagai <img>, tapi wajib diunduh saat dibuka langsung
+      res.setHeader('Content-Disposition', 'attachment');
+      return;
+    }
+    if (!INLINE_SAFE.test(filePath)) {
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+  },
+}));
 app.use('/api', uploadRouter);
+
+// ---------- rate limit (brute force auth) ----------
+function rateLimit({ windowMs, max }) {
+  const hits = new Map();
+  const sweeper = setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of hits) if (now - v.first > windowMs) hits.delete(k);
+  }, windowMs);
+  sweeper.unref();
+  return (req, res, next) => {
+    const key = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    let entry = hits.get(key);
+    if (!entry || now - entry.first > windowMs) {
+      entry = { first: now, count: 0 };
+      hits.set(key, entry);
+    }
+    entry.count += 1;
+    if (entry.count > max) {
+      return res.status(429).json({ error: 'Terlalu banyak percobaan. Coba lagi beberapa saat lagi.' });
+    }
+    next();
+  };
+}
+const authLimiter = rateLimit({ windowMs: 60_000, max: 60 });
 
 // ---------- realtime state ----------
 const online = new Map(); // userId -> Set<socketId>
 const socketsByUser = new Map(); // socketId -> userId
+const calls = new Map(); // callId -> { a: callerId, b: calleeId, state }
 
 function isOnline(userId) {
   return online.has(userId);
@@ -41,8 +88,24 @@ function userSockets(userId) {
   return [...(online.get(userId) || [])];
 }
 
+function emitToUserExcept(userId, exceptSocketId, event, payload) {
+  const set = online.get(userId);
+  if (!set) return false;
+  let sent = false;
+  for (const sid of set) {
+    if (sid === exceptSocketId) continue;
+    io.to(sid).emit(event, payload);
+    sent = true;
+  }
+  return sent;
+}
+
+function publicCaller(row) {
+  return { id: row.id, name: row.name, avatar: row.avatar, verified: !!row.verified };
+}
+
 // ---------- auth routes ----------
-app.post('/api/auth/register', async (req, res, next) => {
+app.post('/api/auth/register', authLimiter, async (req, res, next) => {
   try {
     const result = await auth.register(req.body || {});
     res.status(201).json(result);
@@ -51,7 +114,7 @@ app.post('/api/auth/register', async (req, res, next) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res, next) => {
+app.post('/api/auth/login', authLimiter, async (req, res, next) => {
   try {
     res.json(await auth.login(req.body || {}));
   } catch (err) {
@@ -85,7 +148,7 @@ app.get('/api/users/:id', auth.requireAuth, (req, res) => {
 });
 
 app.patch('/api/me', auth.requireAuth, (req, res) => {
-  const { name, about, avatar } = req.body || {};
+  const { name, about, avatar, wallpaper } = req.body || {};
   if (name !== undefined) {
     const trimmed = String(name).trim();
     if (trimmed.length < 2) return res.status(400).json({ error: 'Nama minimal 2 karakter' });
@@ -96,6 +159,20 @@ app.patch('/api/me', auth.requireAuth, (req, res) => {
   }
   if (avatar !== undefined) {
     db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatar || null, req.user.id);
+  }
+  if (wallpaper !== undefined && wallpaper !== null) {
+    const type = ['default', 'image', 'video'].includes(wallpaper?.type) ? wallpaper.type : 'default';
+    const url = type === 'default' ? null : String(wallpaper?.url || '');
+    if (type !== 'default' && !/^\/uploads\/[\w.\-]+$/.test(url)) {
+      return res.status(400).json({ error: 'Latar belakang tidak valid' });
+    }
+    const mode = ['cover', 'contain', 'tile'].includes(wallpaper?.mode) ? wallpaper.mode : 'cover';
+    const scale = Math.min(300, Math.max(50, Math.round(Number(wallpaper?.scale) || 100)));
+    const dim = Math.min(70, Math.max(0, Math.round(Number(wallpaper?.dim))));
+    db.prepare(
+      `UPDATE users SET wallpaper_type = ?, wallpaper_url = ?, wallpaper_mode = ?,
+        wallpaper_scale = ?, wallpaper_dim = ? WHERE id = ?`
+    ).run(type, url, mode, scale, Number.isFinite(dim) ? dim : 20, req.user.id);
   }
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: auth.publicUser(row) });
@@ -265,31 +342,68 @@ io.on('connection', (socket) => {
 
   // ---------- WebRTC signaling ----------
   socket.on('call:invite', ({ to, callId, kind } = {}, ack) => {
-    const target = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-    if (!target) return ack?.({ ok: false, error: 'Pengguna tidak ditemukan' });
-    const delivered = emitToUser(to, 'call:incoming', {
-      callId,
+    const reply = (payload) => { try { ack?.(payload); } catch { /* ack sudah ditutup */ } };
+    const targetId = String(to || '');
+    const id = String(callId || '');
+    if (!id) return reply({ ok: false, error: 'Permintaan panggilan tidak valid' });
+    if (!targetId || targetId === user.id) return reply({ ok: false, error: 'Tidak dapat menelepon pengguna ini' });
+    const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId);
+    if (!target) return reply({ ok: false, error: 'Pengguna tidak ditemukan' });
+
+    calls.set(id, { a: user.id, b: targetId, state: 'ringing' });
+    const delivered = emitToUser(targetId, 'call:incoming', {
+      callId: id,
       kind: kind === 'video' ? 'video' : 'audio',
-      from: { id: user.id, name: user.name, avatar: user.avatar },
+      from: publicCaller(user),
     });
-    if (!delivered) return ack?.({ ok: false, error: 'Pengguna sedang offline' });
-    ack?.({ ok: true, delivered: true });
+    if (!delivered) {
+      calls.delete(id);
+      return reply({ ok: false, error: 'Pengguna sedang offline' });
+    }
+    reply({ ok: true, delivered: true });
   });
 
-  socket.on('call:signal', ({ to, callId, signal }) => {
-    emitToUser(to, 'call:signal', {
-      callId,
-      from: { id: user.id, name: user.name, avatar: user.avatar },
+  socket.on('call:accept', ({ callId } = {}) => {
+    const id = String(callId || '');
+    const call = calls.get(id);
+    if (!call || (call.a !== user.id && call.b !== user.id)) return;
+    call.state = 'accepted';
+    // tab/perangkat lain milik penerima masih berdering -> tutup
+    emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'accepted' });
+  });
+
+  socket.on('call:signal', ({ to, callId, signal } = {}) => {
+    const targetId = String(to || '');
+    const id = String(callId || '');
+    if (!id || !targetId || targetId === user.id) return;
+    const call = calls.get(id);
+    if (!call || (call.a !== user.id && call.b !== user.id)) return;
+    if (!signal || typeof signal !== 'object') return;
+    if (!['offer', 'answer', 'candidate'].includes(signal.type)) return;
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(targetId)) return;
+    if (signal.type === 'answer') call.state = 'active';
+    emitToUser(targetId, 'call:signal', {
+      callId: id,
+      from: publicCaller(user),
       signal,
     });
   });
 
-  socket.on('call:reject', ({ to, callId }) => {
-    emitToUser(to, 'call:ended', { callId, reason: 'rejected' });
+  socket.on('call:reject', ({ to, callId } = {}) => {
+    const id = String(callId || '');
+    const targetId = String(to || '');
+    calls.delete(id);
+    if (targetId && targetId !== user.id) emitToUser(targetId, 'call:ended', { callId: id, reason: 'rejected' });
+    emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'cancelled' });
   });
 
-  socket.on('call:hangup', ({ to, callId }) => {
-    emitToUser(to, 'call:ended', { callId, reason: 'ended' });
+  socket.on('call:hangup', ({ to, callId, reason } = {}) => {
+    const id = String(callId || '');
+    const targetId = String(to || '');
+    calls.delete(id);
+    const mapped = reason === 'timeout' ? 'timeout' : 'ended';
+    if (targetId && targetId !== user.id) emitToUser(targetId, 'call:ended', { callId: id, reason: mapped });
+    emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'ended' });
   });
 
   socket.on('disconnect', () => {
@@ -303,6 +417,19 @@ io.on('connection', (socket) => {
       }
     }
     socketsByUser.delete(socket.id);
+
+    // panggilan yang masih berdering berhenti saat penelepon/penerima keluar;
+    // panggilan aktif dibiarkan (WebRTC P2P) dan dibersihkan bila kedua pihak pergi
+    for (const [id, call] of [...calls]) {
+      if (call.a !== user.id && call.b !== user.id) continue;
+      if (call.state === 'ringing') {
+        calls.delete(id);
+        const other = call.a === user.id ? call.b : call.a;
+        emitToUser(other, 'call:ended', { callId: id, reason: 'ended' });
+      } else if (!online.has(call.a) && !online.has(call.b)) {
+        calls.delete(id);
+      }
+    }
   });
 });
 

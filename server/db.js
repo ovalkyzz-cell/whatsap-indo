@@ -63,10 +63,25 @@ CREATE TABLE IF NOT EXISTS message_status (
 );
 `);
 
-// migration: kolom verifikasi (centang biru)
+// migration: kolom verifikasi (centang biru) + latar belakang chat
 const userCols = db.prepare('PRAGMA table_info(users)').all();
 if (!userCols.some((c) => c.name === 'verified')) {
   db.exec(`ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0`);
+}
+if (!userCols.some((c) => c.name === 'wallpaper_type')) {
+  db.exec(`ALTER TABLE users ADD COLUMN wallpaper_type TEXT NOT NULL DEFAULT 'default'`);
+}
+if (!userCols.some((c) => c.name === 'wallpaper_url')) {
+  db.exec(`ALTER TABLE users ADD COLUMN wallpaper_url TEXT`);
+}
+if (!userCols.some((c) => c.name === 'wallpaper_mode')) {
+  db.exec(`ALTER TABLE users ADD COLUMN wallpaper_mode TEXT NOT NULL DEFAULT 'cover'`);
+}
+if (!userCols.some((c) => c.name === 'wallpaper_scale')) {
+  db.exec(`ALTER TABLE users ADD COLUMN wallpaper_scale INTEGER NOT NULL DEFAULT 100`);
+}
+if (!userCols.some((c) => c.name === 'wallpaper_dim')) {
+  db.exec(`ALTER TABLE users ADD COLUMN wallpaper_dim INTEGER NOT NULL DEFAULT 20`);
 }
 
 // pastikan email terverifikasi selalu flag-nya 1 (baik akun lama maupun baru)
