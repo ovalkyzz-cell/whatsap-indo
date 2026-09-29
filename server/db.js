@@ -30,13 +30,53 @@ CREATE TABLE IF NOT EXISTS users (
   wallpaper_url  TEXT,
   wallpaper_mode TEXT NOT NULL DEFAULT 'cover',
   wallpaper_scale INTEGER NOT NULL DEFAULT 100,
-  wallpaper_dim   INTEGER NOT NULL DEFAULT 20
+  wallpaper_dim   INTEGER NOT NULL DEFAULT 20,
+  role            TEXT NOT NULL DEFAULT 'user',
+  premium_plan    TEXT,
+  premium_until   BIGINT NOT NULL DEFAULT 0,
+  priv_last_seen  SMALLINT NOT NULL DEFAULT 0,
+  priv_receipts   SMALLINT NOT NULL DEFAULT 0,
+  priv_email      SMALLINT NOT NULL DEFAULT 0,
+  priv_bio        SMALLINT NOT NULL DEFAULT 0,
+  priv_status     SMALLINT NOT NULL DEFAULT 0,
+  priv_avatar     SMALLINT NOT NULL DEFAULT 0,
+  home_bg_type    TEXT NOT NULL DEFAULT 'default',
+  home_bg_url     TEXT,
+  session_id      TEXT,
+  session_at      BIGINT NOT NULL DEFAULT 0,
+  account_status  TEXT NOT NULL DEFAULT 'active',
+  reject_reason   TEXT,
+  banned          SMALLINT NOT NULL DEFAULT 0,
+  banned_reason   TEXT,
+  banned_at       BIGINT NOT NULL DEFAULT 0,
+  last_device     TEXT,
+  last_ip         TEXT,
+  last_login_at   BIGINT NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS login_logs (
+  id      TEXT PRIMARY KEY,
+  user_id TEXT,
+  email   TEXT NOT NULL,
+  ip      TEXT,
+  device  TEXT,
+  result  TEXT NOT NULL,
+  detail  TEXT,
+  at      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_logs_at ON login_logs (at);
 
 CREATE TABLE IF NOT EXISTS chats (
   id         TEXT PRIMARY KEY,
   type       TEXT NOT NULL DEFAULT 'direct',
   name       TEXT,
+  avatar     TEXT,
+  created_by TEXT,
   created_at BIGINT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_direct_name ON chats (name) WHERE type = 'direct';
@@ -60,6 +100,10 @@ CREATE TABLE IF NOT EXISTS messages (
   media_name TEXT,
   media_size BIGINT,
   mime       TEXT,
+  view_once  SMALLINT NOT NULL DEFAULT 0,
+  opened_at  BIGINT,
+  opened_by  TEXT,
+  duration   INTEGER NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL,
   deleted_at BIGINT
 );
@@ -73,6 +117,39 @@ CREATE TABLE IF NOT EXISTS message_status (
   PRIMARY KEY (message_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_message_status_user ON message_status (user_id, message_id);
+
+CREATE TABLE IF NOT EXISTS statuses (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL DEFAULT 'text',
+  body       TEXT NOT NULL DEFAULT '',
+  bg         TEXT,
+  media_url  TEXT,
+  media_name TEXT,
+  mime       TEXT,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_statuses_feed ON statuses (expires_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_statuses_user ON statuses (user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS status_views (
+  status_id TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  viewer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  at        BIGINT NOT NULL,
+  PRIMARY KEY (status_id, viewer_id)
+);
+CREATE INDEX IF NOT EXISTS idx_status_views_viewer ON status_views (viewer_id, at);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_push_sub_user ON push_subscriptions (user_id);
 
 CREATE TABLE IF NOT EXISTS presence (
   user_id     TEXT NOT NULL,
@@ -120,13 +197,53 @@ CREATE TABLE IF NOT EXISTS users (
   wallpaper_url  TEXT,
   wallpaper_mode TEXT NOT NULL DEFAULT 'cover',
   wallpaper_scale INTEGER NOT NULL DEFAULT 100,
-  wallpaper_dim   INTEGER NOT NULL DEFAULT 20
+  wallpaper_dim   INTEGER NOT NULL DEFAULT 20,
+  role            TEXT NOT NULL DEFAULT 'user',
+  premium_plan    TEXT,
+  premium_until   INTEGER NOT NULL DEFAULT 0,
+  priv_last_seen  INTEGER NOT NULL DEFAULT 0,
+  priv_receipts   INTEGER NOT NULL DEFAULT 0,
+  priv_email      INTEGER NOT NULL DEFAULT 0,
+  priv_bio        INTEGER NOT NULL DEFAULT 0,
+  priv_status     INTEGER NOT NULL DEFAULT 0,
+  priv_avatar     INTEGER NOT NULL DEFAULT 0,
+  home_bg_type    TEXT NOT NULL DEFAULT 'default',
+  home_bg_url     TEXT,
+  session_id      TEXT,
+  session_at      INTEGER NOT NULL DEFAULT 0,
+  account_status  TEXT NOT NULL DEFAULT 'active',
+  reject_reason   TEXT,
+  banned          INTEGER NOT NULL DEFAULT 0,
+  banned_reason   TEXT,
+  banned_at       INTEGER NOT NULL DEFAULT 0,
+  last_device     TEXT,
+  last_ip         TEXT,
+  last_login_at   INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS login_logs (
+  id      TEXT PRIMARY KEY,
+  user_id TEXT,
+  email   TEXT NOT NULL,
+  ip      TEXT,
+  device  TEXT,
+  result  TEXT NOT NULL,
+  detail  TEXT,
+  at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_logs_at ON login_logs (at);
 
 CREATE TABLE IF NOT EXISTS chats (
   id         TEXT PRIMARY KEY,
   type       TEXT NOT NULL DEFAULT 'direct',
   name       TEXT,
+  avatar     TEXT,
+  created_by TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_direct_name ON chats (name) WHERE type = 'direct';
@@ -150,6 +267,10 @@ CREATE TABLE IF NOT EXISTS messages (
   media_name TEXT,
   media_size INTEGER,
   mime       TEXT,
+  view_once  INTEGER NOT NULL DEFAULT 0,
+  opened_at  INTEGER,
+  opened_by  TEXT,
+  duration   INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   deleted_at INTEGER
 );
@@ -163,6 +284,39 @@ CREATE TABLE IF NOT EXISTS message_status (
   PRIMARY KEY (message_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_message_status_user ON message_status (user_id, message_id);
+
+CREATE TABLE IF NOT EXISTS statuses (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL DEFAULT 'text',
+  body       TEXT NOT NULL DEFAULT '',
+  bg         TEXT,
+  media_url  TEXT,
+  media_name TEXT,
+  mime       TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_statuses_feed ON statuses (expires_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_statuses_user ON statuses (user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS status_views (
+  status_id TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  viewer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  at        INTEGER NOT NULL,
+  PRIMARY KEY (status_id, viewer_id)
+);
+CREATE INDEX IF NOT EXISTS idx_status_views_viewer ON status_views (viewer_id, at);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_push_sub_user ON push_subscriptions (user_id);
 
 CREATE TABLE IF NOT EXISTS presence (
   user_id     TEXT NOT NULL,
@@ -195,14 +349,48 @@ CREATE TABLE IF NOT EXISTS bus (
 CREATE INDEX IF NOT EXISTS idx_bus_at ON bus (at);
 `;
 
-const USER_MIGRATION = [
-  ['verified', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
-  ['wallpaper_type', "TEXT NOT NULL DEFAULT 'default'", "TEXT NOT NULL DEFAULT 'default'"],
-  ['wallpaper_url', 'TEXT', 'TEXT'],
-  ['wallpaper_mode', "TEXT NOT NULL DEFAULT 'cover'", "TEXT NOT NULL DEFAULT 'cover'"],
-  ['wallpaper_scale', 'INTEGER NOT NULL DEFAULT 100', 'INTEGER NOT NULL DEFAULT 100'],
-  ['wallpaper_dim', 'INTEGER NOT NULL DEFAULT 20', 'INTEGER NOT NULL DEFAULT 20'],
-];
+// migrasi kolom per tabel (dijalankan saat boot, aman diulang)
+const TABLE_MIGRATIONS = {
+  users: [
+    ['verified', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['wallpaper_type', "TEXT NOT NULL DEFAULT 'default'", "TEXT NOT NULL DEFAULT 'default'"],
+    ['wallpaper_url', 'TEXT', 'TEXT'],
+    ['wallpaper_mode', "TEXT NOT NULL DEFAULT 'cover'", "TEXT NOT NULL DEFAULT 'cover'"],
+    ['wallpaper_scale', 'INTEGER NOT NULL DEFAULT 100', 'INTEGER NOT NULL DEFAULT 100'],
+    ['wallpaper_dim', 'INTEGER NOT NULL DEFAULT 20', 'INTEGER NOT NULL DEFAULT 20'],
+    ['role', "TEXT NOT NULL DEFAULT 'user'", "TEXT NOT NULL DEFAULT 'user'"],
+    ['premium_plan', 'TEXT', 'TEXT'],
+    ['premium_until', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_last_seen', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_receipts', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_email', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_bio', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_status', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_avatar', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['home_bg_type', "TEXT NOT NULL DEFAULT 'default'", "TEXT NOT NULL DEFAULT 'default'"],
+    ['home_bg_url', 'TEXT', 'TEXT'],
+    ['session_id', 'TEXT', 'TEXT'],
+    ['session_at', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['account_status', "TEXT NOT NULL DEFAULT 'active'", "TEXT NOT NULL DEFAULT 'active'"],
+    ['reject_reason', 'TEXT', 'TEXT'],
+    ['banned', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['banned_reason', 'TEXT', 'TEXT'],
+    ['banned_at', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['last_device', 'TEXT', 'TEXT'],
+    ['last_ip', 'TEXT', 'TEXT'],
+    ['last_login_at', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+  ],
+  chats: [
+    ['avatar', 'TEXT', 'TEXT'],
+    ['created_by', 'TEXT', 'TEXT'],
+  ],
+  messages: [
+    ['view_once', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['opened_at', 'BIGINT', 'INTEGER'],
+    ['opened_by', 'TEXT', 'TEXT'],
+    ['duration', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+  ],
+};
 
 function boot() {
   if (!bootPromise) {
@@ -240,7 +428,11 @@ async function bootPg() {
     }
   }
   await migratePg();
-  await pool.query(`UPDATE users SET verified = 1 WHERE email = 'ovalkyzz@gmail.com'`);
+  await pool.query(
+    `UPDATE users SET role = 'admin', verified = 1, premium_plan = 'bulanan',
+       premium_until = GREATEST(premium_until, EXTRACT(EPOCH FROM NOW()) * 1000 + 3153600000000)
+     WHERE email = 'ovalkyzz@gmail.com'`
+  );
 }
 
 function statements(schema) {
@@ -252,12 +444,15 @@ function ignorableSchemaError(err) {
 }
 
 async function migratePg() {
-  const res = await pool.query(
-    `SELECT column_name FROM information_schema.columns WHERE table_name = 'users'`
-  );
-  const have = new Set(res.rows.map((r) => r.column_name));
-  for (const [name, pgType] of USER_MIGRATION) {
-    if (!have.has(name)) await pool.query(`ALTER TABLE users ADD COLUMN ${name} ${pgType}`);
+  for (const [table, cols] of Object.entries(TABLE_MIGRATIONS)) {
+    const res = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = $1`,
+      [table]
+    );
+    const have = new Set(res.rows.map((r) => r.column_name));
+    for (const [name, pgType] of cols) {
+      if (!have.has(name)) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${name} ${pgType}`);
+    }
   }
 }
 
@@ -278,12 +473,20 @@ async function bootSqlite() {
       if (!ignorableSchemaError(err)) throw err;
     }
   }
-  const cols = sqlite.prepare('PRAGMA table_info(users)').all();
-  const have = new Set(cols.map((c) => c.name));
-  for (const [name, , liteType] of USER_MIGRATION) {
-    if (!have.has(name)) sqlite.exec(`ALTER TABLE users ADD COLUMN ${name} ${liteType}`);
+  for (const [table, cols] of Object.entries(TABLE_MIGRATIONS)) {
+    const info = sqlite.prepare(`PRAGMA table_info(${table})`).all();
+    const have = new Set(info.map((c) => c.name));
+    for (const [name, , liteType] of cols) {
+      if (!have.has(name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${liteType}`);
+    }
   }
-  sqlite.prepare('UPDATE users SET verified = 1 WHERE email = ?').run('ovalkyzz@gmail.com');
+  sqlite
+    .prepare(
+      `UPDATE users SET role = 'admin', verified = 1, premium_plan = 'bulanan',
+         premium_until = MAX(premium_until, ?)
+       WHERE email = ?`
+    )
+    .run(Date.now() + 100 * 365 * 24 * 3600 * 1000, 'ovalkyzz@gmail.com');
 }
 
 function toPg(sql) {

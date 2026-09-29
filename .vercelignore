@@ -7,4 +7,5 @@ uploads
 test
 *.log
 .env
+.env.*
 .DS_Store

@@ -12,6 +12,8 @@ const helpers = require('./helpers');
 const presence = require('./presence');
 const calls = require('./calls');
 const bus = require('./bus');
+const settings = require('./settings');
+const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR } = require('./upload');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -75,6 +77,27 @@ function rateLimit({ windowMs, max }) {
 }
 const authLimiter = rateLimit({ windowMs: 60_000, max: 60 });
 
+// ---------- anti spam / anti flood (perlindungan akun) ----------
+// Bucket sederhana per kunci: mencegah banjir pesan (flood) yang bisa membuat
+// akun dianggap spam, sekaligus membatasi aksi sensitif (buat grup, status).
+const floodBuckets = new Map();
+const floodSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of floodBuckets) if (now - bucket.start > bucket.windowMs * 2) floodBuckets.delete(key);
+}, 60_000);
+floodSweep.unref();
+
+function floodGuard(key, max, windowMs) {
+  const now = Date.now();
+  let bucket = floodBuckets.get(key);
+  if (!bucket || now - bucket.start > windowMs) {
+    bucket = { start: now, count: 0, windowMs };
+    floodBuckets.set(key, bucket);
+  }
+  bucket.count += 1;
+  return bucket.count <= max;
+}
+
 // ---------- pengiriman event (lokal + relay ke instance lain) ----------
 async function dispatch(pairs) {
   if (!pairs.length) return { local: false, remote: new Set() };
@@ -121,17 +144,144 @@ async function emitToUsers(userIds, event, payload) {
   await dispatch(userIds.map((userId) => ({ userId, event, payload })));
 }
 
-function publicCaller(row) {
-  return { id: row.id, name: row.name, avatar: row.avatar, verified: !!row.verified };
+function publicCaller(row, viewerId) {
+  return helpers.serializeUser(row, viewerId, { premium: false });
+}
+
+function requireAdmin(req, res, next) {
+  if (!auth.isAdmin(req.user)) return res.status(403).json({ error: 'Hanya admin yang diizinkan' });
+  next();
+}
+
+// tampilan ringkas untuk panel admin
+function adminUser(row, online) {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    avatar: row.avatar,
+    role: auth.isAdmin(row) ? 'admin' : (row.role || 'user'),
+    verified: auth.verifiedOf(row),
+    plan: row.premium_plan || null,
+    premiumUntil: Number(row.premium_until) || 0,
+    premiumActive: auth.isPremium(row),
+    createdAt: row.created_at,
+    lastSeen: row.last_seen,
+    online: !!online,
+    status: row.banned ? 'banned' : (row.account_status || 'active'),
+    rejectReason: row.reject_reason || null,
+    bannedReason: row.banned_reason || null,
+    bannedAt: Number(row.banned_at) || 0,
+    lastLoginAt: Number(row.last_login_at) || 0,
+    sessionAt: Number(row.session_at) || 0,
+    lastDevice: row.last_device || null,
+    lastIp: row.last_ip || null,
+    hasSession: !!row.session_id,
+  };
+}
+
+// ---------- meta pengguna (device + IP) untuk pemantauan admin ----------
+function reqMeta(req) {
+  return {
+    device: String(req.headers['user-agent'] || '').slice(0, 180),
+    ip: String(req.ip || req.socket?.remoteAddress || '').slice(0, 60),
+  };
+}
+
+async function recordLogin({ userId, email, ip, device, result, detail }) {
+  try {
+    await db.run(
+      `INSERT INTO login_logs (id, user_id, email, ip, device, result, detail, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      crypto.randomUUID(),
+      userId || null,
+      String(email || '').slice(0, 200),
+      ip || null,
+      device || null,
+      result,
+      detail ? String(detail).slice(0, 200) : null,
+      Date.now()
+    );
+  } catch (err) {
+    console.error('login log:', err.message);
+  }
+}
+
+// daftar admin (role + daftar email admin) untuk broadcast monitor real-time
+async function adminIds() {
+  const rows = await db.all(`SELECT id, email FROM users WHERE role = 'admin'`);
+  const extra = auth.ADMIN_EMAILS;
+  const ids = new Set(rows.filter((r) => auth.isAdmin(r)).map((r) => r.id));
+  if (extra.length) {
+    const found = await db.all(
+      `SELECT id, email FROM users WHERE LOWER(email) IN (${extra.map(() => '?').join(', ')})`,
+      ...extra
+    );
+    for (const r of found) ids.add(r.id);
+  }
+  return [...ids];
+}
+
+// semua peristiwa penting didorong ke panel admin secara real-time
+async function adminEvent(type, payload = {}) {
+  try {
+    const ids = await adminIds();
+    if (!ids.length) return;
+    await emitToUsers(ids, 'admin:event', { type, at: Date.now(), ...payload });
+  } catch (err) {
+    console.error('admin event:', err.message);
+  }
+}
+
+// sesi lama dimatikan; socket klien diberi tahu lalu diputus
+async function revokeSessions(userId, reason) {
+  await auth.clearSession(userId);
+  await emitToUser(userId, 'session:revoked', { reason: reason || 'revoked' });
 }
 
 // ---------- auth routes ----------
 app.post('/api/auth/register', authLimiter, ah(async (req, res) => {
-  res.status(201).json(await auth.register(req.body || {}));
+  const meta = reqMeta(req);
+  const out = await auth.register(req.body || {}, meta);
+  res.status(201).json(out);
+  if (out.pending) {
+    await recordLogin({ userId: out.user.id, email: out.user.email, ...meta, result: 'pending', detail: 'menunggu persetujuan admin' });
+    await adminEvent('registered', { user: adminUser(await db.get('SELECT * FROM users WHERE id = ?', out.user.id)) });
+  }
 }));
 
 app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
-  res.json(await auth.login(req.body || {}));
+  const meta = reqMeta(req);
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  try {
+    const out = await auth.login(req.body || {}, meta);
+    res.json(out);
+    await recordLogin({ userId: out.user.id, email: out.user.email, ...meta, result: 'success' });
+    // perangkat lain memakai akun yang sama -> sesi lamanya diganti
+    const sid = (auth.verifyToken(out.token) || {}).sid || '';
+    await emitToUser(out.user.id, 'session:replaced', { sid });
+    await adminEvent('login', {
+      userId: out.user.id,
+      name: out.user.name,
+      email: out.user.email,
+      device: meta.device,
+      ip: meta.ip,
+    });
+  } catch (err) {
+    if (err.status === 403 && err.code) {
+      await recordLogin({ email, ...meta, result: err.code, detail: err.message });
+    } else if (err.status === 401 && err.code === 'invalid_credentials') {
+      await recordLogin({ email, ...meta, result: 'failed', detail: 'password salah' });
+    }
+    throw err;
+  }
+}));
+
+app.post('/api/auth/logout', auth.requireAuth, ah(async (req, res) => {
+  await revokeSessions(req.user.id, 'logout');
+  await recordLogin({ userId: req.user.id, email: req.user.email, ...reqMeta(req), result: 'logout' });
+  await adminEvent('logout', { userId: req.user.id, name: req.user.name, email: req.user.email });
+  res.json({ ok: true });
 }));
 
 app.get('/api/auth/me', auth.requireAuth, (req, res) => {
@@ -149,20 +299,43 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
     like,
     like
   );
-  const online = await presence.onlineSet(rows.map((r) => r.id));
+  // email yang dipribatkan tidak bisa ditemukan lewat email
+  const visible = rows.filter((r) => {
+    if (!r.priv_email) return true;
+    const matchEmail = String(r.email || '').toLowerCase().includes(q.toLowerCase());
+    const matchName = String(r.name || '').toLowerCase().includes(q.toLowerCase());
+    return matchName;
+  });
+  const online = await presence.onlineSet(visible.map((r) => r.id));
   res.json({
-    users: rows.map((r) => ({ ...auth.publicUser(r), online: online.has(r.id) })),
+    users: visible.map((r) =>
+      helpers.serializeUser(r, req.user.id, { online: online.has(r.id), premium: false })
+    ),
   });
 }));
 
 app.get('/api/users/:id', auth.requireAuth, ah(async (req, res) => {
   const row = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!row) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
-  res.json({ user: { ...auth.publicUser(row), online: await presence.isOnline(row.id) } });
+  res.json({
+    user: helpers.serializeUser(row, req.user.id, {
+      online: await presence.isOnline(row.id),
+      premium: true,
+    }),
+  });
 }));
 
+const PRIVACY_COLUMNS = {
+  lastSeen: 'priv_last_seen',
+  receipts: 'priv_receipts',
+  email: 'priv_email',
+  bio: 'priv_bio',
+  status: 'priv_status',
+  avatar: 'priv_avatar',
+};
+
 app.patch('/api/me', auth.requireAuth, ah(async (req, res) => {
-  const { name, about, avatar, wallpaper } = req.body || {};
+  const { name, about, avatar, wallpaper, homeBg, privacy } = req.body || {};
   if (name !== undefined) {
     const trimmed = String(name).trim();
     if (trimmed.length < 2) return res.status(400).json({ error: 'Nama minimal 2 karakter' });
@@ -173,6 +346,16 @@ app.patch('/api/me', auth.requireAuth, ah(async (req, res) => {
   }
   if (avatar !== undefined) {
     await db.run('UPDATE users SET avatar = ? WHERE id = ?', avatar || null, req.user.id);
+  }
+  if (privacy !== undefined && privacy !== null) {
+    if (typeof privacy !== 'object') return res.status(400).json({ error: 'Pengaturan privasi tidak valid' });
+    for (const [key, column] of Object.entries(PRIVACY_COLUMNS)) {
+      if (privacy[key] === undefined) continue;
+      if (typeof privacy[key] !== 'boolean') {
+        return res.status(400).json({ error: `Pengaturan privasi ${key} tidak valid` });
+      }
+      await db.run(`UPDATE users SET ${column} = ? WHERE id = ?`, privacy[key] ? 1 : 0, req.user.id);
+    }
   }
   if (wallpaper !== undefined && wallpaper !== null) {
     const type = ['default', 'image', 'video'].includes(wallpaper?.type) ? wallpaper.type : 'default';
@@ -195,6 +378,16 @@ app.patch('/api/me', auth.requireAuth, ah(async (req, res) => {
       Number.isFinite(dim) ? dim : 20,
       req.user.id
     );
+  }
+  if (homeBg !== undefined && homeBg !== null) {
+    if (typeof homeBg !== 'object') return res.status(400).json({ error: 'Latar halaman utama tidak valid' });
+    const bgType = ['default', 'image', 'video'].includes(homeBg.type) ? homeBg.type : null;
+    if (!bgType) return res.status(400).json({ error: 'Latar halaman utama tidak valid' });
+    const bgUrl = bgType === 'default' ? null : String(homeBg.url || '');
+    if (bgType !== 'default' && !settings.validBgUrl(bgUrl)) {
+      return res.status(400).json({ error: 'URL latar halaman utama tidak valid' });
+    }
+    await db.run('UPDATE users SET home_bg_type = ?, home_bg_url = ? WHERE id = ?', bgType, bgUrl, req.user.id);
   }
   const row = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
   res.json({ user: auth.publicUser(row) });
@@ -236,6 +429,167 @@ app.post('/api/chats/direct', auth.requireAuth, ah(async (req, res) => {
   res.status(201).json({ chat: (await helpers.serializeChats([row], req.user.id))[0] });
 }));
 
+// ---------- grup ----------
+const MAX_GROUP_MEMBERS = 500;
+
+function validChatUrl(url) {
+  return /^\/uploads\/[\w.\-]+$/.test(String(url || ''))
+    || /^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\/[\w.%\-/~]+$/.test(String(url || ''));
+}
+
+app.post('/api/chats/group', auth.requireAuth, ah(async (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 60);
+  const rawMembers = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
+  if (rawMembers.length > MAX_GROUP_MEMBERS) {
+    return res.status(400).json({ error: `Grup maksimal ${MAX_GROUP_MEMBERS} anggota` });
+  }
+  const memberIds = [...new Set(rawMembers.map(String))]
+    .filter((id) => id && id !== req.user.id)
+    .slice(0, MAX_GROUP_MEMBERS);
+  if (name.length < 3) return res.status(400).json({ error: 'Nama grup minimal 3 karakter' });
+  if (!memberIds.length) return res.status(400).json({ error: 'Pilih minimal satu anggota lain' });
+  if (!floodGuard(`group:${req.user.id}`, 5, 3_600_000)) {
+    return res.status(429).json({ error: 'Terlalu sering membuat grup. Coba lagi nanti.' });
+  }
+
+  const found = await db.all(
+    `SELECT id FROM users WHERE id IN (${memberIds.map(() => '?').join(', ')})`,
+    ...memberIds
+  );
+  if (found.length !== memberIds.length) {
+    return res.status(400).json({ error: 'Ada anggota yang tidak ditemukan' });
+  }
+
+  const id = await db.transaction(async () => {
+    const chatId = crypto.randomUUID();
+    const now = Date.now();
+    await db.run(
+      `INSERT INTO chats (id, type, name, created_by, created_at) VALUES (?, 'group', ?, ?, ?)`,
+      chatId,
+      name,
+      req.user.id,
+      now
+    );
+    await db.run(
+      `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'admin', ?)`,
+      chatId,
+      req.user.id,
+      now
+    );
+    for (const uid of memberIds) {
+      await db.run(
+        `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)`,
+        chatId,
+        uid,
+        now
+      );
+    }
+    return chatId;
+  });
+
+  const row = await db.get(
+    `SELECT c.* FROM chats c JOIN chat_members m ON m.chat_id = c.id AND m.user_id = ? WHERE c.id = ?`,
+    req.user.id,
+    id
+  );
+  const chat = (await helpers.serializeChats([row], req.user.id))[0];
+  await emitToUsers([req.user.id, ...memberIds], 'chat:updated', { chatId: id });
+  res.status(201).json({ chat });
+}));
+
+app.get('/api/chats/:id/members', auth.requireAuth, ah(async (req, res) => {
+  if (!(await helpers.isMember(req.params.id, req.user.id))) {
+    return res.status(403).json({ error: 'Bukan anggota chat ini' });
+  }
+  const rows = await db.all(
+    `SELECT u.*, m.role AS chat_role, m.joined_at
+     FROM chat_members m JOIN users u ON u.id = m.user_id
+     WHERE m.chat_id = ? ORDER BY CASE m.role WHEN 'admin' THEN 0 ELSE 1 END, LOWER(u.name)`,
+    req.params.id
+  );
+  const online = await presence.onlineSet(rows.map((r) => r.id));
+  res.json({
+    members: rows.map((r) => ({
+      ...helpers.serializeUser(r, req.user.id, { online: online.has(r.id), premium: false }),
+      role: r.chat_role,
+      joinedAt: r.joined_at,
+    })),
+  });
+}));
+
+app.patch('/api/chats/:id', auth.requireAuth, ah(async (req, res) => {
+  const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
+  if (!chat) return res.status(404).json({ error: 'Chat tidak ditemukan' });
+  if (chat.type !== 'group') return res.status(400).json({ error: 'Hanya grup yang bisa diubah' });
+  if (!(await helpers.isGroupAdmin(chat.id, req.user.id))) {
+    return res.status(403).json({ error: 'Hanya admin grup yang bisa mengubah' });
+  }
+  const name = req.body?.name !== undefined ? String(req.body.name).trim().slice(0, 60) : undefined;
+  const avatar = req.body?.avatar !== undefined ? (req.body.avatar ? String(req.body.avatar) : null) : undefined;
+  if (name !== undefined && name.length < 3) return res.status(400).json({ error: 'Nama grup minimal 3 karakter' });
+  if (avatar !== undefined && avatar && !validChatUrl(avatar)) {
+    return res.status(400).json({ error: 'Foto grup tidak valid' });
+  }
+  if (name !== undefined) await db.run('UPDATE chats SET name = ? WHERE id = ?', name, chat.id);
+  if (avatar !== undefined) await db.run('UPDATE chats SET avatar = ? WHERE id = ?', avatar, chat.id);
+  const members = await helpers.getChatMemberIds(chat.id);
+  await emitToUsers(members, 'chat:updated', { chatId: chat.id });
+  const row = await db.get('SELECT * FROM chats WHERE id = ?', chat.id);
+  res.json({ chat: (await helpers.serializeChats([row], req.user.id))[0] });
+}));
+
+app.post('/api/chats/:id/members', auth.requireAuth, ah(async (req, res) => {
+  const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
+  if (!chat || chat.type !== 'group') return res.status(404).json({ error: 'Grup tidak ditemukan' });
+  if (!(await helpers.isGroupAdmin(chat.id, req.user.id))) {
+    return res.status(403).json({ error: 'Hanya admin grup yang bisa menambah anggota' });
+  }
+  const userId = String(req.body?.userId || '');
+  const target = await db.get('SELECT id FROM users WHERE id = ?', userId);
+  if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  const existing = await db.get('SELECT 1 AS x FROM chat_members WHERE chat_id = ? AND user_id = ?', chat.id, userId);
+  if (existing) return res.json({ ok: true, already: true });
+  const count = await db.get('SELECT COUNT(*) AS n FROM chat_members WHERE chat_id = ?', chat.id);
+  if (Number(count.n) >= MAX_GROUP_MEMBERS) return res.status(400).json({ error: 'Grup sudah penuh' });
+  await db.run(
+    `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)`,
+    chat.id,
+    userId,
+    Date.now()
+  );
+  await emitToUsers([userId, ...(await helpers.getChatMemberIds(chat.id))], 'chat:updated', { chatId: chat.id });
+  res.status(201).json({ ok: true });
+}));
+
+app.post('/api/chats/:id/leave', auth.requireAuth, ah(async (req, res) => {
+  const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
+  if (!chat || chat.type !== 'group') return res.status(404).json({ error: 'Grup tidak ditemukan' });
+  if (!(await helpers.isMember(chat.id, req.user.id))) {
+    return res.status(403).json({ error: 'Bukan anggota grup ini' });
+  }
+  await db.run('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?', chat.id, req.user.id);
+  const remaining = await helpers.getChatMemberIds(chat.id);
+  if (!remaining.length) {
+    await db.run('DELETE FROM chats WHERE id = ?', chat.id);
+  } else {
+    // admin terakhir pergi -> anggota tertua dijadikan admin supaya grup tetap terkelola
+    const admins = await db.get(
+      `SELECT COUNT(*) AS n FROM chat_members WHERE chat_id = ? AND role = 'admin'`,
+      chat.id
+    );
+    if (Number(admins.n) === 0) {
+      await db.run(
+        `UPDATE chat_members SET role = 'admin'
+         WHERE chat_id = ? AND user_id = (SELECT user_id FROM chat_members WHERE chat_id = ? ORDER BY joined_at ASC LIMIT 1)`,
+        chat.id,
+        chat.id
+      );
+    }
+    await emitToUsers([req.user.id, ...remaining], 'chat:updated', { chatId: chat.id });
+  }
+  res.json({ ok: true });
+}));
+
 app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
   if (!(await helpers.isMember(req.params.id, req.user.id))) {
     return res.status(403).json({ error: 'Bukan anggota chat ini' });
@@ -249,11 +603,8 @@ app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
     before,
     limit
   );
-  const statuses = await helpers.statusesFor(rows.map((r) => r.id));
   res.json({
-    messages: rows
-      .reverse()
-      .map((r) => helpers.serializeMessage(r, statuses.get(r.id) || 'sent')),
+    messages: await helpers.serializeMessages(rows.reverse(), req.user.id),
     hasMore: rows.length === limit,
   });
 }));
@@ -282,6 +633,10 @@ app.post('/api/chats/:id/typing', auth.requireAuth, ah(async (req, res) => {
 
 async function markChatRead(chatId, userId) {
   await helpers.touchRead(chatId, userId);
+  // pengguna dengan privasi laporan dibaca: penanda terisi (unread bersih),
+  // tetapi pengirim tidak pernah menerima tanda "dibaca"
+  const reader = await db.get('SELECT priv_receipts FROM users WHERE id = ?', userId);
+  if (reader && reader.priv_receipts) return;
   const rows = await db.all(
     `SELECT m.id, m.sender_id FROM messages m
      WHERE m.chat_id = ? AND m.sender_id <> ?
@@ -306,12 +661,555 @@ app.delete('/api/messages/:id', auth.requireAuth, ah(async (req, res) => {
   if (row.sender_id !== req.user.id) return res.status(403).json({ error: 'Bukan pesan Anda' });
   const deletedAt = Date.now();
   await db.run('UPDATE messages SET deleted_at = ?, body = \'\' WHERE id = ?', deletedAt, row.id);
-  const status = await helpers.messageStatus(row.id);
-  const payload = helpers.serializeMessage({ ...row, deleted_at: deletedAt, body: '' }, status);
+  const fresh = await db.get('SELECT * FROM messages WHERE id = ?', row.id);
+  const payload = (await helpers.serializeMessages([fresh], null))[0];
   const members = await helpers.getChatMemberIds(row.chat_id);
   await emitToUsers(members, 'message:deleted', payload);
   res.json({ ok: true });
 }));
+
+// ---------- foto sekali lihat ----------
+// Server menjaga konsumsi: penerima hanya boleh mengambil medianya satu kali.
+app.get('/api/messages/media/:id', auth.requireAuth, ah(async (req, res) => {
+  const row = await db.get('SELECT * FROM messages WHERE id = ?', req.params.id);
+  if (!row || row.deleted_at) return res.status(404).json({ error: 'Pesan tidak ditemukan' });
+  if (!(await helpers.isMember(row.chat_id, req.user.id))) {
+    return res.status(403).json({ error: 'Bukan anggota chat ini' });
+  }
+  if (!row.media_url) return res.status(404).json({ error: 'Media tidak ditemukan' });
+
+  if (row.view_once) {
+    if (row.sender_id !== req.user.id) {
+      if (row.opened_at) return res.status(410).json({ error: 'Foto sekali lihat sudah dibuka' });
+      await db.run(
+        'UPDATE messages SET opened_at = ?, opened_by = ? WHERE id = ? AND opened_at IS NULL',
+        Date.now(),
+        req.user.id,
+        row.id
+      );
+      await emitToUser(row.sender_id, 'message:viewed', { messageId: row.id, chatId: row.chat_id });
+    }
+  }
+  res.redirect(row.media_url);
+}));
+
+// ---------- status (status wa) ----------
+const STATUS_TTL = 24 * 60 * 60 * 1000;
+
+function serializeStatus(row, viewerId, viewCount) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    body: row.body,
+    bg: row.bg,
+    mediaUrl: row.media_url,
+    mediaName: row.media_name,
+    mime: row.mime,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    viewCount: Number(viewCount) || 0,
+    isMine: row.user_id === viewerId,
+    viewed: !!row.viewerHasViewed,
+    name: row.name || null,
+    avatar: row.priv_avatar ? null : row.avatar || null,
+    verified: auth.verifiedOf({ role: row.u_role, premium_until: row.u_until, email: row.u_email }),
+  };
+}
+
+async function contactIds(userId) {
+  const rows = await db.all(
+    `SELECT DISTINCT m2.user_id FROM chat_members m1
+     JOIN chat_members m2 ON m2.chat_id = m1.chat_id
+     WHERE m1.user_id = ? AND m2.user_id <> ?`,
+    userId,
+    userId
+  );
+  return rows.map((r) => r.user_id);
+}
+
+app.post('/api/status', auth.requireAuth, ah(async (req, res) => {
+  const type = ['text', 'image', 'video'].includes(req.body?.type) ? req.body.type : 'text';
+  const body = String(req.body?.body || '').trim().slice(0, 500);
+  const bg = req.body?.bg ? String(req.body.bg) : null;
+  if (bg && !/^#[0-9a-fA-F]{6}$/.test(bg)) return res.status(400).json({ error: 'Warna status tidak valid' });
+  if (type === 'text' && !body) return res.status(400).json({ error: 'Tulis status Anda dulu' });
+
+  let mediaUrl = null;
+  let mediaName = null;
+  let mime = null;
+  if (type !== 'text') {
+    mediaUrl = String(req.body?.media?.url || '');
+    if (!validChatUrl(mediaUrl)) return res.status(400).json({ error: 'Media status tidak valid' });
+    mediaName = String(req.body?.media?.name || '').slice(0, 255) || null;
+    mime = String(req.body?.media?.mime || '').slice(0, 127) || null;
+  }
+  if (!floodGuard(`status:${req.user.id}`, 30, 3_600_000)) {
+    return res.status(429).json({ error: 'Terlalu banyak status dalam satu jam (anti-spam)' });
+  }
+
+  const now = Date.now();
+  const id = crypto.randomUUID();
+  await db.run(
+    `INSERT INTO statuses (id, user_id, type, body, bg, media_url, media_name, mime, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    req.user.id,
+    type,
+    body,
+    bg && /^#[0-9a-fA-F]{6}$/.test(bg) ? bg : null,
+    type === 'text' ? null : mediaUrl,
+    type === 'text' ? null : mediaName,
+    type === 'text' ? null : mime,
+    now,
+    now + STATUS_TTL
+  );
+  const row = await db.get('SELECT * FROM statuses WHERE id = ?', id);
+  // status bersifat privat: tidak diumumkan ke kontak mana pun
+  if (!req.user.priv_status) {
+    await emitToUsers(await contactIds(req.user.id), 'status:new', { userId: req.user.id });
+  }
+  res.status(201).json({
+    status: serializeStatus(
+      { ...row, u_role: req.user.role, u_until: req.user.premium_until, u_email: req.user.email },
+      req.user.id,
+      0
+    ),
+  });
+}));
+
+app.get('/api/status', auth.requireAuth, ah(async (req, res) => {
+  await db.run('DELETE FROM statuses WHERE expires_at < ?', Date.now());
+
+  const mine = await db.all(
+    'SELECT * FROM statuses WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC',
+    req.user.id,
+    Date.now()
+  );
+  const mineIds = mine.map((r) => r.id);
+  const myCounts = mineIds.length
+    ? await db.all(
+        `SELECT status_id, COUNT(*) AS n FROM status_views WHERE status_id IN (${mineIds.map(() => '?').join(', ')}) GROUP BY status_id`,
+        ...mineIds
+      )
+    : [];
+  const countMap = new Map(myCounts.map((r) => [r.status_id, r.n]));
+
+  const groups = [];
+  if (mine.length) {
+    const user = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+    groups.push({
+      user: helpers.serializeUser(user, req.user.id, { online: true, premium: false }),
+      isSelf: true,
+      statuses: mine.map((r) =>
+        serializeStatus(
+          { ...r, u_role: user.role, u_until: user.premium_until, u_email: user.email },
+          req.user.id,
+          countMap.get(r.id)
+        )
+      ),
+    });
+  }
+
+  const others = (await contactIds(req.user.id)).slice(0, 300);
+  if (others.length) {
+    const rows = await db.all(
+      `SELECT s.*, u.name, u.avatar, u.email AS u_email, u.role AS u_role,
+              u.premium_until AS u_until, u.priv_avatar
+       FROM statuses s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.expires_at > ? AND u.priv_status = 0
+         AND s.user_id IN (${others.map(() => '?').join(', ')})
+       ORDER BY s.created_at DESC`,
+      Date.now(),
+      ...others
+    );
+    const ids = rows.map((r) => r.id);
+    const [counts, views] = await Promise.all([
+      ids.length
+        ? db.all(
+            `SELECT status_id, COUNT(*) AS n FROM status_views WHERE status_id IN (${ids.map(() => '?').join(', ')}) GROUP BY status_id`,
+            ...ids
+          )
+        : Promise.resolve([]),
+      ids.length
+        ? db.all(
+            `SELECT status_id FROM status_views WHERE viewer_id = ? AND status_id IN (${ids.map(() => '?').join(', ')})`,
+            req.user.id,
+            ...ids
+          )
+        : Promise.resolve([]),
+    ]);
+    const countBy = new Map(counts.map((r) => [r.status_id, r.n]));
+    const viewedSet = new Set(views.map((r) => r.status_id));
+    const byUser = new Map();
+    for (const row of rows) {
+      if (!byUser.has(row.user_id)) {
+        byUser.set(row.user_id, {
+          user: {
+            id: row.user_id,
+            name: row.name,
+            avatar: row.priv_avatar ? null : row.avatar,
+            verified: auth.verifiedOf({ role: row.u_role, premium_until: row.u_until, email: row.u_email }),
+            online: false,
+          },
+          isSelf: false,
+          statuses: [],
+        });
+        groups.push(byUser.get(row.user_id));
+      }
+      row.viewerHasViewed = viewedSet.has(row.id);
+      byUser.get(row.user_id).statuses.push(serializeStatus(row, req.user.id, countBy.get(row.id)));
+    }
+  }
+
+  res.json({ groups });
+}));
+
+app.post('/api/status/:id/view', auth.requireAuth, ah(async (req, res) => {
+  const row = await db.get('SELECT * FROM statuses WHERE id = ?', req.params.id);
+  if (!row || row.expires_at < Date.now()) return res.status(404).json({ error: 'Status tidak ditemukan' });
+  if (row.user_id === req.user.id) return res.json({ ok: true, mine: true });
+  // status privat tidak bisa dibuka langsung lewat id
+  const owner = await db.get('SELECT priv_status FROM users WHERE id = ?', row.user_id);
+  if (owner && owner.priv_status) return res.status(404).json({ error: 'Status tidak ditemukan' });
+  await db.run(
+    `INSERT INTO status_views (status_id, viewer_id, at) VALUES (?, ?, ?)
+     ON CONFLICT (status_id, viewer_id) DO NOTHING`,
+    row.id,
+    req.user.id,
+    Date.now()
+  );
+  res.json({ ok: true });
+}));
+
+app.get('/api/status/:id/viewers', auth.requireAuth, ah(async (req, res) => {
+  const row = await db.get('SELECT * FROM statuses WHERE id = ?', req.params.id);
+  if (!row) return res.status(404).json({ error: 'Status tidak ditemukan' });
+  if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Hanya pemilik status' });
+  const rows = await db.all(
+    `SELECT v.viewer_id, v.at, u.name, u.avatar, u.priv_avatar FROM status_views v
+     JOIN users u ON u.id = v.viewer_id WHERE v.status_id = ? ORDER BY v.at DESC`,
+    row.id
+  );
+  res.json({
+    viewers: rows.map((r) => ({ id: r.viewer_id, name: r.name, avatar: r.priv_avatar ? null : r.avatar, at: r.at })),
+  });
+}));
+
+app.delete('/api/status/:id', auth.requireAuth, ah(async (req, res) => {
+  const row = await db.get('SELECT * FROM statuses WHERE id = ?', req.params.id);
+  if (!row) return res.status(404).json({ error: 'Status tidak ditemukan' });
+  if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Bukan status Anda' });
+  await db.run('DELETE FROM statuses WHERE id = ?', row.id);
+  res.json({ ok: true });
+}));
+
+// ---------- pengaturan publik (halaman beranda login) ----------
+app.get('/api/settings/public', ah(async (req, res) => {
+  res.json({ homeBg: await settings.getHomeBg() });
+}));
+
+// ---------- panel admin ----------
+async function adminStats() {
+  const now = Date.now();
+  const [u, c, m, s, p, pend, banned] = await Promise.all([
+    db.get('SELECT COUNT(*) AS n FROM users'),
+    db.get('SELECT COUNT(*) AS n FROM chats'),
+    db.get('SELECT COUNT(*) AS n FROM messages'),
+    db.get('SELECT COUNT(*) AS n FROM statuses'),
+    db.get('SELECT COUNT(*) AS n FROM users WHERE premium_until > ?', now),
+    db.get(`SELECT COUNT(*) AS n FROM users WHERE account_status = 'pending' AND banned = 0`),
+    db.get('SELECT COUNT(*) AS n FROM users WHERE banned = 1'),
+  ]);
+  return {
+    users: Number(u.n) || 0,
+    chats: Number(c.n) || 0,
+    messages: Number(m.n) || 0,
+    statuses: Number(s.n) || 0,
+    premium: Number(p.n) || 0,
+    pending: Number(pend.n) || 0,
+    banned: Number(banned.n) || 0,
+  };
+}
+
+app.get('/api/admin/overview', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const recent = await db.all('SELECT * FROM users ORDER BY created_at DESC LIMIT 8');
+  res.json({
+    stats: await adminStats(),
+    plans: await settings.getPlans(),
+    homeBg: await settings.getHomeBg(),
+    recent: recent.map((r) => adminUser(r)),
+  });
+}));
+
+app.get('/api/admin/users', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const like = `%${q}%`;
+  const rows = q
+    ? await db.all(
+        `SELECT * FROM users WHERE LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?)
+         ORDER BY LOWER(name) LIMIT 50`,
+        like,
+        like
+      )
+    : await db.all('SELECT * FROM users ORDER BY LOWER(name) LIMIT 50');
+  const online = await presence.onlineSet(rows.map((r) => r.id));
+  res.json({ users: rows.map((r) => adminUser(r, online.has(r.id))), stats: await adminStats() });
+}));
+
+app.get('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg() });
+}));
+
+app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const { plans, homeBg } = req.body || {};
+  if (plans !== undefined) {
+    const saved = await settings.setPlans(plans);
+    if (!saved) return res.status(400).json({ error: 'Data paket tidak valid (minimal 3 paket, durasi 1-3650 hari)' });
+  }
+  if (homeBg !== undefined) {
+    const saved = await settings.setHomeBg(homeBg);
+    if (!saved) return res.status(400).json({ error: 'Background beranda tidak valid' });
+  }
+  res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg() });
+}));
+
+// beri / perpanjang paket premium berdasarkan email
+app.post('/api/admin/premium', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const planId = String(req.body?.plan || '').trim();
+  if (!email) return res.status(400).json({ error: 'Masukkan email pengguna' });
+  const plans = await settings.getPlans();
+  const plan = plans.find((p) => p.id === planId);
+  if (!plan) return res.status(400).json({ error: 'Paket tidak dikenal' });
+
+  const user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', email);
+  if (!user) return res.status(404).json({ error: 'Email tidak terdaftar di sistem' });
+
+  const base = Math.max(Date.now(), Number(user.premium_until) || 0);
+  const until = base + plan.days * 24 * 3600 * 1000;
+  await db.run(
+    'UPDATE users SET premium_plan = ?, premium_until = ?, verified = 1 WHERE id = ?',
+    plan.id,
+    until,
+    user.id
+  );
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', user.id);
+  await emitToUser(user.id, 'profile:updated', { id: user.id });
+  res.json({ user: adminUser(fresh), plan, stats: await adminStats() });
+}));
+
+app.post('/api/admin/premium/revoke', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'Masukkan email pengguna' });
+  const user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', email);
+  if (!user) return res.status(404).json({ error: 'Email tidak terdaftar di sistem' });
+  if (auth.isAdmin(user)) return res.status(400).json({ error: 'Akun admin tidak bisa dicabut' });
+  await db.run(
+    `UPDATE users SET premium_plan = NULL, premium_until = 0, verified = 0 WHERE id = ?`,
+    user.id
+  );
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', user.id);
+  await emitToUser(user.id, 'profile:updated', { id: user.id });
+  res.json({ user: adminUser(fresh), stats: await adminStats() });
+}));
+
+// ---------- persetujuan akun, blokir & pemantauan real-time ----------
+async function findUser(idOrEmail) {
+  const key = String(idOrEmail || '').trim().toLowerCase();
+  if (!key) return null;
+  return db.get('SELECT * FROM users WHERE id = ? OR LOWER(email) = ?', key, key);
+}
+
+function guardAdminTarget(res, target) {
+  if (!target) { res.status(404).json({ error: 'Pengguna tidak ditemukan' }); return false; }
+  if (auth.isAdmin(target)) {
+    res.status(400).json({ error: 'Akun admin tidak bisa ditolak/diblokir' });
+    return false;
+  }
+  return true;
+}
+
+app.post('/api/admin/users/:id/approve', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const target = await findUser(req.params.id);
+  if (!guardAdminTarget(res, target)) return;
+  if (target.banned) return res.status(400).json({ error: 'Akun sedang diblokir. Buka blokir dulu.' });
+  if (target.account_status === 'active') return res.json({ user: adminUser(target), already: true });
+  await db.run(`UPDATE users SET account_status = 'active', reject_reason = NULL WHERE id = ?`, target.id);
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
+  await emitToUser(target.id, 'profile:updated', { id: target.id });
+  await adminEvent('approved', { user: adminUser(fresh) });
+  res.json({ user: adminUser(fresh) });
+}));
+
+app.post('/api/admin/users/:id/reject', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const target = await findUser(req.params.id);
+  if (!guardAdminTarget(res, target)) return;
+  const reason = String(req.body?.reason || '').trim().slice(0, 200) || null;
+  await db.run(
+    `UPDATE users SET account_status = 'rejected', reject_reason = ? WHERE id = ?`,
+    reason,
+    target.id
+  );
+  await revokeSessions(target.id, 'rejected');
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
+  await recordLogin({ userId: target.id, email: target.email, ...reqMeta(req), result: 'rejected', detail: reason });
+  await adminEvent('rejected', { user: adminUser(fresh) });
+  res.json({ user: adminUser(fresh) });
+}));
+
+app.post('/api/admin/users/:id/ban', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const target = await findUser(req.params.id);
+  if (!guardAdminTarget(res, target)) return;
+  const reason = String(req.body?.reason || '').trim().slice(0, 200) || null;
+  await db.run(
+    `UPDATE users SET banned = 1, banned_reason = ?, banned_at = ? WHERE id = ?`,
+    reason,
+    Date.now(),
+    target.id
+  );
+  await revokeSessions(target.id, 'banned');
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
+  await recordLogin({ userId: target.id, email: target.email, ...reqMeta(req), result: 'banned', detail: reason });
+  await adminEvent('banned', { user: adminUser(fresh) });
+  res.json({ user: adminUser(fresh), stats: await adminStats() });
+}));
+
+app.post('/api/admin/users/:id/unban', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const target = await findUser(req.params.id);
+  if (!guardAdminTarget(res, target)) return;
+  await db.run(
+    `UPDATE users SET banned = 0, banned_reason = NULL, banned_at = 0 WHERE id = ?`,
+    target.id
+  );
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
+  await adminEvent('unbanned', { user: adminUser(fresh) });
+  res.json({ user: adminUser(fresh), stats: await adminStats() });
+}));
+
+// daftar lengkap untuk layar pemantauan (status akun, online, device, riwayat masuk)
+app.get('/api/admin/monitor', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const like = `%${q}%`;
+  const rows = q
+    ? await db.all(
+        `SELECT * FROM users WHERE LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?)
+         ORDER BY last_login_at DESC, LOWER(name) LIMIT 200`,
+        like,
+        like
+      )
+    : await db.all('SELECT * FROM users ORDER BY last_login_at DESC, LOWER(name) LIMIT 200');
+  const online = await presence.onlineSet(rows.map((r) => r.id));
+  const logs = await db.all('SELECT * FROM login_logs ORDER BY at DESC LIMIT 40');
+  res.json({
+    users: rows.map((r) => adminUser(r, online.has(r.id))),
+    pending: rows.filter((r) => !r.banned && r.account_status === 'pending').map((r) => adminUser(r, online.has(r.id))),
+    logs,
+    stats: await adminStats(),
+  });
+}));
+
+// ---------- notifikasi push (Web Push, tetap muncul saat aplikasi ditutup) ----------
+let vapidReady = false;
+
+async function ensureVapid() {
+  if (vapidReady) return;
+  const v = await settings.getVapid();
+  webpush.setVapidDetails(v.subject, v.publicKey, v.privateKey);
+  vapidReady = true;
+}
+
+app.get('/api/push/vapid-public-key', auth.requireAuth, ah(async (req, res) => {
+  await ensureVapid();
+  const v = await settings.getVapid();
+  res.json({ publicKey: v.publicKey });
+}));
+
+app.post('/api/push/subscribe', auth.requireAuth, ah(async (req, res) => {
+  const sub = req.body?.subscription || req.body || {};
+  const endpoint = String(sub.endpoint || '').slice(0, 2000);
+  const p256dh = String(sub.keys?.p256dh || '');
+  const authKey = String(sub.keys?.auth || '');
+  if (!/^https:\/\//.test(endpoint) || !p256dh || !authKey) {
+    return res.status(400).json({ error: 'Langganan notifikasi tidak valid' });
+  }
+  const existing = await db.get('SELECT id, user_id FROM push_subscriptions WHERE endpoint = ?', endpoint);
+  if (existing) {
+    if (String(existing.user_id) !== String(req.user.id)) {
+      return res.status(403).json({ error: 'Endpoint milik pengguna lain' });
+    }
+    await db.run('UPDATE push_subscriptions SET p256dh = ?, auth = ? WHERE id = ?', p256dh, authKey, existing.id);
+    return res.json({ ok: true, updated: true });
+  }
+  const count = await db.get('SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ?', req.user.id);
+  if (Number(count.n) >= 8) {
+    await db.run(
+      `DELETE FROM push_subscriptions
+       WHERE id = (SELECT id FROM push_subscriptions WHERE user_id = ? ORDER BY created_at ASC LIMIT 1)`,
+      req.user.id
+    );
+  }
+  await db.run(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    crypto.randomUUID(),
+    req.user.id,
+    endpoint,
+    p256dh,
+    authKey,
+    Date.now()
+  );
+  res.status(201).json({ ok: true });
+}));
+
+app.post('/api/push/unsubscribe', auth.requireAuth, ah(async (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  if (endpoint) {
+    await db.run('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?', endpoint, req.user.id);
+  }
+  res.json({ ok: true });
+}));
+
+// kirim push ke perangkat pengguna yang sedang tidak terhubung (offline / aplikasi tertutup)
+async function pushNotify(userIds, payload) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (!ids.length) return 0;
+  const subs = await db.all(
+    `SELECT * FROM push_subscriptions WHERE user_id IN (${ids.map(() => '?').join(', ')})`,
+    ...ids
+  );
+  if (!subs.length) return 0;
+  try {
+    await ensureVapid();
+  } catch (err) {
+    console.error('vapid:', err.message);
+    return 0;
+  }
+  let sent = 0;
+  await Promise.all(
+    subs.map(async (row) => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
+          JSON.stringify(payload),
+          { TTL: 12 * 3600, urgency: 'high' }
+        );
+        sent += 1;
+      } catch (err) {
+        const status = Number(err && err.statusCode);
+        if ([400, 404, 410].includes(status)) {
+          try {
+            await db.run('DELETE FROM push_subscriptions WHERE id = ?', row.id);
+          } catch { /* langganan basi, biarkan */ }
+        } else {
+          console.error('push:', err.message);
+        }
+      }
+    })
+  );
+  return sent;
+}
 
 // ---------- static frontend ----------
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -321,14 +1219,23 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint tidak dite
 app.use((err, _req, res, _next) => {
   const status = err.status || 500;
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: err.message || 'Terjadi kesalahan' });
+  res.status(status).json({
+    error: err.message || 'Terjadi kesalahan',
+    ...(err.code ? { code: err.code } : {}),
+  });
 });
 
 // ---------- presence lintas instance ----------
 async function broadcastPresence(userId) {
   const online = await presence.isOnline(userId);
-  const row = await db.get('SELECT last_seen FROM users WHERE id = ?', userId);
-  const payload = { userId, online, lastSeen: (row && row.last_seen) || Date.now() };
+  const row = await db.get('SELECT last_seen, priv_last_seen FROM users WHERE id = ?', userId);
+  // privasi "terakhir dilihat & online": orang lain selalu melihat offline
+  const hidden = !!(row && row.priv_last_seen);
+  const payload = {
+    userId,
+    online: hidden ? false : online,
+    lastSeen: hidden ? 0 : (row && row.last_seen) || Date.now(),
+  };
   const contacts = await db.all(
     `SELECT DISTINCT m2.user_id FROM chat_members m1
      JOIN chat_members m2 ON m2.chat_id = m1.chat_id
@@ -336,7 +1243,10 @@ async function broadcastPresence(userId) {
     userId,
     userId
   );
-  await emitToUsers([...contacts.map((c) => c.user_id), userId], 'presence', payload);
+  const contactIds = contacts.map((c) => c.user_id);
+  if (contactIds.length) await emitToUsers(contactIds, 'presence', payload);
+  // status asli (tanpa masking) untuk diri sendiri
+  await emitToUser(userId, 'presence', { userId, online, lastSeen: (row && row.last_seen) || Date.now() });
 }
 
 async function cleanupCalls(userId) {
@@ -358,6 +1268,9 @@ async function handleDisconnect(user, socketId) {
     if (!presence.isLocal(user.id)) {
       await db.run('UPDATE users SET last_seen = ? WHERE id = ?', Date.now(), user.id);
       await broadcastPresence(user.id);
+      if (!(await presence.hasRemote(user.id))) {
+        await adminEvent('offline', { userId: user.id, name: user.name, email: user.email, lastSeen: Date.now() });
+      }
     }
     await cleanupCalls(user.id);
   } catch (err) {
@@ -368,11 +1281,16 @@ async function handleDisconnect(user, socketId) {
 // ---------- socket.io ----------
 io.use(async (socket, next) => {
   try {
-    const payload = auth.verifyToken(socket.handshake.auth?.token || '');
+    const token = socket.handshake.auth?.token || '';
+    const payload = auth.verifyToken(token);
     if (!payload) return next(new Error('auth:tidak-terautentikasi'));
     const user = await db.get('SELECT * FROM users WHERE id = ?', payload.sub);
     if (!user) return next(new Error('auth:akun-tidak-ditemukan'));
+    // satu akun satu device + akun diblokir/menunggu persetujuan ditolak di sini
+    const check = auth.sessionCheck(payload, user);
+    if (!check.ok) return next(new Error(check.code));
     socket.data.user = user;
+    socket.data.sid = payload.sid || '';
     next();
   } catch (err) {
     // kegagalan sesaat (DB dsb.) sengaja TIDAK memakai awalan auth: supaya
@@ -382,15 +1300,35 @@ io.use(async (socket, next) => {
   }
 });
 
+// memutus socket yang sesinya sudah diganti/dicabut oleh perangkat lain atau admin
+function kickReplaced(socket, reason) {
+  try {
+    socket.emit('auth:session-replaced', { reason });
+  } catch { /* koneksi sudah tertutup */ }
+  setTimeout(() => {
+    try { socket.disconnect(true); } catch { /* sudah putus */ }
+  }, 600);
+}
+
 io.on('connection', (socket) => {
   const user = socket.data.user;
   const first = presence.addLocal(user.id, socket.id);
   socket.join(`user:${user.id}`);
 
+  socket.on('session:replaced', ({ sid } = {}) => {
+    if (sid === undefined || socket.data.sid === sid) return; // sesi yang sama: biarkan
+    kickReplaced(socket, 'login-baru');
+  });
+
+  socket.on('session:revoked', () => kickReplaced(socket, 'sesi-dicabut'));
+
   void (async () => {
     try {
       await presence.persist(user.id, socket.id);
-      if (first) await broadcastPresence(user.id);
+      if (first) {
+        await broadcastPresence(user.id);
+        await adminEvent('online', { userId: user.id, name: user.name, email: user.email });
+      }
     } catch (err) {
       console.error('connect:', err.message);
     }
@@ -443,7 +1381,7 @@ io.on('connection', (socket) => {
         const delivered = await emitToUser(targetId, 'call:incoming', {
           callId: id,
           kind: kind === 'video' ? 'video' : 'audio',
-          from: publicCaller(user),
+          from: publicCaller(user, targetId),
         });
         if (!delivered) {
           await calls.remove(id);
@@ -485,7 +1423,7 @@ io.on('connection', (socket) => {
         if (signal.type === 'answer') await calls.setState(id, 'active');
         await emitToUser(targetId, 'call:signal', {
           callId: id,
-          from: publicCaller(user),
+          from: publicCaller(user, targetId),
           signal,
         });
       } catch (err) {
@@ -533,7 +1471,7 @@ io.on('connection', (socket) => {
 });
 
 async function handleSend(user, payload) {
-  const { chatId, type = 'text', body = '', media } = payload || {};
+  const { chatId, type = 'text', body = '', media, viewOnce, duration } = payload || {};
   if (!chatId || !(await helpers.isMember(chatId, user.id))) {
     throw new Error('Bukan anggota chat ini');
   }
@@ -541,28 +1479,54 @@ async function handleSend(user, payload) {
   const cleanType = ['text', 'image', 'video', 'audio', 'file'].includes(type) ? type : 'text';
   if (cleanType === 'text' && !String(body).trim()) throw new Error('Pesan kosong');
 
+  // proteksi akun: batasi laju pengiriman supaya tidak terdeteksi sebagai spam
+  if (!floodGuard(`msg:${user.id}`, 30, 10_000)) {
+    throw new Error('Terlalu banyak pesan dalam waktu singkat (anti-spam). Mohon tunggu sebentar.');
+  }
+
+  const text = String(body || '').slice(0, 8000);
+  if (cleanType === 'text' && text.trim()) {
+    const norm = text.trim().toLowerCase();
+    const recent = await db.get(
+      `SELECT body FROM messages
+       WHERE chat_id = ? AND sender_id = ? AND deleted_at IS NULL AND created_at > ?
+       ORDER BY created_at DESC LIMIT 1`,
+      chatId,
+      user.id,
+      Date.now() - 5000
+    );
+    if (recent && String(recent.body || '').trim().toLowerCase() === norm) {
+      throw new Error('Pesan sama dikirim berulang (anti-spam). Tunggu beberapa detik.');
+    }
+  }
+
   const id = crypto.randomUUID();
   const now = Date.now();
   const mediaUrl = cleanType === 'text' ? null : media?.url || null;
   if (cleanType !== 'text' && !mediaUrl) throw new Error('Media tidak ditemukan');
 
+  const cleanViewOnce = cleanType === 'image' && !!viewOnce ? 1 : 0;
+  const cleanDuration = Math.max(0, Math.min(3_600_000, Math.round(Number(duration) || 0)));
+
   await db.run(
-    `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, view_once, duration, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     chatId,
     user.id,
     cleanType,
-    String(body || '').slice(0, 8000),
+    text,
     mediaUrl,
     media?.name ? String(media.name).slice(0, 255) : null,
     media?.size ? Number(media.size) : null,
     media?.mime || null,
+    cleanViewOnce,
+    cleanDuration,
     now
   );
 
   const row = await db.get('SELECT * FROM messages WHERE id = ?', id);
-  const message = helpers.serializeMessage(row, 'sent');
+  const message = (await helpers.serializeMessages([row], user.id))[0];
   const members = await helpers.getChatMemberIds(chatId);
 
   const deliveredTo = [];
@@ -581,8 +1545,30 @@ async function handleSend(user, payload) {
     );
   }
 
+  // penerima yang tidak punya koneksi aktif -> notifikasi push (aplikasi tertutup/offline)
+  const offline = members.filter((uid) => uid !== user.id && !deliveredTo.includes(uid));
+  if (offline.length) {
+    const chatRow = await db.get('SELECT type, name FROM chats WHERE id = ?', chatId);
+    const kindLabel = { image: 'Foto', video: 'Video', audio: 'Pesan suara', file: 'File' };
+    let preview = cleanType === 'text' ? String(text).slice(0, 140) : (kindLabel[cleanType] || 'Pesan');
+    if (cleanViewOnce) preview = 'Foto sekali lihat';
+    const payload = {
+      title: chatRow && chatRow.type === 'group' ? `${user.name} @ ${chatRow.name}` : user.name,
+      body: preview,
+      chatId,
+      messageId: id,
+      icon: user.priv_avatar ? null : user.avatar || null,
+      tag: `msg-${chatId}`,
+      url: `/?chat=${chatId}`,
+    };
+    await Promise.race([
+      pushNotify(offline, payload),
+      new Promise((resolve) => setTimeout(() => resolve(0), 2500)),
+    ]);
+  }
+
   const freshRow = await db.get('SELECT * FROM messages WHERE id = ?', id);
-  const fresh = helpers.serializeMessage(freshRow, await helpers.messageStatus(id));
+  const fresh = (await helpers.serializeMessages([freshRow], user.id))[0];
 
   if (fresh.status === 'delivered') {
     await emitToUser(user.id, 'message:status', { messageId: id, chatId, status: 'delivered' });

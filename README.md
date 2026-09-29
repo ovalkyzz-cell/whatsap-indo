@@ -7,12 +7,16 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Kategori | Detail |
 |---|---|
 | Autentikasi | Daftar & masuk dengan email + password (bcrypt + JWT) |
+| Sesi | **Satu akun satu device** — login baru mematikan sesi & socket perangkat lama |
+| Persetujuan | Akun baru berstatus **menunggu** — harus disetujui admin sebelum bisa masuk |
 | Chat real-time | Socket.IO — pesan, indikator mengetik, status online/terakhir dilihat |
 | Tanda centang | ✓ terkirim → ✓✓ diterima → ✓✓ biru dibaca (read receipt) |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
+| Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
+| Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
 | Latar belakang chat | Ganti background percakapan dengan **foto atau video** (per akun, reset kapan saja) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
@@ -35,6 +39,8 @@ Variabel lingkungan opsional:
 - `PORT` — port server (default `3000`)
 - `JWT_SECRET` — rahasia token JWT (default: dibuat sekali lalu disimpan di `data/.jwt-secret`
   supaya sesi pengguna tidak hilang saat server restart)
+- `ADMIN_EMAILS` — daftar email admin dipisah koma (selain `ovalkyzz@gmail.com`); akun dengan
+  email ini otomatis **aktif** tanpa persetujuan dan berhak memakai panel admin
 
 ## Arsitektur
 
@@ -50,7 +56,9 @@ public/
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 47 assert: auth, realtime, receipts, upload, delete, signaling panggilan, keamanan upload
+  e2e.js       # 167 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+               # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
+               # blokir akun & monitor admin real-time
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -109,6 +117,36 @@ Perilaku pelindung:
 > atau lewat **HTTPS**. Buka `http://<ip-server>:3000` dari perangkat lain = panggilan akan
 > menolak dengan pesan jelas, karena itu untuk pemakaian luar localhost gunakan reverse proxy TLS
 > (mis. Caddy/Nginx) atau tunnel seperti ngrok.
+
+### Keamanan masuk, persetujuan & panel admin
+
+**Satu akun satu device.** Setiap `register` / `login` membuat `session_id` baru yang
+ditanam di JWT (`sid`). `requireAuth` dan handshake Socket.IO membandingkan `sid` token dengan
+`session_id` akun:
+
+- login dari perangkat kedua → token & socket perangkat pertama langsung mati
+  (`admin:event` / `session:replaced` → klien keluar dengan pesan jelas);
+- `POST /api/auth/logout` mengosongkan sesi sehingga token lama ikut mati;
+- akun lama (data sebelum fitur ini) otomatis diminta masuk ulang satu kali.
+
+**Persetujuan pendaftaran.** Akun baru dibuat dengan `account_status = 'pending'` dan tidak
+mendapat token. `POST /api/auth/login` menjawab `403` + `code` (`pending` | `rejected` | `banned`).
+Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
+
+**Kontrol admin** (semua butuh peran admin, akun admin tidak bisa disentuh):
+
+| Endpoint | Aksi |
+|---|---|
+| `GET /api/admin/monitor` | Daftar pengguna (daring, device, IP, status), pendaftaran menunggu, 40 log masuk terakhir |
+| `POST /api/admin/users/:id/approve` | Setujui pendaftaran → akun bisa masuk |
+| `POST /api/admin/users/:id/reject` | Tolak pendaftaran (`body: { reason }`) → login `403 rejected` |
+| `POST /api/admin/users/:id/ban` | Blokir akun (`body: { reason }`) → sesi diputus, login `403 banned` |
+| `POST /api/admin/users/:id/unban` | Buka blokir |
+| `POST /api/auth/logout` | Cabut sesi aktif |
+
+`:id` boleh berupa UUID atau email. Admin menerima `admin:event` real-time
+(`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
+lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
 ### Keamanan
 

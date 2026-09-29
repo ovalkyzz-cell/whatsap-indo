@@ -6,6 +6,17 @@
   <meta name="description" content="Whatsap Indo - chat real-time, kirim foto, video, dan file hingga 2GB" />
   <title>Whatsap Indo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
+  <script>
+    // terapkan tema sebelum CSS digambar supaya tidak ada kedip mode terang
+    (function () {
+      var theme = null;
+      try { theme = localStorage.getItem('wa_theme'); } catch (e) { /* storage diblokir */ }
+      if (theme !== 'dark' && theme !== 'light') {
+        theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -36,11 +47,191 @@
         <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round" />
       </symbol>
+      <symbol id="ic-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="8.2" r="3.7" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M4.9 19.6c1.2-3.4 4-5.4 7.1-5.4s5.9 2 7.1 5.4" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-image" viewBox="0 0 24 24">
+        <rect x="3.3" y="4.9" width="17.4" height="14.2" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <circle cx="8.7" cy="9.7" r="1.6" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <path d="M4.2 17.4l4.6-4.6 3.4 3.4 2.9-2.9 4.7 4.7" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-moon" viewBox="0 0 24 24">
+        <path d="M20.2 14.6A8.6 8.6 0 0 1 9.4 3.8a8.8 8.8 0 1 0 10.8 10.8z" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4.1" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M12 2.6v2.4M12 19v2.4M2.6 12H5M19 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-power" viewBox="0 0 24 24">
+        <path d="M12 3.4v7.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+        <path d="M7.3 6.6a7.2 7.2 0 1 0 9.4 0" fill="none" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-shield" viewBox="0 0 24 24">
+        <path d="M12 3.2l7 2.5v5.5c0 4.2-2.9 7.6-7 9.6-4.1-2-7-5.4-7-9.6V5.7z" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M9 12.1l2.2 2.2 4-4.5" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-grid" viewBox="0 0 24 24">
+        <rect x="3.6" y="3.6" width="7" height="7" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <rect x="13.4" y="3.6" width="7" height="7" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <rect x="3.6" y="13.4" width="7" height="7" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <rect x="13.4" y="13.4" width="7" height="7" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.7" />
+      </symbol>
+      <symbol id="ic-crown" viewBox="0 0 24 24">
+        <path d="M3.6 8.4l3.7 3.2L12 5.2l4.7 6.4 3.7-3.2-1.6 9.4H5.2z" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M5.4 20.4h13.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-lock" viewBox="0 0 24 24">
+        <rect x="4.8" y="10.4" width="14.4" height="9.6" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M8.4 10.4V7.9a3.6 3.6 0 0 1 7.2 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" />
+        <circle cx="12" cy="15.1" r="1.4" fill="currentColor" />
+      </symbol>
+      <symbol id="ic-users" viewBox="0 0 24 24">
+        <circle cx="9.4" cy="8.6" r="3.3" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M3.4 19.2c1-3 3.3-4.8 6-4.8s5 1.8 6 4.8" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" />
+        <path d="M16 5.6a3.3 3.3 0 0 1 0 6.4M17.4 14.9c2.1.7 3.5 2.4 4.2 4.3" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-plus" viewBox="0 0 24 24">
+        <path d="M12 5.2v13.6M5.2 12h13.6" fill="none" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-chat" viewBox="0 0 24 24">
+        <path d="M4.2 6.6A2.4 2.4 0 0 1 6.6 4.2h10.8a2.4 2.4 0 0 1 2.4 2.4v7.6a2.4 2.4 0 0 1-2.4 2.4H9.3L4.9 20v-3.8a2.4 2.4 0 0 1-.7-1.6z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M8.4 8.9h7.2M8.4 12h4.8" fill="none" stroke="currentColor" stroke-width="1.6"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-status" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-dasharray="4.6 3.1" stroke-linecap="round" />
+        <circle cx="12" cy="12" r="3.1" fill="currentColor" />
+      </symbol>
+      <symbol id="ic-mic" viewBox="0 0 24 24">
+        <rect x="9" y="2.8" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0M12 17.8v3.4M8.8 21.2h6.4" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-attach" viewBox="0 0 24 24">
+        <path d="M16.8 6.2v11.4a4.6 4.6 0 0 1-9.2 0V5.1a3 3 0 0 1 6 0v12a1.5 1.5 0 0 1-3 0V6.6"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-trash" viewBox="0 0 24 24">
+        <path d="M4.6 7h14.8M9.6 7V5.3A1.3 1.3 0 0 1 10.9 4h2.2a1.3 1.3 0 0 1 1.3 1.3V7"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M6.6 7l.9 11.1A2 2 0 0 0 9.5 20h5a2 2 0 0 0 2-1.9L17.4 7" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M10.2 10.6v5.8M13.8 10.6v5.8" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-send" viewBox="0 0 24 24">
+        <path d="M21.2 3.4L2.9 10.6l7.2 2.6 2.6 7.2 8.5-17z" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M10.1 13.2L21.2 3.4" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-close" viewBox="0 0 24 24">
+        <path d="M6.6 6.6l10.8 10.8M17.4 6.6L6.6 17.4" fill="none" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-video" viewBox="0 0 24 24">
+        <rect x="2.8" y="6.4" width="13" height="11.2" rx="2.6" fill="none" stroke="currentColor"
+          stroke-width="1.7" />
+        <path d="M15.8 11l5.4-3.1v8.2L15.8 13z" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-audio" viewBox="0 0 24 24">
+        <path d="M9.2 17.4V6.3l9-2v11.1" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="6.6" cy="17.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <circle cx="15.6" cy="15.4" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7" />
+      </symbol>
+      <symbol id="ic-doc" viewBox="0 0 24 24">
+        <path d="M13.6 3.5H7.4A1.9 1.9 0 0 0 5.5 5.4v13.2a1.9 1.9 0 0 0 1.9 1.9h9.2a1.9 1.9 0 0 0 1.9-1.9V8.4z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M13.6 3.5v4.9h4.9M8.8 13.2h6.4M8.8 16.4h4.6" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-viewonce" viewBox="0 0 24 24">
+        <path d="M2.9 12s3.6-6.1 9.1-6.1S21.1 12 21.1 12s-3.6 6.1-9.1 6.1S2.9 12 2.9 12z" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M4.4 20L19.6 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-phone" viewBox="0 0 24 24">
+        <path d="M6.6 3.9l2.6.6 1.3 3.6-1.9 1.5a12.5 12.5 0 0 0 5.2 5.2l1.5-1.9 3.6 1.3.6 2.6a2 2 0 0 1-2.1 2.4C10.4 18.7 5.3 13.6 4.2 6a2 2 0 0 1 2.4-2.1z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-hangup" viewBox="0 0 24 24">
+        <path d="M6.6 3.9l2.6.6 1.3 3.6-1.9 1.5a12.5 12.5 0 0 0 5.2 5.2l1.5-1.9 3.6 1.3.6 2.6a2 2 0 0 1-2.1 2.4C10.4 18.7 5.3 13.6 4.2 6a2 2 0 0 1 2.4-2.1z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"
+          transform="rotate(133.5 12 12)" />
+      </symbol>
+      <symbol id="ic-camera" viewBox="0 0 24 24">
+        <path d="M4.4 8.2h2.4l1.4-2.1h6.2l1.4 2.1h2.4a1.9 1.9 0 0 1 1.9 1.9v7.2a1.9 1.9 0 0 1-1.9 1.9H4.4A1.9 1.9 0 0 1 2.5 17.3v-7.2a1.9 1.9 0 0 1 1.9-1.9z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <circle cx="11.2" cy="13.4" r="3.1" fill="none" stroke="currentColor" stroke-width="1.7" />
+      </symbol>
+      <symbol id="ic-play" viewBox="0 0 24 24">
+        <path d="M8.2 5.6l10 6.4-10 6.4z" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-pause" viewBox="0 0 24 24">
+        <path d="M9.2 5.6v12.8M14.8 5.6v12.8" fill="none" stroke="currentColor" stroke-width="2.1"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-mail" viewBox="0 0 24 24">
+        <rect x="2.8" y="5.2" width="18.4" height="13.6" rx="2.4" fill="none" stroke="currentColor"
+          stroke-width="1.7" />
+        <path d="M3.8 7.6l7.1 5.1a2 2 0 0 0 2.3 0l7-5.1" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-id" viewBox="0 0 24 24">
+        <rect x="2.8" y="5" width="18.4" height="14" rx="2.4" fill="none" stroke="currentColor"
+          stroke-width="1.7" />
+        <circle cx="8.4" cy="10.8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6" />
+        <path d="M5 16.1c.7-1.6 2-2.5 3.4-2.5s2.7.9 3.4 2.5M14.8 10h4M14.8 13.4h4" fill="none"
+          stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-calendar" viewBox="0 0 24 24">
+        <rect x="3.4" y="5.2" width="17.2" height="15" rx="2.4" fill="none" stroke="currentColor"
+          stroke-width="1.7" />
+        <path d="M3.4 9.6h17.2M8.2 3.2v3.6M15.8 3.2v3.6" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" />
+      </symbol>
+      <symbol id="ic-exit" viewBox="0 0 24 24">
+        <path d="M14 4.6H6.6a2 2 0 0 0-2 2v10.8a2 2 0 0 0 2 2H14" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M10.4 12h9.4M16.4 8.6L19.8 12l-3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-check" viewBox="0 0 24 24">
+        <path d="M5 12.6l4.6 4.6L19 7.2" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-pattern" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="3.4" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <circle cx="9.2" cy="9.2" r="1.15" fill="currentColor" />
+        <circle cx="14.8" cy="9.2" r="1.15" fill="currentColor" />
+        <circle cx="9.2" cy="14.8" r="1.15" fill="currentColor" />
+        <circle cx="14.8" cy="14.8" r="1.15" fill="currentColor" />
+      </symbol>
     </defs>
   </svg>
 
   <!-- ============ AUTH ============ -->
   <section id="authView" class="auth-view hidden">
+    <div class="home-bg" id="homeBg" aria-hidden="true"></div>
     <div class="auth-hero">
       <div class="auth-logo">📱</div>
       <h1>Whatsap Indo</h1>
@@ -86,6 +277,7 @@
 
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
+      <div class="home-bg side-home-bg" id="sideHomeBg" aria-hidden="true"></div>
       <header class="sidebar-header">
         <div class="me" id="meBox">
           <div class="avatar" id="meAvatar"><span>?</span></div>
@@ -108,15 +300,44 @@
         <input type="search" id="searchInput" placeholder="Cari chat atau orang (email)..." />
       </div>
 
+      <button class="status-create group-create hidden" id="btnCreateGroupTab">
+        <span class="status-create-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-plus" /></svg></span>
+        <span class="status-create-text"><strong>Buat grup</strong><small>Kumpulkan anggota dalam satu ruang</small></span>
+      </button>
+
       <div class="chat-list" id="chatList">
         <div class="empty-state">Memuat chat...</div>
       </div>
+
+      <div class="chat-list hidden" id="statusList">
+        <div class="empty-state">Memuat status...</div>
+      </div>
+
+      <!-- navigasi paling bawah: Chat • Grup • Status -->
+      <nav class="bottom-nav" id="bottomNav" aria-label="Navigasi utama">
+        <button class="bn-item active" data-side="chats" type="button">
+          <span class="bn-ico"><svg viewBox="0 0 24 24"><use href="#ic-chat" /></svg></span>
+          <span class="bn-label">Chat</span>
+          <span class="bn-badge hidden" id="bnChatBadge">0</span>
+        </button>
+        <button class="bn-item" data-side="groups" type="button">
+          <span class="bn-ico"><svg viewBox="0 0 24 24"><use href="#ic-users" /></svg></span>
+          <span class="bn-label">Grup</span>
+          <span class="bn-badge hidden" id="bnGroupBadge">0</span>
+        </button>
+        <button class="bn-item" data-side="status" type="button">
+          <span class="bn-ico"><svg viewBox="0 0 24 24"><use href="#ic-status" /></svg></span>
+          <span class="bn-label">Status</span>
+          <span class="bn-dot hidden" id="bnStatusDot"></span>
+        </button>
+      </nav>
     </aside>
 
     <!-- Chat pane -->
     <main class="chat-pane" id="chatPane">
       <div class="chat-bg" id="chatBg" aria-hidden="true"></div>
       <div class="chat-empty" id="chatEmpty">
+        <div class="home-bg empty-home-bg" id="emptyHomeBg" aria-hidden="true"></div>
         <div class="chat-empty-logo">💬</div>
         <h2>Whatsap Indo</h2>
         <p>Pilih chat untuk mulai mengobrol, atau tekan ✏️ untuk chat baru.<br/>
@@ -127,7 +348,7 @@
         <header class="chat-header">
           <button class="icon-btn back-btn" id="btnBack" title="Kembali">‹</button>
           <div class="avatar" id="chatAvatar"><span>?</span></div>
-          <div class="chat-title">
+          <div class="chat-title" id="chatTitleBox">
             <strong id="chatName">—</strong>
             <small id="chatStatus">—</small>
           </div>
@@ -147,20 +368,29 @@
         <div class="messages" id="messages"></div>
 
         <footer class="composer">
-          <button class="icon-btn" id="btnAttach" title="Lampirkan file">📎</button>
+          <button class="icon-btn" id="btnAttach" title="Lampirkan file"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-attach" /></svg></button>
           <div class="attach-menu hidden" id="attachMenu">
-            <button data-kind="image">📷 Foto</button>
-            <button data-kind="video">🎬 Video</button>
-            <button data-kind="audio">🎵 Audio</button>
-            <button data-kind="file">📄 Dokumen</button>
+            <button data-kind="image"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg> Foto</button>
+            <button data-kind="video"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg> Video</button>
+            <button data-kind="audio"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-audio" /></svg> Audio</button>
+            <button data-kind="file"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg> Dokumen</button>
+            <button data-kind="viewonce"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-viewonce" /></svg> Foto sekali lihat</button>
           </div>
           <input type="file" id="fileInput" class="hidden" />
           <div class="attach-preview hidden" id="attachPreview">
             <div class="attach-preview-info" id="attachInfo"></div>
-            <button class="icon-btn" id="btnCancelAttach" title="Batal">✖</button>
+            <button class="icon-btn" id="btnCancelAttach" title="Batal"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg></button>
+          </div>
+          <div class="rec-bar hidden" id="recBar">
+            <span class="rec-dot"></span>
+            <span class="rec-time" id="recTime">0:00</span>
+            <span class="rec-hint">Merekam pesan suara</span>
+            <button class="icon-btn" id="btnRecCancel" title="Buang rekaman"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-trash" /></svg></button>
+            <button class="icon-btn send-btn" id="btnRecSend" title="Kirim rekaman"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-send" /></svg></button>
           </div>
           <textarea id="messageInput" rows="1" placeholder="Ketik pesan"></textarea>
-          <button class="icon-btn send-btn" id="btnSend" title="Kirim">➤</button>
+          <button class="icon-btn send-btn" id="btnSend" title="Kirim"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-send" /></svg></button>
+          <button class="icon-btn mic-btn" id="btnMic" title="Rekam pesan suara"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-mic" /></svg></button>
         </footer>
       </div>
     </main>
@@ -170,12 +400,69 @@
       <header class="drawer-header">
         <button class="icon-btn" id="btnCloseDrawer">‹</button>
         <strong>Chat baru</strong>
+        <button class="icon-btn drawer-action" id="btnNewGroup" title="Buat grup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-users" /></svg></button>
       </header>
       <div class="search-wrap">
         <input type="search" id="userSearchInput" placeholder="Cari berdasarkan email atau nama..." />
       </div>
       <div class="chat-list" id="userSearchResults">
         <div class="empty-state">Ketik email atau nama teman untuk mulai chat.</div>
+      </div>
+    </div>
+
+    <!-- ============ GRUP BARU ============ -->
+    <div class="drawer hidden" id="groupDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn" id="btnCloseGroup">‹</button>
+        <strong>Grup baru</strong>
+      </header>
+      <div class="group-form">
+        <label class="group-name-label">
+          <span class="ps-label">Nama grup</span>
+          <input type="text" id="groupName" maxlength="60" placeholder="Contoh: Keluarga Besar" />
+        </label>
+        <div class="group-chips" id="groupChips"></div>
+        <div class="search-wrap">
+          <input type="search" id="groupSearch" placeholder="Cari anggota (nama / email)..." />
+        </div>
+        <div class="chat-list" id="groupResults">
+          <div class="empty-state">Ketik nama atau email teman untuk menambahkan anggota.</div>
+        </div>
+        <div class="group-form-actions">
+          <button class="btn-primary" id="btnCreateGroup">Buat Grup</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ INFO GRUP ============ -->
+    <div class="drawer drawer-right hidden" id="groupInfoDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseGroupInfo" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Info Grup</strong>
+      </header>
+      <div class="group-info-body" id="groupInfoBody"></div>
+    </div>
+
+    <!-- ============ BUAT STATUS ============ -->
+    <div class="drawer hidden" id="statusComposer">
+      <header class="drawer-header">
+        <button class="icon-btn" id="btnCloseStatus">‹</button>
+        <strong>Buat Status</strong>
+      </header>
+      <div class="status-body">
+        <div class="status-preview" id="statusPreview"><span>Tulis status Anda...</span></div>
+        <textarea id="statusText" rows="3" maxlength="500" placeholder="Apa yang sedang Anda pikirkan?"></textarea>
+        <div class="status-colors" id="statusColors"></div>
+        <div class="status-actions">
+          <button class="btn-ghost" id="btnStatusMedia"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-image" /></svg> Foto / Video</button>
+          <button class="btn-primary" id="btnPostStatus">Bagikan Status</button>
+        </div>
+        <p class="status-media-note hidden" id="statusMediaNote"></p>
+        <input type="file" id="statusInput" accept="image/*,video/*" class="hidden" />
+        <p class="auth-error hidden" id="statusError"></p>
+        <p class="wp-hint">Status hilang otomatis setelah 24 jam.</p>
       </div>
     </div>
 
@@ -204,22 +491,42 @@
 
       <nav class="menu-list">
         <button class="menu-item" data-menu="profile">
-          <span class="mi-ico">👤</span>
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-user" /></svg></span>
           <span class="mi-text"><strong>Profil &amp; Info</strong><small>Nama, bio, foto, verifikasi</small></span>
           <span class="mi-arrow">›</span>
         </button>
         <button class="menu-item" data-menu="wallpaper">
-          <span class="mi-ico">🖼️</span>
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-image" /></svg></span>
           <span class="mi-text"><strong>Latar Belakang Chat</strong><small>Ganti background foto / video</small></span>
           <span class="mi-arrow">›</span>
         </button>
+        <button class="menu-item" data-menu="homebg">
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-grid" /></svg></span>
+          <span class="mi-text"><strong>Latar Halaman Utama</strong><small>Background daftar chat milik Anda</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item" data-menu="theme" id="menuTheme">
+          <span class="mi-ico" id="themeIco"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-moon" /></svg></span>
+          <span class="mi-text"><strong id="themeTitle">Mode Gelap</strong><small id="themeLabel">Mode terang aktif — ketuk untuk mode gelap</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item" data-menu="privacy">
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-shield" /></svg></span>
+          <span class="mi-text"><strong>Privasi</strong><small>Email, bio, status, laporan dibaca</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item" data-menu="admin" id="menuAdmin">
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-grid" /></svg></span>
+          <span class="mi-text"><strong>Panel Admin</strong><small>Premium, paket &amp; background beranda</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
         <button class="menu-item" data-menu="about">
-          <span class="mi-ico">ℹ️</span>
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-info" /></svg></span>
           <span class="mi-text"><strong>Tentang Whatsap Indo</strong><small>Versi 1.0.0 • © mazval-developer-java</small></span>
           <span class="mi-arrow">›</span>
         </button>
         <button class="menu-item danger" data-menu="logout">
-          <span class="mi-ico">🚪</span>
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-power" /></svg></span>
           <span class="mi-text"><strong>Keluar</strong><small>Akhiri sesi di perangkat ini</small></span>
           <span class="mi-arrow">›</span>
         </button>
@@ -251,19 +558,19 @@
 
         <div class="wp-options">
           <button class="wp-option" data-wp="default">
-            <span class="wp-ico">🧩</span>
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-pattern" /></svg></span>
             <span class="wp-text"><strong>Bawaan</strong><small>Pola latar standar</small></span>
           </button>
           <button class="wp-option" data-wp="image">
-            <span class="wp-ico">📷</span>
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg></span>
             <span class="wp-text"><strong>Pilih Foto</strong><small>JPG, PNG, WEBP — maks 50MB</small></span>
           </button>
           <button class="wp-option" data-wp="video">
-            <span class="wp-ico">🎥</span>
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg></span>
             <span class="wp-text"><strong>Pilih Video</strong><small>MP4, WEBM — maks 200MB, otomatis diam</small></span>
           </button>
           <button class="wp-option danger" data-wp="clear">
-            <span class="wp-ico">🗑️</span>
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-trash" /></svg></span>
             <span class="wp-text"><strong>Hapus Latar</strong><small>Kembalikan ke bawaan</small></span>
           </button>
         </div>
@@ -301,6 +608,51 @@
 
         <p class="wp-hint">Latar hanya berlaku untuk akun Anda. Video diputar tanpa suara (muted) di belakang percakapan.</p>
         <p class="wp-status hidden" id="wpStatus"></p>
+      </div>
+    </div>
+
+    <!-- ============ LATAR HALAMAN UTAMA ============ -->
+    <div class="drawer drawer-right hidden" id="homeBgDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseHomeBg" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Latar Halaman Utama</strong>
+      </header>
+      <div class="wallpaper-body">
+        <div class="wp-preview hb-preview" id="hbPreview">
+          <div class="wp-preview-layer" id="hbPreviewLayer"></div>
+          <div class="hb-sample">
+            <span class="hb-line w70"></span>
+            <span class="hb-line w45"></span>
+            <span class="hb-line w60"></span>
+          </div>
+          <span class="wp-label" id="hbLabel">Bawaan Whatsap Indo</span>
+        </div>
+
+        <div class="wp-options">
+          <button class="wp-option" data-hb="image">
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg></span>
+            <span class="wp-text"><strong>Pilih Foto</strong><small>JPG, PNG, WEBP — maks 50MB</small></span>
+          </button>
+          <button class="wp-option" data-hb="video">
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg></span>
+            <span class="wp-text"><strong>Pilih Video</strong><small>MP4, WEBM — maks 200MB, otomatis diam</small></span>
+          </button>
+          <button class="wp-option danger" data-hb="clear">
+            <span class="wp-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-trash" /></svg></span>
+            <span class="wp-text"><strong>Hapus Latar</strong><small>Kembalikan ke bawaan</small></span>
+          </button>
+        </div>
+
+        <input type="file" id="homeBgInput" accept="image/*,video/*" class="hidden" />
+
+        <div class="wp-actions">
+          <button type="button" class="btn-primary" id="btnSaveHomeBg">Terapkan &amp; Simpan</button>
+        </div>
+
+        <p class="wp-hint">Berlaku hanya untuk halaman utama Anda (daftar chat &amp; layar kosong). Jika dihapus, kembali ke bawaan Whatsap Indo.</p>
+        <p class="wp-status hidden" id="hbStatus"></p>
       </div>
     </div>
 
@@ -356,14 +708,135 @@
 
         <div class="profile-facts">
           <div class="fact"><span>Status</span><strong id="factVerified">—</strong></div>
+          <div class="fact"><span>Paket</span><strong id="factPlan">—</strong></div>
           <div class="fact"><span>Bergabung</span><strong id="factJoined">—</strong></div>
           <div class="fact"><span>ID Pengguna</span><strong class="mono" id="factId">—</strong></div>
         </div>
 
         <button class="btn-primary" id="btnSaveProfile">Simpan Perubahan</button>
-        <button class="btn-ghost" id="btnOpenWallpaper">🖼️ Atur Latar Belakang Chat</button>
-        <button class="btn-ghost danger" id="btnLogout">🚪 Keluar</button>
+        <button class="btn-ghost" id="btnOpenPrivacy"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-shield" /></svg> Atur Privasi</button>
+        <button class="btn-ghost" id="btnOpenAdminPanel"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-grid" /></svg> Panel Admin</button>
+        <button class="btn-ghost" id="btnOpenWallpaper"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-image" /></svg> Atur Latar Belakang Chat</button>
+        <button class="btn-ghost danger" id="btnLogout"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-power" /></svg> Keluar</button>
         <p id="profileMsg" class="auth-error hidden"></p>
+      </div>
+    </div>
+
+    <!-- ============ PRIVASI ============ -->
+    <div class="drawer drawer-right hidden" id="privacyDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnClosePrivacy" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Privasi &amp; Notifikasi</strong>
+      </header>
+      <div class="privacy-body">
+        <p class="wp-hint">Pilih informasi yang hanya boleh Anda lihat. Perubahan langsung disimpan.</p>
+
+        <div class="pv-sec"><strong>Notifikasi</strong></div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Notifikasi sistem</strong><small id="notifPermText">Muncul walau aplikasi ditutup</small></div>
+          <button class="pv-btn" id="btnEnableNotif" type="button">Aktifkan</button>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Nada &amp; getar</strong><small>Bunyi ketika pesan baru masuk</small></div>
+          <label class="switch"><input type="checkbox" id="notifSoundToggle" /><span></span></label>
+        </div>
+
+        <div class="pv-sec"><strong>Privasi</strong></div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Terakhir dilihat &amp; online</strong><small>Orang lain selalu melihat Anda offline</small></div>
+          <label class="switch"><input type="checkbox" data-pv="lastSeen" /><span></span></label>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Laporan dibaca (centang biru)</strong><small>Pesan tetap terbaca, pengirim tidak diberi tanda</small></div>
+          <label class="switch"><input type="checkbox" data-pv="receipts" /><span></span></label>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Email saya</strong><small>Disembunyikan dari pencarian &amp; profil orang lain</small></div>
+          <label class="switch"><input type="checkbox" data-pv="email" /><span></span></label>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Bio saya</strong><small>Hanya Anda yang bisa membaca bio</small></div>
+          <label class="switch"><input type="checkbox" data-pv="bio" /><span></span></label>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Status wa saya</strong><small>Status tidak dikirim ke kontak mana pun</small></div>
+          <label class="switch"><input type="checkbox" data-pv="status" /><span></span></label>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Foto profil saya</strong><small>Diganti inisial untuk orang lain</small></div>
+          <label class="switch"><input type="checkbox" data-pv="avatar" /><span></span></label>
+        </div>
+
+        <p class="wp-status hidden" id="pvStatus"></p>
+      </div>
+    </div>
+
+    <!-- ============ PANEL ADMIN ============ -->
+    <div class="drawer drawer-right hidden" id="adminDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseAdmin" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Panel Admin</strong>
+      </header>
+      <div class="admin-body">
+        <div class="adm-stats" id="admStats"></div>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-crown" /></svg> Beri Paket Premium</h4>
+          <p class="adm-note">Masukkan email pengguna, pilih paket — akun langsung terverifikasi (centang biru).</p>
+          <div class="adm-form">
+            <input type="email" id="admEmail" placeholder="email@pengguna.com" autocomplete="off" />
+            <select id="admPlan"></select>
+            <button class="btn-primary" id="btnGrantPremium">Aktifkan</button>
+          </div>
+          <p class="auth-error hidden" id="admMsg"></p>
+        </section>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-user" /></svg> Pendaftaran Menunggu <span class="tag tag-pending hidden" id="admPendingCount">0</span></h4>
+          <p class="adm-note">Akun baru harus disetujui dulu sebelum bisa masuk. Setujui atau tolak di sini.</p>
+          <div class="adm-users" id="admPending"><div class="empty-state">Tidak ada pendaftaran menunggu.</div></div>
+        </section>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-grid" /></svg> Monitor Real-time</h4>
+          <p class="adm-note">Status pengguna diperbarui langsung: siapa yang daring, perangkat terakhir, upaya masuk.</p>
+          <div class="adm-live" id="admLive">
+            <span class="adm-live-dot"></span> <span id="admLiveText">Menunggu koneksi...</span>
+          </div>
+          <div class="adm-logs" id="admLogs"></div>
+          <div class="adm-users" id="admMonitor"></div>
+        </section>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-user" /></svg> Pengguna</h4>
+          <input type="search" id="admSearch" placeholder="Cari nama atau email..." autocomplete="off" />
+          <div class="adm-users" id="admUsers"></div>
+        </section>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-grid" /></svg> Atur Paket</h4>
+          <p class="adm-note">Nama &amp; durasi (hari) untuk 3 paket langganan.</p>
+          <div class="adm-plans" id="admPlans"></div>
+          <button class="btn-primary" id="btnSavePlans">Simpan Paket</button>
+        </section>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-image" /></svg> Background Beranda</h4>
+          <p class="adm-note">Foto atau video halaman masuk/daftar — berlaku untuk semua pengguna.</p>
+          <div class="adm-bg" id="admBgPreview"></div>
+          <div class="adm-bg-actions">
+            <button class="btn-ghost" id="admBgDefault">Bawaan</button>
+            <button class="btn-ghost" id="admBgPhoto">Pilih Foto</button>
+            <button class="btn-ghost" id="admBgVideo">Pilih Video</button>
+          </div>
+          <input type="file" id="admBgInput" accept="image/*,video/*" class="hidden" />
+          <button class="btn-primary" id="btnSaveHomeBg">Simpan Background</button>
+          <p class="auth-error hidden" id="admBgMsg"></p>
+        </section>
       </div>
     </div>
   </section>
@@ -375,8 +848,8 @@
       <h3 id="inCallerName">—</h3>
       <p id="inCallKind">Panggilan masuk...</p>
       <div class="call-actions">
-        <button class="call-btn decline" id="btnRejectCall">✕ Tolak</button>
-        <button class="call-btn accept" id="btnAcceptCall">✓ Jawab</button>
+        <button class="call-btn decline" id="btnRejectCall"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-close" /></svg> Tolak</button>
+        <button class="call-btn accept" id="btnAcceptCall"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-check" /></svg> Jawab</button>
       </div>
     </div>
   </div>
@@ -397,14 +870,45 @@
       </div>
       <p id="callStateText" class="call-state">Menghubungkan...</p>
       <div class="call-actions">
-        <button class="call-btn toggle" id="btnToggleMic" title="Mic">🎙️</button>
-        <button class="call-btn toggle" id="btnToggleCam" title="Kamera">🎥</button>
-        <button class="call-btn decline" id="btnHangup">✕ Akhiri</button>
+        <button class="call-btn toggle" id="btnToggleMic" title="Mic"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-mic" /></svg></button>
+        <button class="call-btn toggle" id="btnToggleCam" title="Kamera"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg></button>
+        <button class="call-btn decline" id="btnHangup"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-hangup" /></svg> Akhiri</button>
       </div>
     </div>
   </div>
 
+  <!-- ============ PEMONTOK STATUS ============ -->
+  <div class="story-viewer hidden" id="storyViewer">
+    <div class="story-progress" id="storyProgress"></div>
+    <header class="story-head">
+      <div class="avatar" id="storyAvatar"><span>?</span></div>
+      <div class="story-meta">
+        <strong id="storyName">—</strong>
+        <small id="storyTime">—</small>
+      </div>
+      <button class="icon-btn story-close" id="btnCloseStory" title="Tutup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg></button>
+    </header>
+    <div class="story-stage" id="storyStage"></div>
+    <p class="story-caption" id="storyCaption"></p>
+    <button class="story-nav prev" id="storyPrev" aria-label="Sebelumnya">‹</button>
+    <button class="story-nav next" id="storyNext" aria-label="Berikutnya">›</button>
+    <footer class="story-foot">
+      <span id="storyViews" class="hidden">👁 0</span>
+      <button class="btn-ghost danger story-del hidden" id="btnDeleteStory"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-trash" /></svg> Hapus status</button>
+    </footer>
+  </div>
+
+  <!-- ============ FOTO SEKALI LIHAT ============ -->
+  <div class="vo-viewer hidden" id="voViewer">
+    <button class="icon-btn vo-close" id="btnCloseVo" title="Tutup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg></button>
+    <img id="voImage" alt="Foto sekali lihat" />
+    <p class="vo-note">Foto ini hanya bisa dilihat satu kali.</p>
+  </div>
+
   <div class="toast hidden" id="toast"></div>
+
+  <!-- lapisan notifikasi mengambang ala WhatsApp -->
+  <div class="notif-layer" id="notifLayer" aria-live="polite"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/app.js"></script>
