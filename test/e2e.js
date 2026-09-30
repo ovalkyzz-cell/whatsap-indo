@@ -888,11 +888,82 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       `bot AI model ${namaModel} menjawab nyata tanpa error`);
   }
 
+  console.log('\n[25] Bot baru: Downloader, Email Generator, Tools');
+
+  const chatDown = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-down' } });
+  ok(chatDown.status === 201, 'admin membuka chat bot Downloader');
+  const dChat = chatDown.data.chat.id;
+
+  const downMenuWait = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: dChat, type: 'text', body: 'menu' });
+  const downMenu = await downMenuWait;
+  ok(downMenu && downMenu.senderId === 'bot-down' && /DOWNLOADER/.test(downMenu.body),
+    'bot Downloader membalas menu profesional');
+
+  const downErrWait = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: dChat, type: 'text', body: 'bukan tautan' });
+  const downErr = await downErrWait;
+  ok(downErr && /Tautan tidak ditemukan/.test(downErr.body),
+    'bot Downloader menolak input tanpa tautan dengan rapi');
+
+  const chatMail = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-email' } });
+  ok(chatMail.status === 201, 'admin membuka chat bot Email Generator');
+  const eChat = chatMail.data.chat.id;
+
+  const mailMenuWait = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: eChat, type: 'text', body: 'menu' });
+  const mailMenu = await mailMenuWait;
+  ok(mailMenu && mailMenu.senderId === 'bot-email' && /EMAIL GENERATOR/.test(mailMenu.body),
+    'bot Email Generator membalas menu profesional');
+
+  const mailErrWait = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: eChat, type: 'text', body: 'cek bukan-email' });
+  const mailErr = await mailErrWait;
+  ok(mailErr && /Format email belum benar/.test(mailErr.body),
+    'bot Email Generator menolak email salah dengan rapi');
+
+  const mailDomainsWait = waitEvent(botSock, 'message:new', 45000);
+  await emitAck(botSock, 'message:send', { chatId: eChat, type: 'text', body: 'domains' });
+  const mailDomains = await mailDomainsWait;
+  ok(mailDomains && /domain tersedia/.test(mailDomains.body) && mailDomains.body.includes('```'),
+    'bot Email Generator menampilkan daftar domain dalam blok kode');
+
+  const chatTools = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-tools' } });
+  ok(chatTools.status === 201, 'admin membuka chat bot Tools');
+  const tChat = chatTools.data.chat.id;
+
+  const toolsMenuWait = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: tChat, type: 'text', body: 'menu' });
+  const toolsMenu = await toolsMenuWait;
+  ok(toolsMenu && toolsMenu.senderId === 'bot-tools' && /Terjemah/.test(toolsMenu.body),
+    'bot Tools membalas menu profesional');
+
+  const toolsCuacaWait = waitEvent(botSock, 'message:new', 45000);
+  await emitAck(botSock, 'message:send', { chatId: tChat, type: 'text', body: 'cuaca Jakarta' });
+  const toolsCuaca = await toolsCuacaWait;
+  ok(toolsCuaca && /Cuaca Jakarta/.test(toolsCuaca.body) && toolsCuaca.body.includes('```angka'),
+    'bot Tools menampilkan cuaca dengan kartu angka');
+
   botSock.close();
 
-  console.log('\n[25] Edit foto profil bot (khusus admin)');
+  console.log('\n[26] Edit nama & foto profil bot (khusus admin)');
   const profBot = await admApi('/api/users/bot-verif-am');
   ok(profBot.status === 200 && profBot.data.user.isBot === true, 'profil bot ditandai isBot');
+
+  const gantiNama = await admApi('/api/admin/bots/bot-down', {
+    method: 'PATCH',
+    body: { name: 'Downloader Pro' },
+  });
+  ok(gantiNama.status === 200 && gantiNama.data.user.name === 'Downloader Pro',
+    'admin mengganti nama bot');
+
+  const namaPendek = await admApi('/api/admin/bots/bot-down', {
+    method: 'PATCH',
+    body: { name: 'A' },
+  });
+  ok(namaPendek.status === 400, 'nama bot minimal 2 karakter');
+
+  await admApi('/api/admin/bots/bot-down', { method: 'PATCH', body: { name: 'Downloader' } });
 
   const editBiasa = await api('/api/admin/bots/bot-verif-am', {
     method: 'PATCH',

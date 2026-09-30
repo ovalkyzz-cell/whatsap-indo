@@ -1363,3 +1363,128 @@ html[data-theme="dark"] #emptyHomeBg::after { background: rgba(4, 22, 18, .74); 
 .voice-bar .icon-btn .ico, .composer-actions .icon-btn .ico { color: inherit; }
 .send-btn .ico { width: 19px; height: 19px; }
 .mic-btn .ico { width: 20px; height: 20px; }
+
+/* ================= blok kode ala VS Code ================= */
+.msg.has-block { max-width: min(92%, 660px); }
+
+.code-block, .numcard {
+  margin: 6px 0; border-radius: 8px; overflow: hidden;
+  background: #1e1e1e; border: 1px solid rgba(0, 0, 0, .35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18);
+}
+.code-block:first-child, .numcard:first-child { margin-top: 2px; }
+.code-block:last-child, .numcard:last-child { margin-bottom: 2px; }
+
+.cb-head, .numcard-head {
+  display: flex; align-items: center; gap: 8px;
+  background: #2d2d2d; padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid #1a1a1a;
+}
+.cb-dots { display: inline-flex; gap: 5px; }
+.cb-dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+.cb-dots i:nth-child(1) { background: #ff5f57; }
+.cb-dots i:nth-child(2) { background: #febc2e; }
+.cb-dots i:nth-child(3) { background: #28c840; }
+.cb-label {
+  flex: 1; font-size: 10.5px; font-weight: 700; letter-spacing: .7px;
+  text-transform: uppercase; color: #9d9d9d; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.cb-copy {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: #cfcfcf; background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 5px; padding: 3px 9px;
+  font-size: 11.5px; font-weight: 600; line-height: 1;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.cb-copy:hover { background: rgba(255, 255, 255, .16); color: #fff; }
+.cb-copy.copied { color: #4ec9b0; border-color: rgba(78, 201, 176, .5); background: rgba(78, 201, 176, .12); }
+.cb-copy .ico { width: 13px; height: 13px; }
+.cb-copy .ico path, .cb-copy .ico rect { vector-effect: non-scaling-stroke; }
+
+.cb-body { display: flex; align-items: stretch; }
+.cb-gutter {
+  flex: 0 0 auto; min-width: 34px; padding: 8px 8px 8px 6px;
+  text-align: right; color: #6e7681; background: #1e1e1e;
+  border-right: 1px solid #2d2d2d; user-select: none;
+  font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  white-space: pre;
+}
+.cb-scroll { flex: 1; min-width: 0; overflow-x: auto; }
+.cb-code {
+  padding: 8px 12px; color: #d4d4d4; white-space: pre; tab-size: 2;
+  font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+.cb-scroll::-webkit-scrollbar { height: 8px; }
+.cb-scroll::-webkit-scrollbar-track { background: #1e1e1e; }
+.cb-scroll::-webkit-scrollbar-thumb { background: #424242; border-radius: 4px; }
+.cb-scroll::-webkit-scrollbar-thumb:hover { background: #5a5a5a; }
+
+/* warna sintaks ala VS Code Dark+ */
+.hl-kw { color: #569cd6; }
+.hl-str { color: #ce9178; }
+.hl-num { color: #b5cea8; }
+.hl-com { color: #6a9955; font-style: italic; }
+
+/* kartu angka / token khusus (font profesional) */
+.numcard { background: linear-gradient(180deg, #111c24 0%, #0d1117 100%); border-color: #2b3a45; }
+.numcard-head { background: #16222c; border-bottom-color: #243540; }
+.numcard .cb-label { color: #e5c07b; }
+.numcard-body {
+  margin: 0; padding: 12px 14px; white-space: pre-wrap; word-break: break-all;
+  color: #ffd479; text-shadow: 0 0 12px rgba(255, 212, 121, .25);
+  font: 700 15.5px/1.65 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; letter-spacing: 1.6px;
+}
+
+/* kode inline + tautan di dalam pesan */
+.msg-text code.mi {
+  background: rgba(136, 125, 125, .18); border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 4px; padding: 1px 5px; font-size: 12.6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.msg.out .msg-text code.mi { background: rgba(0, 0, 0, .08); border-color: rgba(0, 0, 0, .12); }
+.msg-text a { color: #027eb5; text-decoration: underline; word-break: break-all; }
+.msg.out .msg-text a { color: #027eb5; }
+html[data-theme="dark"] .msg-text a { color: #53bdeb; }
+
+/* ================= edit nama/bio bot (khusus admin) ================= */
+.ci-title { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.ci-title h3, .ci-title .bio { margin: 0; }
+.ci-edit {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  color: var(--wa-text-2); background: var(--wa-hover-soft);
+  transition: background .15s, color .15s;
+}
+.ci-edit:hover { background: var(--wa-teal); color: #fff; }
+.ci-edit .ico { width: 14px; height: 14px; }
+.ci-editrow {
+  width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--wa-panel); border: 1px solid var(--wa-border);
+  border-radius: 10px; padding: 10px; box-shadow: var(--shadow);
+}
+.ci-editrow input, .ci-editrow textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--wa-border);
+  border-radius: 7px; outline: none; background: var(--wa-input-bg);
+  color: var(--wa-text); font-size: 14px; resize: vertical;
+}
+.ci-editrow input:focus, .ci-editrow textarea:focus { border-color: var(--wa-teal); }
+.ci-editbtns { display: flex; gap: 8px; justify-content: flex-end; }
+.ci-save {
+  background: var(--wa-teal-dark); color: #fff; padding: 6px 14px;
+  border-radius: 16px; font-size: 13px; font-weight: 600;
+}
+.ci-save:hover { filter: brightness(1.1); }
+.ci-cancel {
+  border: 1px solid var(--wa-border); padding: 6px 14px;
+  border-radius: 16px; font-size: 13px; color: var(--wa-text-2);
+}
+.ci-cancel:hover { background: var(--wa-hover); }
+
+@media (max-width: 760px) {
+  .msg.has-block { max-width: 94%; }
+  .cb-dots { display: none; }
+  .numcard-body { font-size: 14.5px; letter-spacing: 1.1px; }
+}

@@ -363,6 +363,154 @@ function markRead(chatId) {
   renderChatList();
 }
 
+/* ================= body pesan: blok kode ala VS Code ================= */
+const NUM_LANGS = ['angka', 'number', 'num', 'token', 'kode', 'code-num', 'am'];
+
+function splitFences(text) {
+  const parts = [];
+  let idx = 0;
+  for (;;) {
+    const open = text.indexOf('```', idx);
+    if (open === -1) { parts.push({ text: text.slice(idx) }); break; }
+    if (open > idx) parts.push({ text: text.slice(idx, open) });
+    const nl = text.indexOf('\n', open + 3);
+    if (nl === -1) { parts.push({ lang: '', code: text.slice(open + 3) }); break; }
+    const head = text.slice(open + 3, nl);
+    let lang = '';
+    let bodyStart = nl + 1;
+    if (/^[\w+.#-]{0,20}$/.test(head)) lang = head;
+    else bodyStart = open + 3;
+    const close = text.indexOf('```', bodyStart);
+    if (close === -1) { parts.push({ lang, code: text.slice(bodyStart) }); break; }
+    parts.push({ lang, code: text.slice(bodyStart, close) });
+    idx = close + 3;
+  }
+  return parts;
+}
+
+// tokenisasi kode mentah lalu di-escape per potongan -> tidak ada HTML liar
+function highlightCode(code, lang) {
+  const l = String(lang || '').toLowerCase();
+  const hashLangs = ['py', 'python', 'sh', 'bash', 'zsh', 'rb', 'ruby', 'yml', 'yaml', 'toml', 'perl', 'r', 'ps1'];
+  const slashLangs = ['js', 'mjs', 'cjs', 'ts', 'jsx', 'tsx', 'json', 'java', 'c', 'cpp', 'cc', 'h', 'hpp',
+    'cs', 'go', 'rust', 'rs', 'swift', 'kt', 'kotlin', 'php', 'dart', 'scala', 'lua', 'css', 'scss', 'less',
+    'sql', 'r', 'groovy'];
+  const plain = ['text', 'txt', 'plaintext', ''];
+  if (plain.includes(l)) return esc(code);
+
+  const alts = [];
+  if (slashLangs.includes(l)) alts.push('\\/\\/[^\\n]*', '\\/\\*[\\s\\S]*?\\*\\/');
+  if (hashLangs.includes(l)) alts.push('#[^\\n]*');
+  alts.push('"(?:[^"\\\\\\n]|\\\\.)*"', "'(?:[^'\\\\\\n]|\\\\.)*'", '`(?:[^`\\\\]|\\\\.)*`', '\\b\\d[\\w.]*\\b',
+    '\\b(?:const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|class|extends|super|this|typeof|instanceof|in|of|try|catch|finally|throw|async|await|import|export|default|from|as|def|elif|lambda|None|True|False|null|undefined|true|false|void|public|private|protected|static|int|float|double|char|string|bool|boolean|package|func|struct|interface|enum|require|module|print|echo|end|then|fi|self|not|and|or|with|pass|yield|global|nonlocal|is|public)\\b');
+
+  let re;
+  try { re = new RegExp(alts.join('|'), 'g'); } catch { return esc(code); }
+
+  let out = '';
+  let last = 0;
+  for (const m of code.matchAll(re)) {
+    out += esc(code.slice(last, m.index));
+    const tok = m[0];
+    const cls = (tok.startsWith('//') || tok.startsWith('/*') || (tok.startsWith('#') && hashLangs.includes(l)))
+      ? 'com'
+      : (tok.startsWith('"') || tok.startsWith("'") || tok.startsWith('`'))
+        ? 'str'
+        : (/^\d/.test(tok) ? 'num' : 'kw');
+    out += `<span class="hl-${cls}">${esc(tok)}</span>`;
+    last = m.index + tok.length;
+  }
+  out += esc(code.slice(last));
+  return out;
+}
+
+function inlineMsgHtml(text) {
+  if (!text) return '';
+  let h = esc(text).replace(/`([^`\n]+)`/g, '<code class="mi">$1</code>');
+  h = h.split(/(<[^>]+>)/g).map((seg) => {
+    if (seg.startsWith('<')) return seg;
+    return seg.replace(/https?:\/\/[^\s<>"']+/g, (m) => {
+      const clean = m.replace(/[.,;:!?)\]}]+$/, '');
+      const trail = m.slice(clean.length);
+      return `<a href="${clean}" target="_blank" rel="noopener noreferrer">${clean}</a>${trail}`;
+    });
+  }).join('');
+  return `<div class="msg-text">${h}</div>`;
+}
+
+const COPY_ICO = '<svg viewBox="0 0 24 24" class="ico"><use href="#ic-copy"></use></svg>';
+
+function codeBlockHtml(lang, raw) {
+  const l = String(lang || '').toLowerCase();
+  let code = String(raw === undefined || raw === null ? '' : raw).replace(/\s+$/, '');
+  if (l === 'json') { try { code = JSON.stringify(JSON.parse(code), null, 2); } catch { /* JSON tidak valid */ } }
+
+  if (NUM_LANGS.includes(l)) {
+    return `<div class="numcard">
+      <div class="numcard-head">
+        <span class="cb-label">KODE SPESIAL</span>
+        <button type="button" class="cb-copy" data-copy title="Salin"><span class="cb-ico">${COPY_ICO}</span><span class="cb-copy-text">Copy</span></button>
+      </div>
+      <pre class="numcard-body"><code>${esc(code)}</code></pre>
+    </div>`;
+  }
+
+  const lines = code.split('\n');
+  const gutter = lines.map((_, i) => i + 1).join('\n');
+  const label = l || 'teks';
+  return `<div class="code-block">
+    <div class="cb-head">
+      <span class="cb-dots"><i></i><i></i><i></i></span>
+      <span class="cb-label">${esc(label)}</span>
+      <button type="button" class="cb-copy" data-copy title="Salin kode"><span class="cb-ico">${COPY_ICO}</span><span class="cb-copy-text">Copy</span></button>
+    </div>
+    <div class="cb-body">
+      <pre class="cb-gutter" aria-hidden="true">${gutter}</pre>
+      <div class="cb-scroll"><pre class="cb-code"><code>${highlightCode(code, l)}</code></pre></div>
+    </div>
+  </div>`;
+}
+
+function renderMsgBody(raw) {
+  const parts = splitFences(String(raw || ''));
+  let html = '';
+  parts.forEach((p, i) => {
+    if (p.code !== undefined) {
+      html += codeBlockHtml(p.lang, p.code);
+      return;
+    }
+    let t = p.text;
+    if (parts.length > 1) {
+      const prevBlock = i > 0 && parts[i - 1].code !== undefined;
+      const nextIsBlock = i + 1 < parts.length && parts[i + 1].code !== undefined;
+      if (prevBlock) t = t.replace(/^\n+/, '');
+      if (nextIsBlock) t = t.replace(/\n+$/, '');
+    }
+    html += inlineMsgHtml(t);
+  });
+  return html;
+}
+
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* lanjut ke fallback */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
 /* ================= messages render ================= */
 function renderMessages() {
   const chat = currentChat();
@@ -400,7 +548,7 @@ function messageHtml(m, chat) {
     inner += m.opened
       ? `<div class="vo-bubble opened">👁️ Foto sekali lihat sudah dibuka</div>`
       : `<button type="button" class="vo-bubble" data-vo="${esc(m.id)}"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-lock" /></svg>Buka foto sekali lihat</button>`;
-    if (m.body) inner += `<div class="msg-text">${esc(m.body)}</div>`;
+    if (m.body) inner += renderMsgBody(m.body);
   } else {
     if (m.type === 'image' && m.mediaUrl) {
       inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy"></a></div>`;
@@ -414,7 +562,7 @@ function messageHtml(m, chat) {
         <span class="msg-file-info"><strong>${esc(m.mediaName || 'file')}</strong><small>${esc(fmtSize(m.mediaSize))}</small></span>
       </a>`;
     }
-    if (m.body) inner += `<div class="msg-text">${esc(m.body)}</div>`;
+    if (m.body) inner += renderMsgBody(m.body);
   }
 
   const ticks = out && !m.deleted ? tickHtml(m.status) : '';
@@ -423,8 +571,9 @@ function messageHtml(m, chat) {
     progress = `<div class="uploading-label">Mengunggah ${m._progress || 0}% • ${esc(fmtSize(m.mediaSize))}</div>
       <div class="uploading-bar"><i style="width:${m._progress || 0}%"></i></div>`;
   }
+  const hasBlock = !!m.body && m.body.includes('```');
   return `
-  <div class="msg ${out ? 'out' : 'in'}" data-msg="${m.id}">
+  <div class="msg ${out ? 'out' : 'in'}${hasBlock ? ' has-block' : ''}" data-msg="${m.id}">
     ${!out && chat.type === 'group' ? `<div class="msg-sender">${esc(sender.name || '')}</div>` : ''}
     ${inner}
     ${progress}
@@ -437,6 +586,25 @@ function messageHtml(m, chat) {
 }
 
 function bindMessageActions() {
+  document.querySelectorAll('[data-copy]').forEach((b) => {
+    if (b._bound) return;
+    b._bound = true;
+    b.addEventListener('click', async () => {
+      const wrap = b.closest('.code-block, .numcard');
+      const codeEl = wrap && wrap.querySelector('code');
+      if (!codeEl) return;
+      const ok = await copyToClipboard(codeEl.innerText);
+      if (!ok) { toast('Gagal menyalin — coba klik kanan lalu Salin'); return; }
+      b.classList.add('copied');
+      const label = b.querySelector('.cb-copy-text');
+      if (label) label.textContent = 'Copied';
+      toast('Disalin ke papan klip');
+      setTimeout(() => {
+        b.classList.remove('copied');
+        if (label) label.textContent = 'Copy';
+      }, 1600);
+    });
+  });
   document.querySelectorAll('[data-del]').forEach((b) => {
     b.addEventListener('click', async () => {
       try {
@@ -1648,8 +1816,28 @@ $('btnCloseHomeBg').addEventListener('click', closeDrawers);
 /* ================= info kontak ================= */
 $('btnContactInfo').addEventListener('click', openContactInfo);
 
-// khusus admin: ganti foto profil bot lewat panel info kontak
-function bindBotAvatarEdit(user, peer) {
+// khusus admin: edit foto profil, nama & bio bot lewat panel info kontak
+function syncBotPeer(updated) {
+  S.peerCache[updated.id] = { ...(S.peerCache[updated.id] || {}), ...updated };
+  S.chats.forEach((c) => {
+    if (c.peer && c.peer.id === updated.id) c.peer = { ...c.peer, ...updated };
+  });
+  renderChatList();
+  if (currentChat()?.peer?.id === updated.id) {
+    updateChatStatus();
+    if ($('chatName')) $('chatName').innerHTML = esc(chatTitle(currentChat())) + badge(updated.verified);
+  }
+}
+
+async function patchBot(user, body) {
+  const res = await api(`/api/admin/bots/${user.id}`, { method: 'PATCH', body });
+  const updated = res.user;
+  syncBotPeer(updated);
+  Object.assign(user, updated);
+  return updated;
+}
+
+function bindBotProfileEdit(user, peer) {
   const input = $('ciAvatarInput');
   $('ciAvatarBtn').addEventListener('click', () => input.click());
   input.addEventListener('change', async () => {
@@ -1659,16 +1847,53 @@ function bindBotAvatarEdit(user, peer) {
     if (file.size > 5 * 1024 * 1024) { toast('Foto profil maksimal 5MB'); return; }
     try {
       const meta = await uploadFile(file, () => {});
-      const res = await api(`/api/admin/bots/${user.id}`, { method: 'PATCH', body: { avatar: meta.url } });
-      const updated = res.user;
-      S.peerCache[updated.id] = updated;
-      S.chats.forEach((c) => {
-        if (c.peer && c.peer.id === updated.id) c.peer = { ...c.peer, ...updated };
-      });
+      const updated = await patchBot(user, { avatar: meta.url });
       setAvatar($('contactAvatar'), { ...peer, ...updated });
-      renderChatList();
-      if (currentChat()?.peer?.id === updated.id) updateChatStatus();
       toast('Foto profil bot diperbarui');
+    } catch (err) { toast(err.message); }
+  });
+
+  const nameRow = $('ciNameRow');
+  const bioRow = $('ciBioRow');
+  if (!nameRow || !bioRow) return;
+
+  $('ciNameBtn').addEventListener('click', () => {
+    bioRow.classList.add('hidden');
+    nameRow.classList.toggle('hidden');
+    if (!nameRow.classList.contains('hidden')) {
+      $('ciNameInput').value = user.name || '';
+      $('ciNameInput').focus();
+    }
+  });
+  $('ciBioBtn').addEventListener('click', () => {
+    nameRow.classList.add('hidden');
+    bioRow.classList.toggle('hidden');
+    if (!bioRow.classList.contains('hidden')) {
+      $('ciBioInput').value = user.about || '';
+      $('ciBioInput').focus();
+    }
+  });
+  $('ciNameCancel').addEventListener('click', () => nameRow.classList.add('hidden'));
+  $('ciBioCancel').addEventListener('click', () => bioRow.classList.add('hidden'));
+
+  $('ciNameSave').addEventListener('click', async () => {
+    const value = $('ciNameInput').value.trim();
+    if (value.length < 2) { toast('Nama minimal 2 karakter'); return; }
+    try {
+      const updated = await patchBot(user, { name: value });
+      $('ciName').innerHTML = esc(updated.name) + badge(updated.verified);
+      nameRow.classList.add('hidden');
+      toast('Nama bot diperbarui');
+    } catch (err) { toast(err.message); }
+  });
+
+  $('ciBioSave').addEventListener('click', async () => {
+    const value = $('ciBioInput').value.trim();
+    try {
+      const updated = await patchBot(user, { about: value });
+      $('ciBio').textContent = updated.about || 'Tidak ada bio';
+      bioRow.classList.add('hidden');
+      toast('Bio bot diperbarui');
     } catch (err) { toast(err.message); }
   });
 }
@@ -1692,8 +1917,29 @@ async function openContactInfo() {
           ${canEditBot ? '<button class="avatar-edit" id="ciAvatarBtn" type="button" title="Ganti foto profil bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg></button>' : ''}
         </div>
         <input type="file" id="ciAvatarInput" accept="image/*" class="hidden" />
-        <h3>${esc(u.name)}${badge(u.verified)}</h3>
-        <p class="bio">${esc(u.about || 'Tidak ada bio')}</p>
+        <div class="ci-title">
+          <h3 id="ciName">${esc(u.name)}${badge(u.verified)}</h3>
+          ${canEditBot ? '<button class="ci-edit" id="ciNameBtn" type="button" title="Ubah nama bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-edit" /></svg></button>' : ''}
+        </div>
+        <div class="ci-title">
+          <p class="bio" id="ciBio">${esc(u.about || 'Tidak ada bio')}</p>
+          ${canEditBot ? '<button class="ci-edit" id="ciBioBtn" type="button" title="Ubah bio bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-edit" /></svg></button>' : ''}
+        </div>
+        ${canEditBot ? `
+        <div class="ci-editrow hidden" id="ciNameRow">
+          <input id="ciNameInput" maxlength="60" placeholder="Nama bot" />
+          <div class="ci-editbtns">
+            <button class="ci-save" id="ciNameSave" type="button">Simpan</button>
+            <button class="ci-cancel" id="ciNameCancel" type="button">Batal</button>
+          </div>
+        </div>
+        <div class="ci-editrow hidden" id="ciBioRow">
+          <textarea id="ciBioInput" maxlength="200" rows="3" placeholder="Bio bot"></textarea>
+          <div class="ci-editbtns">
+            <button class="ci-save" id="ciBioSave" type="button">Simpan</button>
+            <button class="ci-cancel" id="ciBioCancel" type="button">Batal</button>
+          </div>
+        </div>` : ''}
         <span class="presence">${u.isBot
           ? 'Bot resmi • Siap membantu'
           : (peer.online ? 'Online' : (u.lastSeen ? `Terakhir dilihat ${fmtListTime(u.lastSeen)} ${fmtTime(u.lastSeen)}` : 'Offline'))}</span>
@@ -1717,7 +1963,7 @@ async function openContactInfo() {
       $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
       $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
     }
-    if (canEditBot) bindBotAvatarEdit(u, peer);
+    if (canEditBot) bindBotProfileEdit(u, peer);
   } catch (err) {
     body.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
   }

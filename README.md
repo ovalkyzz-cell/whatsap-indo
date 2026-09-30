@@ -11,13 +11,16 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Persetujuan | Akun baru berstatus **menunggu** — harus disetujui admin sebelum bisa masuk |
 | Chat real-time | Socket.IO — pesan, indikator mengetik, status online/terakhir dilihat |
 | Tanda centang | ✓ terkirim → ✓✓ diterima → ✓✓ biru dibaca (read receipt) |
+| Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
+| Kartu angka | Kode/token khusus (` ```angka `) tampil dengan **font angka profesional** (tabular, tracking lebar) + Copy |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
-| Bot admin | **3 bot khusus admin**: *Verif AM Prem*, *Generate NFToken*, *AI* (ChatGPT, Gemini, Deepseek, Claude) — API dari api-mazval |
+| Bot admin | **6 bot khusus admin**: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* — API dari api-mazval |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
+| Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
 | Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
 | Latar belakang chat | Ganti background percakapan dengan **foto atau video** (per akun, reset kapan saja) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
@@ -42,7 +45,7 @@ Variabel lingkungan opsional:
   supaya sesi pengguna tidak hilang saat server restart)
 - `ADMIN_EMAILS` — daftar email admin dipisah koma (selain `ovalkyzz@gmail.com`); akun dengan
   email ini otomatis **aktif** tanpa persetujuan dan berhak memakai panel admin
-- `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai ketiga bot
+- `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai keenam bot
   (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap)
 - `MAZVAL_API_BASE` — base URL api-mazval (default `https://api-mazval.zone.id`)
 - `MAZVAL_API_TIMEOUT` — batas tunggu respons API bot dalam ms (default `45000`)
@@ -62,9 +65,9 @@ public/
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 194 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 209 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time & bot admin
+               # blokir akun, monitor admin real-time, 6 bot admin & edit nama bot
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -155,17 +158,32 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
-### Bot admin (Verif AM Prem, Generate NFToken, AI)
+### Bot admin (Verif AM Prem, Generate NFToken, AI, Downloader, Email, Tools)
 
-Tiga bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
+Enam bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
 `verified = 1`, status `active` — tampil di pencarian **hanya untuk admin** dan selalu
 membawa **badge centang biru**.
 
 | Bot | ID | Perintah |
 |---|---|---|
 | **Verif AM Prem** | `bot-verif-am` | `send <email>` → kirim tautan verifikasi Alight Motion Premium; `cek <email> <token>` → cek status verifikasi; `menu` |
-| **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → buat token + info masa berlaku; `menu` |
-| **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT); `menu` |
+| **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → **respon JSON rapi** + tombol Copy; `menu` |
+| **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT); kode keluar sebagai **blok kode ala VS Code + Copy**; `menu` |
+| **Downloader** | `bot-down` | kirim tautan video → deteksi platform (TikTok, IG, YouTube, FB, X, dll) → judul, kreator & tautan unduh; `menu` |
+| **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
+| **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
+
+**Format pesan kaya (frontend `public/js/app.js`):**
+
+- Blok ```` ```lang ```` → panel kode gelap ala VS Code: dot jendela, label bahasa,
+  gutter nomor baris, warna sintaks (string/keyword/komentar/angka), dan tombol **Copy**
+  (klipbord + fallback `execCommand`); JSON di-format ulang otomatis sebelum ditampilkan.
+- Blok ```` ```angka ```` → **kartu khusus angka/token** dengan font monospace tebal,
+  `tabular-nums`, tracking lebar & sentuhan emas — dipakai untuk token verifikasi,
+  alamat email, suhu, IP, dll.
+- Tautan `https://…` pada pesan otomatis menjadi tautan bisa diklik.
+- Nama/bio hasil edit admin **tidak tertimpa** saat server restart (seed hanya
+  menyegarkan baris yang masih memakai nama bawaan).
 
 Cara kerja:
 

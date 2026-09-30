@@ -1,9 +1,12 @@
 'use strict';
 
-/* Tiga bot internal khusus admin:
+/* Enam bot internal khusus admin:
    - Verif AM Prem : verifikasi & kirim tautan Alight Motion Premium
-   - Generate NFToken : generator NFToken
-   - AI : ChatGPT, Gemini, Deepseek, Claude
+   - Generate NFToken : generator NFToken (respon JSON + tombol Copy)
+   - AI : ChatGPT, Gemini, Deepseek, Claude (kode muncul sebagai blok kode)
+   - Downloader : unduh video TikTok/IG/YouTube/FB/X & lainnya
+   - Email Generator : email sementara, inbox, OTP & baca pesan
+   - Tools : terjemah, cuaca, IP, QR, npm
    Semua memanggil API api-mazval (base + key lewat env, tidak disimpan di kode). */
 
 const crypto = require('crypto');
@@ -43,7 +46,32 @@ const BOTS = [
     about: 'ChatGPT · Gemini · Deepseek · Claude. Kirim pertanyaanmu.',
     reply: aiReply,
   },
+  {
+    id: 'bot-down',
+    email: 'downloader@bot.whatsap-indo',
+    name: 'Downloader',
+    about: 'Download video TikTok, Instagram, YouTube, Facebook, X & lainnya. Kirim tautannya.',
+    reply: downReply,
+  },
+  {
+    id: 'bot-email',
+    email: 'generator@bot.whatsap-indo',
+    name: 'Email Generator',
+    about: 'Email sementara lengkap: buat, cek inbox, baca pesan & OTP. Ketik "menu".',
+    reply: emailReply,
+  },
+  {
+    id: 'bot-tools',
+    email: 'tools@bot.whatsap-indo',
+    name: 'Tools',
+    about: 'Terjemah · Cuaca · IP · QR · npm. Ketik "menu".',
+    reply: toolsReply,
+  },
 ];
+
+// nama bawaan (termasuk nama lama) — dipakai seed supaya nama/bio hasil edit
+// admin oleh pengguna tidak tertimpa saat restart
+const DEFAULT_NAMES = new Set(BOTS.map((b) => b.name).concat(['Verif AM Prem', 'Generate NFToken', 'AI']));
 
 const byId = new Map(BOTS.map((b) => [b.id, b]));
 
@@ -72,6 +100,28 @@ function errBlock(title, reason) {
     '',
     'Ketik "menu" untuk melihat perintah yang tersedia.',
   ].join('\n');
+}
+
+/* ---------- format blok ----------
+   Frontend mengenali tiga penanda berikut:
+   ```<lang> ... ```  -> blok kode ala VS Code (ada tombol Copy)
+   ```angka ... ```   -> kartu khusus angka/token (font profesional)
+   ```json ... ```    -> blok JSON rapi (di-format ulang frontend + Copy) */
+
+function fence(lang, code) {
+  const body = String(code === undefined || code === null ? '' : code)
+    // kalau isi sudah mengandung fence, pecah supaya rendering tetap utuh
+    .replace(/```/g, '`\u200b``')
+    .replace(/\s+$/, '');
+  return '```' + String(lang || '').trim() + '\n' + body + '\n```';
+}
+
+function jsonFence(obj) {
+  return fence('json', JSON.stringify(obj, null, 2));
+}
+
+function angkaFence(value) {
+  return fence('angka', String(value === undefined || value === null ? '' : value));
 }
 
 /* ---------- pemanggilan API api-mazval ---------- */
@@ -139,6 +189,12 @@ function fieldLines(data) {
   return out;
 }
 
+// ambil nilai kode/tautan dari baris detail untuk ditampilkan di kartu angka
+function pickCodeValue(lines) {
+  const hit = lines.find((l) => /^(Tautan|Link|URL|Kode|Token|Kode Verifikasi|UID)\s*:/i.test(l));
+  return hit ? hit.replace(/^[^:]+:\s*/, '').trim() : null;
+}
+
 /* ---------- Bot 1: Verif AM Prem ---------- */
 
 const VERIF_MENU = [
@@ -189,12 +245,19 @@ async function verifReply(raw) {
     }
     if (body.success === false) return errBlock('Tautan tidak dapat dikirim', body.error);
     const detail = fieldLines(body.data !== undefined ? body.data : body).filter((l) => !/^Email/.test(l));
+    const codeLine = detail.find((l) => /^(Tautan|Link|URL|Kode|Token|Kode Verifikasi|UID)\s*:/i.test(l));
+    const codeValue = codeLine ? pickCodeValue([codeLine]) : email;
+    const restDetail = codeLine ? detail.filter((l) => l !== codeLine) : detail;
     return [
       '✅ Tautan verifikasi terkirim',
       '',
       `Email   : ${email}`,
       'Status  : Tautan verifikasi Alight Motion Premium dikirim ke email.',
-      ...(detail.length ? ['', ...detail] : []),
+      '',
+      'Kode / tautan verifikasi:',
+      angkaFence(codeValue),
+      '',
+      ...(restDetail.length ? restDetail : []),
       '',
       'Langkah selanjutnya:',
       '1. Buka kotak masuk email (cek folder Spam/Promosi bila tidak ada).',
@@ -233,6 +296,8 @@ async function verifReply(raw) {
       '✅ Verifikasi berhasil',
       '',
       `Email   : ${email}`,
+      'Token   :',
+      angkaFence(token),
       ...(detail.length ? detail : ['Status  : Akun Alight Motion Premium terverifikasi.']),
       '',
       'Akun kamu siap digunakan. Balas "menu" bila butuh perintah lain.',
@@ -313,24 +378,33 @@ async function nftokenReply(raw) {
     return errBlock('NFToken tidak dapat dibuat', reason);
   }
 
-  const meta = [];
   const expiry = items[0] && items[0].expiry;
   const plan = items[0] && items[0].plan;
   const country = items[0] && items[0].country;
-  if (expiry) meta.push(`Berlaku : ${expiry}`);
-  if (plan && plan !== 'Tidak diketahui') meta.push(`Plan    : ${plan}`);
-  if (country && country !== 'Tidak diketahui') meta.push(`Negara  : ${country}`);
 
   const failed = Number(outer && outer.failed) || 0;
+  const payload = {
+    success: true,
+    count: tokens.length,
+    failed,
+    ...(expiry ? { expires: expiry } : {}),
+    ...(plan ? { plan } : {}),
+    ...(country ? { country } : {}),
+    tokens: items.map((item, i) => {
+      const entry = { no: i + 1, token: tokens[i] };
+      if (item.expiry) entry.expires = item.expiry;
+      return entry;
+    }),
+    generated_at: new Date().toISOString(),
+  };
   return [
     `✅ ${tokens.length} NFToken berhasil dibuat`,
     '',
-    ...tokens.map((token, i) => `${i + 1})\n${token}`),
-    ...(meta.length ? ['', ...meta] : []),
+    jsonFence(payload),
     '',
     failed ? `Ringkasan : ${tokens.length} sukses · ${failed} gagal` : `Ringkasan : ${tokens.length} token siap dipakai.`,
     '',
-    'Salin token, lalu tempel di aplikasi Alight Motion.',
+    'Salin JSON di atas lewat tombol Copy, lalu tempel token di aplikasi Alight Motion.',
     'Balas "menu" bila butuh perintah lain.',
   ].join('\n');
 }
@@ -344,6 +418,17 @@ const AI_MODELS = [
   { words: ['claude'], path: '/api/ai/claude-ai', label: 'Claude' },
 ];
 const AI_DEFAULT = AI_MODELS[0];
+
+// instruksi format: model diminta menuangkan kode ke blok ```<bahasa>```
+// supaya frontend bisa menampilkannya ala VS Code lengkap dengan tombol Copy
+const CODING_HINT = [
+  '',
+  '',
+  'Aturan format jawaban (wajib dipatuhi):',
+  '- Untuk kode pemrograman, tulis kode DI DALAM blok kode pakai tiga backtick dan nama bahasa, contoh: ```js, ```python, ```json, ```html. Jangan taruh kode di luar blok.',
+  '- Jangan menjelaskan kode baris per baris di luar blok; cukup satu-dua kalimat ringkas sebelum/sesudah blok.',
+  '- Gunakan poin-poin (•) untuk penjelasan panjang, dan tulis jawaban dengan rapi serta profesional dalam Bahasa Indonesia.',
+].join('\n');
 
 const AI_MENU = [
   '╭─────────────────────────────',
@@ -359,8 +444,14 @@ const AI_MENU = [
   '  deepseek <pertanyaan>  DeepSeek R1',
   '  claude <pertanyaan>    Claude',
   '',
+  'Keunggulan:',
+  '  • Kode pemrograman tampil sebagai blok kode ala VS Code',
+  '  • Setiap blok kode punya tombol Copy sekali klik',
+  '  • Mendukung semua bahasa: js, py, java, cpp, go, dll',
+  '',
   'Contoh:',
-  '  gpt ringkas artikel ini dalam 3 kalimat',
+  '  gpt buatkan kode REST API login dengan JWT',
+  '  gemini buatkan fungsi sorting di python',
   '  translate "good morning" ke bahasa Jepang',
   '',
   'Balas "menu" kapan saja untuk membuka daftar perintah.',
@@ -404,7 +495,7 @@ async function aiReply(raw) {
   if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return AI_MENU;
 
   const model = AI_MODELS.find((m) => m.words.includes(cmd)) || AI_DEFAULT;
-  const prompt = model === AI_DEFAULT ? text : arg;
+  const prompt = ((model === AI_DEFAULT ? text : arg) + CODING_HINT).trim();
 
   if (!prompt) {
     return [
@@ -458,10 +549,518 @@ async function aiReply(raw) {
   return [
     header,
     HR,
-    sanitize(answer, 6000),
+    sanitize(answer, 7200),
     HR,
     'Balas "menu" untuk memilih model lain.',
   ].join('\n');
+}
+
+/* ---------- Bot 4: Downloader video sosial ---------- */
+
+const DOWN_MENU = [
+  '╭─────────────────────────────',
+  '│ DOWNLOADER',
+  '│ TikTok · IG · YouTube · FB · X',
+  '╰─────────────────────────────',
+  '',
+  'Kirim tautan video, bot ini otomatis mendeteksi platformnya.',
+  '',
+  'Platform yang didukung:',
+  '  • TikTok      • Instagram   • YouTube',
+  '  • Facebook    • Twitter / X • Pinterest',
+  '  • Spotify     • SoundCloud  • Douyin',
+  '  • MediaFire   • Terabox     • lainnya',
+  '',
+  'Contoh:',
+  '  https://www.tiktok.com/@akun/video/123',
+  '  https://youtu.be/dQw4w9WgXcQ',
+  '',
+  'Balas "menu" kapan saja untuk membuka daftar perintah.',
+].join('\n');
+
+const DOWN_PLATFORMS = [
+  { re: /(youtube\.com|youtu\.be)/i, path: '/api/download/youtube', label: 'YouTube' },
+  { re: /tiktok\.com/i, path: '/api/download/tiktok', label: 'TikTok' },
+  { re: /(instagram\.com|instagr\.am)/i, path: '/api/download/instagram', label: 'Instagram' },
+  { re: /(facebook\.com|fb\.watch)/i, path: '/api/download/facebook', label: 'Facebook' },
+  { re: /(twitter\.com|x\.com)/i, path: '/api/download/twitter', label: 'Twitter / X' },
+  { re: /pinterest\./i, path: '/api/download/pinterest', label: 'Pinterest' },
+  { re: /spotify\.com/i, path: '/api/download/spotify', label: 'Spotify' },
+  { re: /soundcloud\.com/i, path: '/api/download/soundcloud', label: 'SoundCloud' },
+  { re: /douyin\.com/i, path: '/api/download/douyin', label: 'Douyin' },
+  { re: /mediafire\.com/i, path: '/api/download/mediafire', label: 'MediaFire' },
+  { re: /terabox|1024tera/i, path: '/api/download/terabox', label: 'Terabox' },
+];
+
+const DL_ICON = { mp4: '🎬', mp3: '🎵', hd: '🎞️', sd: '🎞️', audio: '🎵', video: '🎬' };
+
+// kumpulkan tautan unduh dari objek respons (dari objek `download` bila ada)
+function downloadLinks(node, out, depth) {
+  if (!node || depth > 4) return out;
+  if (typeof node === 'string') {
+    if (/^https?:\/\//i.test(node) && !out.includes(node)) out.push(node);
+    return out;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((n) => downloadLinks(n, out, depth + 1));
+    return out;
+  }
+  if (typeof node === 'object') {
+    for (const value of Object.values(node)) downloadLinks(value, out, depth + 1);
+  }
+  return out;
+}
+
+async function downReply(raw) {
+  const text = String(raw || '').trim();
+  const cmd = firstWord(text);
+
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return DOWN_MENU;
+
+  const url = (text.match(/https?:\/\/\S+/i) || [])[0];
+  if (!url) {
+    return errBlock('Tautan tidak ditemukan', 'Kirim tautan video yang valid, contoh: https://youtu.be/xxxxxxx');
+  }
+
+  const platform = DOWN_PLATFORMS.find((p) => p.re.test(url));
+  const path = platform ? platform.path : '/api/download/aio';
+
+  let body;
+  try {
+    body = await callApi(path, { url });
+  } catch (e) {
+    return errBlock('Video tidak dapat diunduh', e.message);
+  }
+  if (body && body.success === false) return errBlock('Video tidak dapat diunduh', body.error);
+
+  const data = body && body.data !== undefined ? body.data : body;
+  const res = data && typeof data === 'object' && data.result && typeof data.result === 'object'
+    ? data.result
+    : (data && typeof data === 'object' ? data : {});
+
+  const title = res.title || res.name || res.caption || res.description || '';
+  const author = res.author || res.author_name || res.uploader || res.owner || res.username || res.channel || '';
+  const source = res.url || res.link || url;
+  const note = res.download && res.download.note ? String(res.download.note) : '';
+  const links = downloadLinks(res.download || res.media || {}, [], 0)
+    .filter((l) => !/^(https?:\/\/)?(www\.)?(cobalt\.tools|api\.qrcode)/i.test(l) || /cobalt\.tools\/api/i.test(l));
+
+  const label = platform ? platform.label : 'Media';
+
+  const out = [
+    `✅ Media ditemukan — ${label}`,
+    '',
+    ...(title ? [`Judul   : ${title}`] : []),
+    ...(author ? [`Kreator : ${author}`] : []),
+    '',
+  ];
+
+  if (links.length) {
+    out.push('Tautan unduh:');
+    links.slice(0, 6).forEach((l) => {
+      const key = Object.keys(DL_ICON).find((k) => l.toLowerCase().includes(`format=${k}`) || l.toLowerCase().includes(`.${k}`));
+      out.push(`${DL_ICON[key] || '🔗'} ${l}`);
+    });
+    out.push('');
+  }
+
+  out.push(`Tautan sumber: ${source}`);
+  if (note) out.push('', `Catatan : ${note}`);
+  out.push(
+    '',
+    'Klik tautan untuk membuka, atau salin tempel di aplikasi unduh favoritmu.',
+    'Balas "menu" bila butuh perintah lain.'
+  );
+  return out.join('\n');
+}
+
+/* ---------- Bot 5: Generate email lengkap ---------- */
+
+const EMAIL_MENU = [
+  '╭─────────────────────────────',
+  '│ EMAIL GENERATOR',
+  '│ Email sementara · Inbox · OTP',
+  '╰─────────────────────────────',
+  '',
+  'Perintah yang tersedia:',
+  '',
+  '1. buat [nama]',
+  '   Buat email baru (nama & domain opsional).',
+  '',
+  '2. domains',
+  '   Daftar domain yang tersedia.',
+  '',
+  '3. cek <email>',
+  '   Cek kotak masuk + OTP / tautan verifikasi.',
+  '',
+  '4. baca <email> <nomor>',
+  '   Baca isi pesan sesuai nomor dari hasil "cek".',
+  '',
+  'Contoh:',
+  '  buat',
+  '  buat rizky@bhap.me',
+  '  cek rizky@bhap.me',
+  '  baca rizky@bhap.me 1',
+  '',
+  'Balas "menu" kapan saja untuk membuka daftar perintah.',
+].join('\n');
+
+// daftar pesan terakhir per email -> supaya perintah "baca <email> <nomor>" bisa jalan
+const inboxCache = new Map();
+
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(br|\/p|\/div|\/tr|\/li)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function emailReply(raw) {
+  const text = String(raw || '').trim();
+  const cmd = firstWord(text);
+  const arg = rest(text);
+
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return EMAIL_MENU;
+
+  if (['buat', 'generate', 'create', 'new', 'email'].includes(cmd)) {
+    const spec = arg.trim();
+    const params = {};
+    if (spec.includes('@')) {
+      const [u, d] = spec.split('@');
+      if (u) params.username = u;
+      if (d) params.domain = d.replace(/^@/, '');
+    } else if (spec) {
+      params.username = spec;
+    }
+
+    let body;
+    try {
+      body = await callApi('/api/tempmail/generate', params);
+    } catch (e) {
+      return errBlock('Email tidak dapat dibuat', e.message);
+    }
+    if (body && body.success === false) return errBlock('Email tidak dapat dibuat', body.error);
+
+    const data = body && body.data !== undefined ? body.data : body;
+    const email = data && data.email;
+    if (!email) return errBlock('Email tidak dapat dibuat', 'Respons API tidak memuat alamat email.');
+
+    const inboxUrl = (data && data.inbox_url) || `https://generator.email/${email}`;
+    return [
+      '✅ Email sementara berhasil dibuat',
+      '',
+      angkaFence(email),
+      '',
+      `Buka kotak masuk : ${inboxUrl}`,
+      `Cek pesan masuk   : cek ${email}`,
+      `Baca pesan        : baca ${email} 1`,
+      '',
+      'Email aktif selama masih bisa menerima pesan di generator.email.',
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  if (['domains', 'domain', 'daftar'].includes(cmd)) {
+    let body;
+    try {
+      body = await callApi('/api/tempmail/domains', {});
+    } catch (e) {
+      return errBlock('Daftar domain tidak tersedia', e.message);
+    }
+    if (body && body.success === false) return errBlock('Daftar domain tidak tersedia', body.error);
+    const data = body && body.data !== undefined ? body.data : body;
+    const domains = (data && data.domains) || [];
+    if (!Array.isArray(domains) || !domains.length) {
+      return errBlock('Daftar domain tidak tersedia', 'API tidak mengembalikan daftar domain.');
+    }
+    return [
+      `✅ ${domains.length} domain tersedia`,
+      '',
+      fence('text', domains.map((d, i) => `${String(i + 1).padStart(2, '0')}. ${d}`).join('\n')),
+      '',
+      'Pakai perintah: buat <nama>@<domain>',
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  if (['cek', 'check', 'inbox', 'masuk'].includes(cmd)) {
+    const email = arg.trim().toLowerCase();
+    if (!email || !EMAIL_RE.test(email)) {
+      return errBlock('Format email belum benar', 'Gunakan: cek nama@domain.com');
+    }
+    let body;
+    try {
+      body = await callApi('/api/tempmail/inbox', { email });
+    } catch (e) {
+      return errBlock('Kotak masuk tidak dapat dibuka', e.message);
+    }
+    if (body && body.success === false) return errBlock('Kotak masuk tidak dapat dibuka', body.error);
+
+    const data = body && body.data !== undefined ? body.data : body;
+    const messages = (data && data.messages) || [];
+    const otp = data && data.otp;
+    const link = data && data.verification_link;
+
+    if (Array.isArray(messages)) inboxCache.set(email, messages);
+
+    const head = [
+      otp ? '🔐 Kode OTP ditemukan' : '📬 Kotak masuk',
+      '',
+      angkaFence(email),
+      '',
+    ];
+
+    if (otp) head.push(`Kode OTP: ${otp}`, '');
+    if (link) head.push(`Tautan verifikasi: ${link}`, '');
+
+    if (!messages.length) {
+      return head.concat([
+        'Belum ada pesan masuk.',
+        `Tunggu sebentar lalu balas: cek ${email}`,
+        '',
+        'Buka kotak masuk: ' + `https://generator.email/${email}`,
+      ]).join('\n');
+    }
+
+    const list = messages.slice(0, 10).map((m, i) => [
+      `${i + 1}. ${String(m.subject || '(tanpa subjek)').slice(0, 80)}`,
+      `   Dari : ${String(m.from || '-').slice(0, 80)}`,
+      `   Waktu: ${String(m.date || '-')}`,
+    ].join('\n'));
+
+    return head.concat([
+      `${messages.length} pesan masuk:`,
+      '',
+      ...list,
+      '',
+      `Baca pesan: baca ${email} <nomor>`,
+      `Contoh    : baca ${email} 1`,
+    ]).join('\n');
+  }
+
+  if (['baca', 'read', 'open', 'lihat'].includes(cmd)) {
+    const parts = arg.split(/\s+/).filter(Boolean);
+    const email = (parts[0] || '').toLowerCase();
+    const no = Number(parts[1]);
+    if (!email || !EMAIL_RE.test(email) || !no || no < 1) {
+      return errBlock('Format perintah belum benar', 'Gunakan: baca <email> <nomor> — nomor diambil dari hasil "cek".');
+    }
+    const cached = inboxCache.get(email) || [];
+    const msg = cached[no - 1];
+    if (!msg) {
+      return errBlock('Pesan tidak ditemukan', `Balas dulu: cek ${email} — lalu baca dengan nomor yang tercantum.`);
+    }
+    if (!msg.link) return errBlock('Pesan tidak dapat dibuka', 'Tautan pesan tidak tersedia di respons API.');
+
+    let body;
+    try {
+      body = await callApi('/api/tempmail/message', { email, link: msg.link });
+    } catch (e) {
+      return errBlock('Pesan tidak dapat dibuka', e.message);
+    }
+    if (body && body.success === false) return errBlock('Pesan tidak dapat dibuka', body.error);
+
+    const data = body && body.data !== undefined ? body.data : body;
+    const isi = stripHtml(data && data.body).slice(0, 3500) || '(pesan kosong)';
+    const out = [
+      `✉️ Pesan ${no} — ${String((data && data.subject) || msg.subject || '(tanpa subjek)').slice(0, 100)}`,
+      '',
+      `Dari    : ${String((data && data.from) || msg.from || '-')}`,
+      `Tanggal : ${String((data && data.date) || msg.date || '-')}`,
+    ];
+    if (data && data.otp) out.push('', `Kode OTP: ${data.otp}`);
+    if (data && data.verification_link) out.push(`Tautan verifikasi: ${data.verification_link}`);
+    out.push('', 'Isi pesan:', fence('text', isi), '', 'Balas "menu" bila butuh perintah lain.');
+    return out.join('\n');
+  }
+
+  return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}".`);
+}
+
+/* ---------- Bot 6: Tools (terjemah, cuaca, IP, QR, npm) ---------- */
+
+const TOOLS_MENU = [
+  '╭─────────────────────────────',
+  '│ TOOLS',
+  '│ Terjemah · Cuaca · IP · QR · npm',
+  '╰─────────────────────────────',
+  '',
+  'Perintah yang tersedia:',
+  '',
+  '1. terjemah <teks>',
+  '   Terjemahkan teks en → id.',
+  '',
+  '2. cuaca <kota>',
+  '   Cuaca kota saat ini.',
+  '',
+  '3. ip <alamat>',
+  '   Info IP / domain (lokasi, ISP, ASN).',
+  '',
+  '4. qr <teks>',
+  '   Buat gambar QR Code.',
+  '',
+  '5. npm <paket>',
+  '   Info paket dari registry npm.',
+  '',
+  'Contoh:',
+  '  terjemah good morning',
+  '  cuaca Jakarta',
+  '  ip 8.8.8.8',
+  '  qr https://whatsap-indo.vercel.app',
+  '  npm socket.io',
+  '',
+  'Balas "menu" kapan saja untuk membuka daftar perintah.',
+].join('\n');
+
+function pickResult(body) {
+  if (!body || typeof body !== 'object') return {};
+  const data = body.data !== undefined ? body.data : body;
+  if (data && typeof data === 'object' && data.result && typeof data.result === 'object') return data.result;
+  return data && typeof data === 'object' ? data : {};
+}
+
+async function toolsReply(raw) {
+  const text = String(raw || '').trim();
+  const cmd = firstWord(text);
+  const arg = rest(text);
+
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return TOOLS_MENU;
+
+  if (['terjemah', 'translate', 'terjemahkan'].includes(cmd)) {
+    if (!arg) return errBlock('Teks belum diisi', 'Gunakan: terjemah good morning');
+    let body;
+    try {
+      body = await callApi('/api/tools/translate', { text: arg, from: 'en', id: 'id' });
+    } catch (e) {
+      return errBlock('Terjemahan gagal', e.message);
+    }
+    if (body && body.success === false) return errBlock('Terjemahan gagal', body.error);
+    const r = pickResult(body);
+    if (!r.translation) return errBlock('Terjemahan gagal', 'Respons API tidak memuat hasil terjemahan.');
+    return [
+      '🌐 Hasil terjemahan (en → id)',
+      '',
+      fence('text', r.translation),
+      '',
+      `Teks asli: ${arg}`,
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  if (['cuaca', 'weather'].includes(cmd)) {
+    const kota = arg.trim();
+    if (!kota) return errBlock('Kota belum diisi', 'Gunakan: cuaca Jakarta');
+    let body;
+    try {
+      body = await callApi('/api/info/cuaca', { kota });
+    } catch (e) {
+      return errBlock('Cuaca tidak tersedia', e.message);
+    }
+    if (body && body.success === false) return errBlock('Cuaca tidak tersedia', body.error);
+    const r = pickResult(body);
+    if (!r.suhu_c) return errBlock('Cuaca tidak tersedia', 'Data cuaca tidak ditemukan untuk kota tersebut.');
+    const hari = r.hari_ini || {};
+    return [
+      `🌤️ Cuaca ${r.kota || kota}`,
+      '',
+      angkaFence(`${r.suhu_c}°C · Kelembaban ${r.kelembaban || '-'}% · Angin ${r.angin_kmph || '-'} km/jam ${r.angin_arah || ''}`.trim()),
+      '',
+      `Kondisi   : ${r.deskripsi || '-'}`,
+      ...(hari.max ? [`Hari ini  : maks ${hari.max}°C · min ${hari.min}°C`] : []),
+      ...(hari.sunrise ? [`Terbit    : ${hari.sunrise} · Terbenam: ${hari.sunset}`] : []),
+      ...(r.curah_hujan_mm ? [`Curah hujan: ${r.curah_hujan_mm} mm`] : []),
+      '',
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  if (['ip', 'ipinfo', 'geo'].includes(cmd)) {
+    const q = arg.trim();
+    if (!q) return errBlock('Alamat belum diisi', 'Gunakan: ip 8.8.8.8');
+    let body;
+    try {
+      body = await callApi('/api/tools/ip-lookup', { ip: q });
+    } catch (e) {
+      return errBlock('IP tidak dapat dicek', e.message);
+    }
+    if (body && body.success === false) return errBlock('IP tidak dapat dicek', body.error);
+    const r = pickResult(body);
+    if (!r.ip) return errBlock('IP tidak dapat dicek', 'Alamat IP / domain tidak valid.');
+    return [
+      '📍 Info alamat IP',
+      '',
+      angkaFence(`${r.ip} · ${r.type || '-'}${r.asn ? ` · ASN ${r.asn}` : ''}`),
+      '',
+      `Lokasi   : ${[r.city, r.region, r.country].filter(Boolean).join(', ')} ${r.flag || ''}`,
+      `ISP      : ${r.isp || r.org || '-'}`,
+      `Timezone : ${r.timezone || '-'} (${r.utc || '-'})`,
+      ...(r.latitude ? [`Koordinat: ${r.latitude}, ${r.longitude}`] : []),
+      '',
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  if (['qr', 'qrcode'].includes(cmd)) {
+    if (!arg) return errBlock('Teks belum diisi', 'Gunakan: qr https://example.com');
+    let body;
+    try {
+      body = await callApi('/api/tools/qr-create', { text: arg, size: '400x400' });
+    } catch (e) {
+      return errBlock('QR tidak dapat dibuat', e.message);
+    }
+    if (body && body.success === false) return errBlock('QR tidak dapat dibuat', body.error);
+    const r = pickResult(body);
+    if (!r.url) return errBlock('QR tidak dapat dibuat', 'Respons API tidak memuat gambar QR.');
+    return [
+      '🔳 QR Code berhasil dibuat',
+      '',
+      `Isi : ${arg.slice(0, 120)}`,
+      `Ukuran: ${r.size || '400x400'}`,
+      '',
+      `Gambar QR: ${r.url}`,
+      '',
+      'Klik tautan untuk membuka gambarnya, lalu unduh atau screenshot.',
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  if (['npm', 'paket', 'package'].includes(cmd)) {
+    const pkg = arg.trim();
+    if (!pkg) return errBlock('Nama paket belum diisi', 'Gunakan: npm socket.io');
+    let body;
+    try {
+      body = await callApi('/api/tools/npmjs', { package: pkg });
+    } catch (e) {
+      return errBlock('Paket tidak ditemukan', e.message);
+    }
+    if (body && body.success === false) return errBlock('Paket tidak ditemukan', body.error);
+    const r = pickResult(body);
+    if (!r.name) return errBlock('Paket tidak ditemukan', `Paket "${pkg}" tidak ada di registry npm.`);
+    return [
+      `📦 ${r.name}@${r.version || 'unknown'}`,
+      '',
+      ...(r.description ? [`Deskripsi: ${String(r.description).slice(0, 300)}`] : []),
+      ...(r.license ? [`Lisensi  : ${r.license}`] : []),
+      ...(r.homepage ? [`Homepage : ${r.homepage}`] : []),
+      ...(r.author ? [`Penulis  : ${r.author}`] : []),
+      ...(r.modified ? [`Update   : ${r.modified}`] : []),
+      '',
+      `Instal   : npm install ${r.name}`,
+      '',
+      'Balas "menu" bila butuh perintah lain.',
+    ].join('\n');
+  }
+
+  return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}".`);
 }
 
 /* ---------- manajemen akun bot ---------- */
@@ -470,16 +1069,25 @@ async function seed() {
   const now = Date.now();
   for (const bot of BOTS) {
     try {
-      const existing = await db.get('SELECT id FROM users WHERE id = ? OR email = ?', bot.id, bot.email);
+      const existing = await db.get('SELECT id, name, about FROM users WHERE id = ? OR email = ?', bot.id, bot.email);
       if (existing) {
         if (String(existing.id) === bot.id) {
+          // nama/bio khusus admin dipertahankan; hanya baris dengan nama bawaan
+          // (atau kosong) yang disegarkan ke default terbaru
+          const custom = existing.name && !DEFAULT_NAMES.has(String(existing.name));
           await db.run(
-            `UPDATE users SET is_bot = 1, verified = 1, account_status = 'active', banned = 0, name = ?, about = ?
+            `UPDATE users SET is_bot = 1, verified = 1, account_status = 'active', banned = 0
              WHERE id = ?`,
-            bot.name,
-            bot.about,
             bot.id
           );
+          if (!custom) {
+            await db.run(
+              'UPDATE users SET name = ?, about = ? WHERE id = ?',
+              bot.name,
+              bot.about,
+              bot.id
+            );
+          }
         }
         continue;
       }
