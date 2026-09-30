@@ -808,6 +808,85 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   admSock.close();
 
+  console.log('\n[24] Bot admin: Verif AM Prem, Generate NFToken, AI');
+  const emitAck = (sock, event, payload) => new Promise((resolve) => sock.emit(event, payload, resolve));
+
+  const sVerif = await admApi('/api/users/search?q=Verif');
+  const bVerif = (sVerif.data.users || []).find((u) => u.id === 'bot-verif-am');
+  ok(sVerif.status === 200 && !!bVerif, 'admin menemukan bot Verif AM Prem di pencarian');
+  ok(!!bVerif && bVerif.verified === true, 'bot Verif AM Prem memakai centang biru');
+
+  const sNft = await admApi('/api/users/search?q=NFToken');
+  const bNft = (sNft.data.users || []).find((u) => u.id === 'bot-nftoken');
+  ok(!!bNft && bNft.verified === true, 'bot Generate NFToken tampil terverifikasi');
+
+  const sAi = await admApi('/api/users/bot-ai');
+  ok(sAi.status === 200 && !!sAi.data.user && sAi.data.user.verified === true, 'bot AI terverifikasi untuk admin');
+
+  const lgBotUser = await api('/api/auth/login', {
+    method: 'POST',
+    body: { email: liveEmail, password: 'secret123' },
+  });
+  ok(lgBotUser.status === 200 && !!lgBotUser.data.token, 'user biasa masuk kembali');
+  const tokBiasa = lgBotUser.data.token;
+  const suBiasa = await api('/api/users/search?q=Verif', { token: tokBiasa });
+  ok(suBiasa.status === 200 && (suBiasa.data.users || []).every((u) => !String(u.id).startsWith('bot-')),
+    'bot disembunyikan dari pencarian user biasa');
+  const profBiasa = await api('/api/users/bot-verif-am', { token: tokBiasa });
+  ok(profBiasa.status === 404, 'profil bot tidak terbuka untuk user biasa');
+  const bukaBiasa = await api('/api/chats/direct', {
+    method: 'POST',
+    token: tokBiasa,
+    body: { peerId: 'bot-verif-am' },
+  });
+  ok(bukaBiasa.status === 403 && /admin/i.test(bukaBiasa.data.error || ''), 'user biasa ditolak membuka chat bot');
+
+  await admLogin(); // sesi admin segar sebelum socket bot dipasang
+  const botSock = io(BASE, { auth: { token: admToken } });
+  await new Promise((r) => botSock.on('connect', r));
+
+  const chatVerif = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-verif-am' } });
+  ok(chatVerif.status === 201 && !!chatVerif.data.chat.peer && chatVerif.data.chat.peer.verified === true,
+    'admin membuka chat bot (badge aktif)');
+  const vChat = chatVerif.data.chat.id;
+
+  const tMenu = waitEvent(botSock, 'typing', 9000);
+  const sMenu = waitEvent(botSock, 'message:status', 9000);
+  const mMenu = waitEvent(botSock, 'message:new', 12000);
+  const ackMenu = await emitAck(botSock, 'message:send', { chatId: vChat, type: 'text', body: 'menu' });
+  ok(ackMenu && ackMenu.ok === true, 'pesan "menu" ke bot diterima server');
+  const tpMenu = await tMenu;
+  ok(tpMenu && tpMenu.userId === 'bot-verif-am' && tpMenu.typing === true, 'bot menampilkan indikator mengetik');
+  const stMenu = await sMenu;
+  ok(stMenu && stMenu.status === 'read', 'bot membaca pesan -> pengirim dapat centang biru');
+  const mm = await mMenu;
+  ok(mm && mm.senderId === 'bot-verif-am' && /VERIF AM PREM/.test(mm.body), 'bot membalas menu profesional');
+
+  const mEmail = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: vChat, type: 'text', body: 'send bukan-email' });
+  const me = await mEmail;
+  ok(me && /Format email belum benar/.test(me.body), 'bot menolak input salah dengan pesan rapi');
+
+  const chatNft = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-nftoken' } });
+  ok(chatNft.status === 201, 'admin membuka chat bot NFToken');
+  const nChat = chatNft.data.chat.id;
+  const mNft = waitEvent(botSock, 'message:new', 70000);
+  await emitAck(botSock, 'message:send', { chatId: nChat, type: 'text', body: 'generate 1' });
+  const mn = await mNft;
+  ok(mn && mn.senderId === 'bot-nftoken' && /token/i.test(mn.body),
+    'bot NFToken menjawab permintaan generate (API api-mazval)');
+
+  const chatAi = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-ai' } });
+  ok(chatAi.status === 201, 'admin membuka chat bot AI');
+  const aChat = chatAi.data.chat.id;
+  const mAi = waitEvent(botSock, 'message:new', 70000);
+  await emitAck(botSock, 'message:send', { chatId: aChat, type: 'text', body: 'gemini halo dari uji' });
+  const ma = await mAi;
+  ok(ma && ma.senderId === 'bot-ai' && /^(🤖|⚠️)/.test(ma.body),
+    'bot AI membalas dengan model dipilih atau pesan layanan sibuk');
+
+  botSock.close();
+
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('TEST ERROR:', e); process.exit(1); });

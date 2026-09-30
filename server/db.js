@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   avatar        TEXT,
   about         TEXT NOT NULL DEFAULT 'Hai! Saya sedang menggunakan Whatsap Indo.',
   verified      SMALLINT NOT NULL DEFAULT 0,
+  is_bot        SMALLINT NOT NULL DEFAULT 0,
   created_at    BIGINT NOT NULL,
   last_seen     BIGINT NOT NULL DEFAULT 0,
   wallpaper_type TEXT NOT NULL DEFAULT 'default',
@@ -191,6 +192,7 @@ CREATE TABLE IF NOT EXISTS users (
   avatar        TEXT,
   about         TEXT NOT NULL DEFAULT 'Hai! Saya sedang menggunakan Whatsap Indo.',
   verified      INTEGER NOT NULL DEFAULT 0,
+  is_bot        INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
   last_seen     INTEGER NOT NULL DEFAULT 0,
   wallpaper_type TEXT NOT NULL DEFAULT 'default',
@@ -353,6 +355,7 @@ CREATE INDEX IF NOT EXISTS idx_bus_at ON bus (at);
 const TABLE_MIGRATIONS = {
   users: [
     ['verified', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_bot', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['wallpaper_type', "TEXT NOT NULL DEFAULT 'default'", "TEXT NOT NULL DEFAULT 'default'"],
     ['wallpaper_url', 'TEXT', 'TEXT'],
     ['wallpaper_mode', "TEXT NOT NULL DEFAULT 'cover'", "TEXT NOT NULL DEFAULT 'cover'"],

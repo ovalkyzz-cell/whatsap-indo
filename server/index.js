@@ -13,6 +13,7 @@ const presence = require('./presence');
 const calls = require('./calls');
 const bus = require('./bus');
 const settings = require('./settings');
+const bots = require('./bots');
 const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR } = require('./upload');
 
@@ -299,8 +300,11 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
     like,
     like
   );
+  // bot internal hanya terlihat oleh admin
+  const canSeeBots = auth.isAdmin(req.user);
   // email yang dipribatkan tidak bisa ditemukan lewat email
   const visible = rows.filter((r) => {
+    if (bots.isBot(r) && !canSeeBots) return false;
     if (!r.priv_email) return true;
     const matchEmail = String(r.email || '').toLowerCase().includes(q.toLowerCase());
     const matchName = String(r.name || '').toLowerCase().includes(q.toLowerCase());
@@ -317,6 +321,9 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
 app.get('/api/users/:id', auth.requireAuth, ah(async (req, res) => {
   const row = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!row) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  if (bots.isBot(row) && !auth.isAdmin(req.user)) {
+    return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  }
   res.json({
     user: helpers.serializeUser(row, req.user.id, {
       online: await presence.isOnline(row.id),
@@ -416,8 +423,11 @@ app.get('/api/chats', auth.requireAuth, ah(async (req, res) => {
 
 app.post('/api/chats/direct', auth.requireAuth, ah(async (req, res) => {
   const peerId = String(req.body?.peerId || '');
-  const peer = await db.get('SELECT id FROM users WHERE id = ?', peerId);
+  const peer = await db.get('SELECT * FROM users WHERE id = ?', peerId);
   if (!peer) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  if (bots.isBot(peer) && !auth.isAdmin(req.user)) {
+    return res.status(403).json({ error: 'Bot ini hanya dapat digunakan oleh admin.' });
+  }
   const chat = await helpers.getOrCreateDirectChat(req.user.id, peerId);
   const row = await db.get(
     `SELECT c.* FROM chats c
@@ -545,8 +555,11 @@ app.post('/api/chats/:id/members', auth.requireAuth, ah(async (req, res) => {
     return res.status(403).json({ error: 'Hanya admin grup yang bisa menambah anggota' });
   }
   const userId = String(req.body?.userId || '');
-  const target = await db.get('SELECT id FROM users WHERE id = ?', userId);
+  const target = await db.get('SELECT * FROM users WHERE id = ?', userId);
   if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  if (bots.isBot(target)) {
+    return res.status(403).json({ error: 'Bot tidak dapat ditambahkan ke grup. Gunakan chat pribadi dengan bot.' });
+  }
   const existing = await db.get('SELECT 1 AS x FROM chat_members WHERE chat_id = ? AND user_id = ?', chat.id, userId);
   if (existing) return res.json({ ok: true, already: true });
   const count = await db.get('SELECT COUNT(*) AS n FROM chat_members WHERE chat_id = ?', chat.id);
@@ -1470,10 +1483,119 @@ io.on('connection', (socket) => {
   });
 });
 
+// bot selalu membaca pesan masuk -> pengirim langsung mendapat centang biru
+async function markBotReceipt(messageId, botId, chatId, senderId) {
+  const now = Date.now();
+  await db.run(
+    `INSERT INTO message_status (message_id, user_id, status, at) VALUES (?, ?, 'delivered', ?), (?, ?, 'read', ?)
+     ON CONFLICT (message_id, user_id) DO NOTHING`,
+    messageId,
+    botId,
+    now,
+    messageId,
+    botId,
+    now
+  );
+  await emitToUser(senderId, 'message:status', { messageId, chatId, status: 'read' });
+}
+
+// simpan balasan bot, kabari penerima daring, notifikasi yang luring
+async function deliverBotMessage(bot, chatId, text, targets) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  await db.run(
+    `INSERT INTO messages (id, chat_id, sender_id, type, body, created_at) VALUES (?, ?, ?, 'text', ?, ?)`,
+    id,
+    chatId,
+    bot.id,
+    String(text).slice(0, 8000),
+    now
+  );
+
+  const row = await db.get('SELECT * FROM messages WHERE id = ?', id);
+  const message = (await helpers.serializeMessages([row], targets[0] || null))[0];
+
+  const deliveredTo = [];
+  for (const uid of targets) {
+    const delivered = await emitToUser(uid, 'message:new', message);
+    if (delivered) deliveredTo.push(uid);
+  }
+
+  if (deliveredTo.length) {
+    const values = deliveredTo.map(() => `(?, ?, 'delivered', ?)`).join(', ');
+    await db.run(
+      `INSERT INTO message_status (message_id, user_id, status, at) VALUES ${values}
+       ON CONFLICT (message_id, user_id) DO NOTHING`,
+      ...deliveredTo.flatMap((uid) => [id, uid, now])
+    );
+  }
+
+  const offline = targets.filter((uid) => !deliveredTo.includes(uid));
+  if (offline.length) {
+    await Promise.race([
+      pushNotify(offline, {
+        title: bot.name,
+        body: String(text).slice(0, 140),
+        chatId,
+        messageId: id,
+        icon: bot.avatar || null,
+        tag: `msg-${chatId}`,
+        url: `/?chat=${chatId}`,
+      }),
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]);
+  }
+
+  await emitToUsers(targets, 'chat:updated', { chatId });
+}
+
+// jalur balasan bot: indikator mengetik -> proses perintah (API api-mazval) -> kirim balasan
+async function respondToBot({ bot, chatId, members, sender, userMessageId, text, type }) {
+  const targets = members.filter((uid) => uid !== bot.id);
+  if (!targets.length) return;
+
+  let typing = true;
+  const stopTyping = async () => {
+    if (!typing) return;
+    typing = false;
+    try {
+      await emitToUsers(targets, 'typing', { chatId, userId: bot.id, typing: false });
+    } catch { /* indikator sudah dilepas */ }
+  };
+
+  try {
+    await markBotReceipt(userMessageId, bot.id, chatId, sender.id);
+
+    const chat = await db.get('SELECT type FROM chats WHERE id = ?', chatId);
+    if (chat && chat.type !== 'direct') return; // bot tidak membalas di grup
+
+    await emitToUsers(targets, 'typing', { chatId, userId: bot.id, typing: true });
+    const out = type !== 'text'
+      ? '❌ Bot hanya memproses pesan teks. Kirim teks, atau balas "menu" untuk melihat perintah.'
+      : await bots.reply(bot, text);
+    await stopTyping();
+    if (out) await deliverBotMessage(bot, chatId, out, targets);
+  } catch (err) {
+    console.error('bot:', err.message);
+    await stopTyping();
+    try {
+      await deliverBotMessage(bot, chatId, `⚠️ ${(err && err.message) || 'Gagal memproses permintaan.'}`, targets);
+    } catch (e) {
+      console.error('bot deliver:', e.message);
+    }
+  }
+}
+
 async function handleSend(user, payload) {
   const { chatId, type = 'text', body = '', media, viewOnce, duration } = payload || {};
   if (!chatId || !(await helpers.isMember(chatId, user.id))) {
     throw new Error('Bukan anggota chat ini');
+  }
+
+  // bot internal: akses dibatasi untuk admin
+  const botPeer = await bots.peerInChat(chatId);
+  if (botPeer && !auth.isAdmin(user)) {
+    throw new Error('Bot ini hanya dapat digunakan oleh admin.');
   }
 
   const cleanType = ['text', 'image', 'video', 'audio', 'file'].includes(type) ? type : 'text';
@@ -1576,6 +1698,18 @@ async function handleSend(user, payload) {
 
   await emitToUsers(members, 'chat:updated', { chatId });
 
+  if (botPeer) {
+    void respondToBot({
+      bot: botPeer,
+      chatId,
+      members,
+      sender: user,
+      userMessageId: id,
+      text: cleanType === 'text' ? text : '',
+      type: cleanType,
+    });
+  }
+
   return { message: fresh };
 }
 
@@ -1595,6 +1729,11 @@ async function boot() {
       console.error(`boot percobaan ${attempt} gagal:`, err.message);
       await delay(Math.min(500 * 2 ** attempt, 8000));
     }
+  }
+  try {
+    await bots.seed();
+  } catch (err) {
+    console.error('bot:', err.message);
   }
   presence.start();
   try {

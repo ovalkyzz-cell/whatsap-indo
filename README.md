@@ -15,6 +15,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
+| Bot admin | **3 bot khusus admin**: *Verif AM Prem*, *Generate NFToken*, *AI* (ChatGPT, Gemini, Deepseek, Claude) — API dari api-mazval |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
@@ -41,6 +42,10 @@ Variabel lingkungan opsional:
   supaya sesi pengguna tidak hilang saat server restart)
 - `ADMIN_EMAILS` — daftar email admin dipisah koma (selain `ovalkyzz@gmail.com`); akun dengan
   email ini otomatis **aktif** tanpa persetujuan dan berhak memakai panel admin
+- `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai ketiga bot
+  (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap)
+- `MAZVAL_API_BASE` — base URL api-mazval (default `https://api-mazval.zone.id`)
+- `MAZVAL_API_TIMEOUT` — batas tunggu respons API bot dalam ms (default `45000`)
 
 ## Arsitektur
 
@@ -50,15 +55,16 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
+  bots.js      # 3 bot admin + perintah + pemanggilan API api-mazval
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file
 public/
   index.html   # shell SPA (auth, chat, drawer, modal panggilan)
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 167 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 185 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun & monitor admin real-time
+               # blokir akun, monitor admin real-time & bot admin
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -147,6 +153,37 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 `:id` boleh berupa UUID atau email. Admin menerima `admin:event` real-time
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
+
+### Bot admin (Verif AM Prem, Generate NFToken, AI)
+
+Tiga bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
+`verified = 1`, status `active` — tampil di pencarian **hanya untuk admin** dan selalu
+membawa **badge centang biru**.
+
+| Bot | ID | Perintah |
+|---|---|---|
+| **Verif AM Prem** | `bot-verif-am` | `send <email>` → kirim tautan verifikasi Alight Motion Premium; `cek <email> <token>` → cek status verifikasi; `menu` |
+| **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → buat token + info masa berlaku; `menu` |
+| **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT); `menu` |
+
+Cara kerja:
+
+1. Pesan masuk ke chat direct dengan bot → server menandai pesan **dibaca** (pengirim langsung
+   mendapat centang biru) dan menampilkan indikator *mengetik*.
+2. `server/bots.js` memanggil API **api-mazval** (`/api/tools/am-verif-send`,
+   `/api/tools/am-verif-check`, `/api/tools/nftoken-generate`, `/api/ai/*`) memakai
+   `MAZVAL_API_KEY` — kunci tidak pernah disimpan di kode maupun dikirim ke klien.
+3. Balasan disimpan sebagai pesan biasa dari akun bot: notifikasi push bila admin luring,
+   badge terverifikasi, dan teks berformat profesional (header, langkah, kode token).
+
+Pembatasan akses (semua menolak user biasa):
+
+- `GET /api/users/search` — bot tidak ikut ditampilkan untuk non-admin;
+- `GET /api/users/:id` — `404` untuk non-admin;
+- `POST /api/chats/direct` — `403` "Bot ini hanya dapat digunakan oleh admin.";
+- `message:send` di chat bot — ditolak bila pengirim bukan admin;
+- bot **tidak bisa ditambahkan ke grup** (`POST /api/chats/:id/members` → `403`) dan tidak
+  membalas di grup.
 
 ### Keamanan
 

@@ -47,8 +47,9 @@ function isAdmin(row) {
   return row.role === 'admin' || ADMIN_EMAILS.includes(String(row.email || '').trim().toLowerCase());
 }
 
+// centang biru: admin, premium, atau bot resmi internal
 function verifiedOf(row) {
-  return isAdmin(row) || isPremium(row);
+  return isAdmin(row) || isPremium(row) || Number(row && row.is_bot) === 1;
 }
 
 function publicUser(row) {
