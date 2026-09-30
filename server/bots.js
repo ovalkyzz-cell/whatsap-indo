@@ -92,6 +92,14 @@ function sanitize(text, max) {
   return String(text || '').slice(0, max || 8000);
 }
 
+// potongan blok kode harus tetap seimbang walau jawaban terpotong (sanitize):
+// sisipkan penutup ``` bila jumlah fence ganjil supaya footer tidak ikut jadi kode
+function balanceFences(text) {
+  const s = String(text || '');
+  if ((s.match(/```/g) || []).length % 2 === 0) return s;
+  return s.replace(/\s+$/, '').replace(/`{1,2}$/, '') + '\n```';
+}
+
 function errBlock(title, reason) {
   return [
     '❌ ' + title,
@@ -437,6 +445,7 @@ const AI_MENU = [
   '╰─────────────────────────────',
   '',
   'Kirim pertanyaan apa saja, bot ini otomatis menjawab.',
+  'Tanpa awalan perintah, jawaban default memakai ChatGPT.',
   '',
   'Pilih model dengan awalan perintah:',
   '  gpt <pertanyaan>       ChatGPT',
@@ -490,34 +499,40 @@ async function aiAsk(model, prompt, timeout) {
 async function aiReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
-  const arg = rest(text);
+  const key = cmd.replace(/[?:!,.]+$/, '');
 
-  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return AI_MENU;
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(key)) return AI_MENU;
 
-  const model = AI_MODELS.find((m) => m.words.includes(cmd)) || AI_DEFAULT;
-  const prompt = ((model === AI_DEFAULT ? text : arg) + CODING_HINT).trim();
+  // kata perintah model (mis. "gpt") dibuang dari isi pertanyaan;
+  // tanpa awalan model, seluruh teks dianggap pertanyaan
+  const model = AI_MODELS.find((m) => m.words.includes(key));
+  const question = model ? rest(text) : text;
 
-  if (!prompt) {
+  if (!question) {
+    const label = model || AI_DEFAULT;
     return [
       '❌ Pertanyaan masih kosong',
       '',
       'Gunakan format:',
-      `  ${model.words[0]} <pertanyaan>`,
+      `  ${label.words[0]} <pertanyaan>`,
       '',
       'Balas "menu" untuk melihat semua model.',
     ].join('\n');
   }
 
+  const active = model || AI_DEFAULT;
+  const prompt = question + CODING_HINT;
+
   // jawaban AI wajib keluar: coba ulang model pilihan, lalu model cadangan lain
   // sebelum menyerah, semua dalam satu anggaran waktu supaya tidak bikin nunggu lama
-  const chain = [model, ...AI_MODELS.filter((m) => m.path !== model.path)];
+  const chain = [active, ...AI_MODELS.filter((m) => m.path !== active.path)];
   const startedAt = Date.now();
   const errors = [];
   let answer = null;
-  let used = model;
+  let used = active;
 
   for (const candidate of chain) {
-    const tries = candidate.path === model.path ? 3 : 1;
+    const tries = candidate.path === active.path ? 3 : 1;
     for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
       const remaining = AI_BUDGET - (Date.now() - startedAt);
       if (remaining < 25000) break;
@@ -542,14 +557,14 @@ async function aiReply(raw) {
     ].filter(Boolean).join('\n');
   }
 
-  const header = used.path === model.path
-    ? `🤖 ${model.label}`
-    : `🤖 ${model.label} (cadangan: ${used.label})`;
+  const header = used.path === active.path
+    ? `🤖 ${active.label}`
+    : `🤖 ${active.label} (cadangan: ${used.label})`;
 
   return [
     header,
     HR,
-    sanitize(answer, 7200),
+    balanceFences(sanitize(answer, 7200)),
     HR,
     'Balas "menu" untuk memilih model lain.',
   ].join('\n');
@@ -564,6 +579,7 @@ const DOWN_MENU = [
   '╰─────────────────────────────',
   '',
   'Kirim tautan video, bot ini otomatis mendeteksi platformnya.',
+  'Tautan lengkap (https://…) atau tempelan polos (youtu.be/xxxx) sama-sama diterima.',
   '',
   'Platform yang didukung:',
   '  • TikTok      • Instagram   • YouTube',
@@ -579,18 +595,45 @@ const DOWN_MENU = [
 ].join('\n');
 
 const DOWN_PLATFORMS = [
-  { re: /(youtube\.com|youtu\.be)/i, path: '/api/download/youtube', label: 'YouTube' },
-  { re: /tiktok\.com/i, path: '/api/download/tiktok', label: 'TikTok' },
-  { re: /(instagram\.com|instagr\.am)/i, path: '/api/download/instagram', label: 'Instagram' },
-  { re: /(facebook\.com|fb\.watch)/i, path: '/api/download/facebook', label: 'Facebook' },
-  { re: /(twitter\.com|x\.com)/i, path: '/api/download/twitter', label: 'Twitter / X' },
-  { re: /pinterest\./i, path: '/api/download/pinterest', label: 'Pinterest' },
-  { re: /spotify\.com/i, path: '/api/download/spotify', label: 'Spotify' },
-  { re: /soundcloud\.com/i, path: '/api/download/soundcloud', label: 'SoundCloud' },
-  { re: /douyin\.com/i, path: '/api/download/douyin', label: 'Douyin' },
-  { re: /mediafire\.com/i, path: '/api/download/mediafire', label: 'MediaFire' },
-  { re: /terabox|1024tera/i, path: '/api/download/terabox', label: 'Terabox' },
+  { hosts: ['youtube.com', 'youtu.be'], path: '/api/download/youtube', label: 'YouTube' },
+  { hosts: ['tiktok.com'], path: '/api/download/tiktok', label: 'TikTok' },
+  { hosts: ['instagram.com', 'instagr.am'], path: '/api/download/instagram', label: 'Instagram' },
+  { hosts: ['facebook.com', 'fb.watch'], path: '/api/download/facebook', label: 'Facebook' },
+  { hosts: ['twitter.com', 'x.com', 't.co'], path: '/api/download/twitter', label: 'Twitter / X' },
+  { hosts: ['pinterest.com', 'pin.it'], path: '/api/download/pinterest', label: 'Pinterest' },
+  { hosts: ['spotify.com'], path: '/api/download/spotify', label: 'Spotify' },
+  { hosts: ['soundcloud.com'], path: '/api/download/soundcloud', label: 'SoundCloud' },
+  { hosts: ['douyin.com'], path: '/api/download/douyin', label: 'Douyin' },
+  { hosts: ['mediafire.com'], path: '/api/download/mediafire', label: 'MediaFire' },
+  { hosts: ['terabox.com', '1024tera.com', 'teraboxapp.com', 'teraboxlink.com'], path: '/api/download/terabox', label: 'Terabox' },
 ];
+
+function hostOf(u) {
+  try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; }
+}
+
+// pencocokan lewat nama domain persis (akar + subdomain), bukan substring —
+// supaya "max.com" tidak salah terbaca sebagai "x.com"
+function platformFor(u) {
+  const host = hostOf(u);
+  if (!host) return null;
+  return DOWN_PLATFORMS.find((p) => p.hosts.some((h) => host === h || host.endsWith('.' + h))) || null;
+}
+
+// ambil tautan dari pesan: lengkap (https://), atau tempelan polos seperti
+// "youtu.be/xxxx"; tanda baca di ujung (titik, koma, kurung) dibuang
+function extractUrl(text) {
+  const t = String(text || '');
+  let u = (t.match(/https?:\/\/\S+/i) || [])[0] || null;
+  if (!u) {
+    const bare = t.match(/(?:^|\s)((?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\/[^\s]*)/i);
+    if (bare) u = 'https://' + bare[1];
+  }
+  if (!u) return null;
+  u = u.replace(/[),.;:!?'"+]+$/, '');
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  return isSafeMediaUrl(u) ? u : null;
+}
 
 const DL_ICON = { mp4: '🎬', mp3: '🎵', hd: '🎞️', sd: '🎞️', audio: '🎵', video: '🎬' };
 
@@ -628,17 +671,32 @@ function guessMime(url) {
   return null;
 }
 
+// ambil URL pertama yang valid dari berbagai bentuk field (string / array / {url})
+function urlOf(x) {
+  if (isSafeMediaUrl(x)) return String(x).trim();
+  if (Array.isArray(x)) {
+    for (const item of x) { const u = urlOf(item); if (u) return u; }
+    return null;
+  }
+  if (x && typeof x === 'object') return urlOf(x.url || x.src || x.href || null);
+  return null;
+}
+
 // pilih media preview: video langsung bila ada file .mp4, selain itu thumbnail
-function pickMedia(res, links, title) {
+// (sumber diurutkan: result -> data -> body, karena field bisa ada di lapis mana pun)
+function pickMedia(sources, links, title) {
   const name = (String(title || 'media').replace(/[^\w.\- ]+/g, '').trim().slice(0, 80)) || 'media';
   const videoUrl = (links || []).find((u) => isSafeMediaUrl(u) && /\.mp4(\?|#|$)/i.test(u));
   if (videoUrl) {
     return { type: 'video', url: videoUrl.trim(), name: name.endsWith('.mp4') ? name : `${name}.mp4`, mime: 'video/mp4' };
   }
-  const thumb = [res.thumbnail, res.thumb, res.image, res.image_url, res.cover, res.poster]
-    .find((u) => isSafeMediaUrl(u));
-  if (thumb) {
-    return { type: 'image', url: thumb.trim(), name, mime: guessMime(thumb) || 'image/jpeg' };
+  const FIELDS = ['thumbnail', 'thumb', 'image', 'image_url', 'cover', 'poster', 'preview', 'thumbnails', 'images'];
+  for (const src of (Array.isArray(sources) ? sources : [sources])) {
+    if (!src || typeof src !== 'object') continue;
+    for (const field of FIELDS) {
+      const u = urlOf(src[field]);
+      if (u) return { type: 'image', url: u, name, mime: guessMime(u) || 'image/jpeg' };
+    }
   }
   return null;
 }
@@ -646,15 +704,16 @@ function pickMedia(res, links, title) {
 async function downReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
+  const key = cmd.replace(/[?:!,.]+$/, '');
 
-  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return DOWN_MENU;
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(key)) return DOWN_MENU;
 
-  const url = (text.match(/https?:\/\/\S+/i) || [])[0];
+  const url = extractUrl(text);
   if (!url) {
     return errBlock('Tautan tidak ditemukan', 'Kirim tautan video yang valid, contoh: https://youtu.be/xxxxxxx');
   }
 
-  const platform = DOWN_PLATFORMS.find((p) => p.re.test(url));
+  const platform = platformFor(url);
   const path = platform ? platform.path : '/api/download/aio';
 
   let body;
@@ -663,7 +722,9 @@ async function downReply(raw) {
   } catch (e) {
     return errBlock('Video tidak dapat diunduh', e.message);
   }
-  if (body && body.success === false) return errBlock('Video tidak dapat diunduh', body.error);
+  if (body && (body.success === false || body.status === false)) {
+    return errBlock('Video tidak dapat diunduh', body.error || body.message || 'Platform tidak mengembalikan data.');
+  }
 
   const data = body && body.data !== undefined ? body.data : body;
   const res = data && typeof data === 'object' && data.result && typeof data.result === 'object'
@@ -674,26 +735,53 @@ async function downReply(raw) {
   const author = res.author || res.author_name || res.uploader || res.owner || res.username || res.channel || '';
   const source = res.url || res.link || url;
   const note = res.download && res.download.note ? String(res.download.note) : '';
-  const links = downloadLinks(res.download || res.media || {}, [], 0)
+
+  // kumpulkan tautan unduh dari struktur respons yang umum dipakai api-mazval
+  const links = [];
+  if (typeof data === 'object' && typeof data.result === 'string' && /^https?:\/\//i.test(data.result)) {
+    links.push(data.result.trim());
+  }
+  [res.download, res.media, res.links, res.formats]
+    .filter((x) => x && typeof x === 'object')
+    .forEach((x) => downloadLinks(x, links, 0));
+  const all = [...new Set(links)]
+    .filter((l) => isSafeMediaUrl(l))
     .filter((l) => !/^(https?:\/\/)?(www\.)?(cobalt\.tools|api\.qrcode)/i.test(l) || /cobalt\.tools\/api/i.test(l));
 
+  const media = pickMedia([res, typeof data === 'object' ? data : null, body], all, title);
+  // tautan sumber tak perlu diulang di daftar unduh, kecuali memang file media langsung
+  const DIRECT_FILE = /\.(mp4|mp3|m4a|webm|mkv|mov|png|jpe?g|webp)(\?|#|$)/i;
+  const dl = all.filter((l) => l !== source || DIRECT_FILE.test(l));
+
   const label = platform ? platform.label : 'Media';
+  const hasInfo = !!(title || dl.length || media);
+
+  if (!hasInfo && !note) {
+    return errBlock('Video tidak dapat diunduh', 'Platform tidak mengembalikan data unduhan. Coba tautan lain.');
+  }
 
   const out = [
-    `✅ Media ditemukan — ${label}`,
+    `✅ ${hasInfo ? 'Media ditemukan' : 'Tautan dikenali'} — ${label}`,
     '',
     ...(title ? [`Judul   : ${title}`] : []),
     ...(author ? [`Kreator : ${author}`] : []),
     '',
   ];
 
-  if (links.length) {
+  if (dl.length) {
     out.push('Tautan unduh:');
-    links.slice(0, 6).forEach((l) => {
-      const key = Object.keys(DL_ICON).find((k) => l.toLowerCase().includes(`format=${k}`) || l.toLowerCase().includes(`.${k}`));
-      out.push(`${DL_ICON[key] || '🔗'} ${l}`);
+    dl.slice(0, 6).forEach((l) => {
+      const low = l.toLowerCase();
+      const keyIcon = Object.keys(DL_ICON).find((k) => low.includes(`format=${k}`) || low.includes(`.${k}`));
+      out.push(`${DL_ICON[keyIcon] || '🔗'} ${l}`);
     });
     out.push('');
+  } else {
+    out.push(
+      'Cara unduh:',
+      'Buka https://cobalt.tools lalu tempel tautan sumber di sana.',
+      ''
+    );
   }
 
   out.push(`Tautan sumber: ${source}`);
@@ -705,7 +793,6 @@ async function downReply(raw) {
   );
 
   // tampilan langsung: video .mp4 bila tersedia, selain itu thumbnail/pratinjau
-  const media = pickMedia(res, links, title);
   if (media) return { text: out.join('\n'), media };
   return out.join('\n');
 }

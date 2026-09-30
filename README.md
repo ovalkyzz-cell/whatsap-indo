@@ -38,6 +38,7 @@ npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
 npm test           # test end-to-end (server harus berjalan)
+npm run test:bots  # unit test balasan 6 bot (API dimock, tanpa jaringan)
 ```
 
 Variabel lingkungan opsional:
@@ -60,16 +61,17 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
-  bots.js      # 3 bot admin + perintah + pemanggilan API api-mazval
+  bots.js      # 6 bot admin + perintah + pemanggilan API api-mazval
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file
 public/
   index.html   # shell SPA (auth, chat, drawer, modal panggilan)
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 211 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 216 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 6 bot admin & edit nama bot
+  bot-reply.js # 25 assert unit test balasan 6 bot (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -184,8 +186,8 @@ membawa **badge centang biru**.
 |---|---|---|
 | **Verif AM Prem** | `bot-verif-am` | `send <email>` → kirim tautan verifikasi Alight Motion Premium; `cek <email> <token>` → cek status verifikasi; `menu` |
 | **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → **respon JSON rapi** + tombol Copy; `menu` |
-| **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT); kode keluar sebagai **blok kode ala VS Code + Copy**; `menu` |
-| **Downloader** | `bot-down` | kirim tautan video → deteksi platform (TikTok, IG, YouTube, FB, X, dll) → **preview gambar/video langsung di chat** + judul, kreator & tautan unduh; `menu` |
+| **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT, awalan dibuang dari isi); kode keluar sebagai **blok kode ala VS Code + Copy** (fence dijaga selalu seimbang); perintah tanpa pertanyaan ditolak; `menu` |
+| **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, dll — `max.com` tidak salah jadi Twitter) → **preview gambar/video langsung di chat** + judul, kreator & tautan unduh; URL tanpa `https://` diterima; bila platform tak memberi tautan, bot memberi panduan cobalt; `menu` |
 | **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
 | **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
 

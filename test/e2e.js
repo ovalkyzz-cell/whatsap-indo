@@ -894,6 +894,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       `bot AI model ${namaModel} menjawab nyata tanpa error`);
   }
 
+  const aiEmptyWait = waitEvent(botSock, 'message:new', 12000);
+  await emitAck(botSock, 'message:send', { chatId: aChat, type: 'text', body: 'gemini' });
+  const aiEmpty = await aiEmptyWait;
+  ok(aiEmpty && /Pertanyaan masih kosong/.test(aiEmpty.body),
+    'bot AI menolak perintah model tanpa pertanyaan');
+
   console.log('\n[25] Bot baru: Downloader, Email Generator, Tools');
 
   const chatDown = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-down' } });
@@ -923,6 +929,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     'bot Downloader menampilkan video/gambar langsung di chat');
   ok(downMedia && /Judul|Tautan unduh|Tautan sumber/.test(downMedia.body || ''),
     'bot Downloader tetap menyertakan judul & tautan');
+
+  const downBareWait = waitEvent(botSock, 'message:new', 60000);
+  await emitAck(botSock, 'message:send', {
+    chatId: dChat,
+    type: 'text',
+    body: 'tolong youtu.be/dQw4w9WgXcQ',
+  });
+  const downBare = await downBareWait;
+  ok(downBare && (downBare.type === 'image' || downBare.type === 'video') && !!downBare.mediaUrl,
+    'bot Downloader menerima URL polos tanpa https://');
 
   const chatMail = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-email' } });
   ok(chatMail.status === 201, 'admin membuka chat bot Email Generator');
