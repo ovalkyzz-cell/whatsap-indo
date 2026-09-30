@@ -1648,6 +1648,31 @@ $('btnCloseHomeBg').addEventListener('click', closeDrawers);
 /* ================= info kontak ================= */
 $('btnContactInfo').addEventListener('click', openContactInfo);
 
+// khusus admin: ganti foto profil bot lewat panel info kontak
+function bindBotAvatarEdit(user, peer) {
+  const input = $('ciAvatarInput');
+  $('ciAvatarBtn').addEventListener('click', () => input.click());
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    input.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast('Foto profil maksimal 5MB'); return; }
+    try {
+      const meta = await uploadFile(file, () => {});
+      const res = await api(`/api/admin/bots/${user.id}`, { method: 'PATCH', body: { avatar: meta.url } });
+      const updated = res.user;
+      S.peerCache[updated.id] = updated;
+      S.chats.forEach((c) => {
+        if (c.peer && c.peer.id === updated.id) c.peer = { ...c.peer, ...updated };
+      });
+      setAvatar($('contactAvatar'), { ...peer, ...updated });
+      renderChatList();
+      if (currentChat()?.peer?.id === updated.id) updateChatStatus();
+      toast('Foto profil bot diperbarui');
+    } catch (err) { toast(err.message); }
+  });
+}
+
 async function openContactInfo() {
   const chat = currentChat();
   if (!chat || !chat.peer) return;
@@ -1659,12 +1684,19 @@ async function openContactInfo() {
     const u = data.user;
     S.peerCache[u.id] = u;
     const peer = { ...chat.peer, ...u };
+    const canEditBot = !!u.isBot && S.me.role === 'admin';
     body.innerHTML = `
       <div class="contact-hero">
-        <div class="avatar avatar-xl ring" id="contactAvatar"></div>
+        <div class="gi-avatar-wrap">
+          <div class="avatar avatar-xl ring" id="contactAvatar"></div>
+          ${canEditBot ? '<button class="avatar-edit" id="ciAvatarBtn" type="button" title="Ganti foto profil bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg></button>' : ''}
+        </div>
+        <input type="file" id="ciAvatarInput" accept="image/*" class="hidden" />
         <h3>${esc(u.name)}${badge(u.verified)}</h3>
         <p class="bio">${esc(u.about || 'Tidak ada bio')}</p>
-        <span class="presence">${peer.online ? 'Online' : (u.lastSeen ? `Terakhir dilihat ${fmtListTime(u.lastSeen)} ${fmtTime(u.lastSeen)}` : 'Offline')}</span>
+        <span class="presence">${u.isBot
+          ? 'Bot resmi • Siap membantu'
+          : (peer.online ? 'Online' : (u.lastSeen ? `Terakhir dilihat ${fmtListTime(u.lastSeen)} ${fmtTime(u.lastSeen)}` : 'Offline'))}</span>
         ${u.verified ? '<span class="chip chip-verified"><svg viewBox="0 0 24 24"><use href="#ic-verified"></use></svg> Akun resmi terverifikasi</span>' : ''}
       </div>
       <div class="contact-card">
@@ -1675,13 +1707,17 @@ async function openContactInfo() {
       </div>
       <div class="contact-actions">
         <button class="btn-ghost" id="ciChat"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-chat" /></svg> Pesan</button>
+        ${u.isBot ? '' : `
         <button class="btn-ghost" id="ciVoice"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-phone" /></svg> Suara</button>
-        <button class="btn-ghost" id="ciVideo"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-video" /></svg> Video</button>
+        <button class="btn-ghost" id="ciVideo"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-video" /></svg> Video</button>`}
       </div>`;
     setAvatar($('contactAvatar'), peer);
     $('ciChat').addEventListener('click', () => { closeDrawers(); $('messageInput').focus(); });
-    $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
-    $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
+    if (!u.isBot) {
+      $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
+      $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
+    }
+    if (canEditBot) bindBotAvatarEdit(u, peer);
   } catch (err) {
     body.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
   }

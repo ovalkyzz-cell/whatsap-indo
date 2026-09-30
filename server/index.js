@@ -988,6 +988,34 @@ app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, re
   res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg() });
 }));
 
+// ---------- profil bot (khusus admin): foto profil, nama & bio ----------
+app.patch('/api/admin/bots/:id', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const bot = await bots.get(req.params.id);
+  if (!bot) return res.status(404).json({ error: 'Bot tidak ditemukan' });
+
+  const { avatar, name, about } = req.body || {};
+  if (avatar !== undefined) {
+    const url = avatar ? String(avatar).slice(0, 500) : null;
+    if (url && !validChatUrl(url)) return res.status(400).json({ error: 'Foto profil tidak valid' });
+    await db.run('UPDATE users SET avatar = ? WHERE id = ?', url, bot.id);
+  }
+  if (name !== undefined) {
+    const trimmed = String(name).trim().slice(0, 60);
+    if (trimmed.length < 2) return res.status(400).json({ error: 'Nama minimal 2 karakter' });
+    await db.run('UPDATE users SET name = ? WHERE id = ?', trimmed, bot.id);
+  }
+  if (about !== undefined) {
+    await db.run('UPDATE users SET about = ? WHERE id = ?', String(about).slice(0, 200), bot.id);
+  }
+
+  const fresh = await db.get('SELECT * FROM users WHERE id = ?', bot.id);
+  const chatRows = await db.all('SELECT chat_id FROM chat_members WHERE user_id = ?', bot.id);
+  for (const row of chatRows) {
+    await emitToUsers(await helpers.getChatMemberIds(row.chat_id), 'chat:updated', { chatId: row.chat_id });
+  }
+  res.json({ user: helpers.serializeUser(fresh, req.user.id, { premium: false }) });
+}));
+
 // beri / perpanjang paket premium berdasarkan email
 app.post('/api/admin/premium', auth.requireAuth, requireAdmin, ah(async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();

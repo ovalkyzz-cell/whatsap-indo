@@ -887,6 +887,55 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   botSock.close();
 
+  console.log('\n[25] Edit foto profil bot (khusus admin)');
+  const profBot = await admApi('/api/users/bot-verif-am');
+  ok(profBot.status === 200 && profBot.data.user.isBot === true, 'profil bot ditandai isBot');
+
+  const editBiasa = await api('/api/admin/bots/bot-verif-am', {
+    method: 'PATCH',
+    token: tokBiasa,
+    body: { avatar: '/uploads/hack.png' },
+  });
+  ok(editBiasa.status === 403, 'user biasa ditolak mengubah foto bot');
+
+  const gantiFoto = await admApi('/api/admin/bots/bot-verif-am', {
+    method: 'PATCH',
+    body: { avatar: '/uploads/bot-verif-avatar.png' },
+  });
+  ok(gantiFoto.status === 200 && gantiFoto.data.user.avatar === '/uploads/bot-verif-avatar.png'
+    && gantiFoto.data.user.isBot === true && gantiFoto.data.user.verified === true,
+    'admin mengganti foto profil bot (badge tetap aktif)');
+
+  const fotoAsing = await admApi('/api/admin/bots/bot-verif-am', {
+    method: 'PATCH',
+    body: { avatar: 'https://evil.example.com/x.png' },
+  });
+  ok(fotoAsing.status === 400, 'URL foto dari domain asing ditolak');
+
+  const keUserBiasa = await admApi(`/api/admin/bots/${rLive.data.user.id}`, {
+    method: 'PATCH',
+    body: { avatar: '/uploads/x.png' },
+  });
+  ok(keUserBiasa.status === 404, 'endpoint hanya menerima akun bot');
+
+  const gantiBio = await admApi('/api/admin/bots/bot-nftoken', {
+    method: 'PATCH',
+    body: { about: 'Generator NFToken uji.' },
+  });
+  ok(gantiBio.status === 200 && gantiBio.data.user.about === 'Generator NFToken uji.', 'admin mengubah bio bot');
+
+  const daftarChat = await admApi('/api/chats');
+  const chatFoto = (daftarChat.data.chats || []).find((c) => c.peer && c.peer.id === 'bot-verif-am');
+  ok(!!chatFoto && chatFoto.peer.avatar === '/uploads/bot-verif-avatar.png', 'daftar chat menampilkan foto bot terbaru');
+  ok(!!chatFoto && chatFoto.peer.verified === true && chatFoto.peer.isBot === true, 'peer chat tetap terverifikasi & bertanda bot');
+
+  const resetFoto = await admApi('/api/admin/bots/bot-verif-am', { method: 'PATCH', body: { avatar: null } });
+  ok(resetFoto.status === 200 && resetFoto.data.user.avatar === null, 'foto profil bot bisa dikosongkan');
+  await admApi('/api/admin/bots/bot-nftoken', {
+    method: 'PATCH',
+    body: { about: 'Generator NFToken Alight Motion. Ketik "menu".' },
+  });
+
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('TEST ERROR:', e); process.exit(1); });

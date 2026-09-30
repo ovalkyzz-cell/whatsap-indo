@@ -184,6 +184,7 @@ function serializeUser(row, viewerId, opts = {}) {
     avatar: canAvatar ? row.avatar : null,
     about: canBio ? (row.about || '') : '',
     verified: verifiedOf(row),
+    isBot: Number(row.is_bot) === 1,
     role: isAdmin(row) ? 'admin' : (row.role || 'user'),
     lastSeen: canSeen ? row.last_seen : 0,
   };

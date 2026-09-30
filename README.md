@@ -62,7 +62,7 @@ public/
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 185 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 194 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time & bot admin
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
@@ -149,6 +149,7 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 | `POST /api/admin/users/:id/ban` | Blokir akun (`body: { reason }`) → sesi diputus, login `403 banned` |
 | `POST /api/admin/users/:id/unban` | Buka blokir |
 | `POST /api/auth/logout` | Cabut sesi aktif |
+| `PATCH /api/admin/bots/:id` | Ubah **foto profil** / nama / bio bot (`avatar`, `name`, `about`) |
 
 `:id` boleh berupa UUID atau email. Admin menerima `admin:event` real-time
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
@@ -184,6 +185,16 @@ Pembatasan akses (semua menolak user biasa):
 - `message:send` di chat bot — ditolak bila pengirim bukan admin;
 - bot **tidak bisa ditambahkan ke grup** (`POST /api/chats/:id/members` → `403`) dan tidak
   membalas di grup.
+
+Foto profil bot — **khusus admin**:
+
+- di **Info kontak** bot muncul tombol kamera pada foto; pilih gambar (maks 5MB) → unggah →
+  `PATCH /api/admin/bots/:id { avatar }`. Foto baru langsung tampil di daftar chat & header
+  chat (event `chat:updated`), tanpa muat ulang;
+- endpoint juga menerima `name` dan `about`; URL foto di luar `/uploads/*` atau Blob Vercel
+  ditolak `400`; akun non-bot → `404`; user biasa → `403`;
+- badge centang biru & penanda `isBot` tetap melekat setelah diedit; tombol panggilan
+  suara/video disembunyikan di info kontak bot dan labelnya "Bot resmi • Siap membantu".
 
 ### Keamanan
 
