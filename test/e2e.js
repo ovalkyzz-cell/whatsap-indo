@@ -211,8 +211,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(idx.status === 200 && html.includes('Whatsap Indo'), 'index.html served');
   const js = await fetch(BASE + '/js/app.js');
   ok(js.status === 200, 'app.js served');
+  const jsText = await js.text();
   const css = await fetch(BASE + '/css/style.css');
   ok(css.status === 200, 'style.css served');
+  const saveBgIds = (html.match(/id="btnSaveHomeBg"/g) || []).length;
+  ok(saveBgIds === 1, 'id tombol simpan latar pengguna unik (tanpa duplikat)');
+  ok(html.includes('id="btnSaveHomeBgAdm"'), 'tombol Simpan Background admin punya id sendiri');
+  ok(jsText.includes("btnSaveHomeBgAdm") && jsText.includes("/api/admin/settings"),
+    'handler simpan latar admin terikat & memanggil API admin');
 
   console.log('\n[10] Delete message');
   const del = await api(`/api/messages/${msg1.id}`, { method: 'DELETE', token: tokA });

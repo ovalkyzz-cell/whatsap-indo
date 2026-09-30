@@ -2412,13 +2412,14 @@ $('admBgInput').addEventListener('change', async () => {
   if (isVideo && file.size > 200 * 1024 * 1024) { admMsg('admBgMsg', 'Video maksimal 200MB', true); return; }
   if (!isVideo && file.size > 50 * 1024 * 1024) { admMsg('admBgMsg', 'Foto maksimal 50MB', true); return; }
   try {
-    const meta = await uploadFile(file, () => {});
+    admMsg('admBgMsg', 'Mengunggah file...', false);
+    const meta = await uploadFile(file, (p) => admMsg('admBgMsg', `Mengunggah ${Math.round(p * 100)}%...`, false));
     adm.pendingBg = { type: isVideo ? 'video' : 'image', url: meta.url };
     renderAdmBg();
     admMsg('admBgMsg', 'Terpasang di pratinjau — tekan Simpan Background', false);
   } catch (err) { admMsg('admBgMsg', err.message, true); }
 });
-$('btnSaveHomeBg').addEventListener('click', async () => {
+$('btnSaveHomeBgAdm').addEventListener('click', async () => {
   const bg = adm.pendingBg || adm.homeBg;
   try {
     const data = await api('/api/admin/settings', { method: 'PUT', body: { homeBg: bg } });

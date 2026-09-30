@@ -24,6 +24,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
 | Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
 | Latar belakang chat | Ganti background percakapan dengan **foto atau video** (per akun, reset kapan saja) |
+| Background beranda | Latar halaman masuk bisa diganti **foto / video** — oleh admin (berlaku semua pengguna) maupun per akun (Menu → Latar Halaman Utama) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
 | Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat, aksi panggilan |
 | Notifikasi | Nada pesan + notifikasi browser saat tab tidak aktif |
@@ -100,6 +101,20 @@ Dari **Menu → Latar Belakang Chat** pengguna dapat:
 
 Hasilnya dirender di layer `#chatBg` di belakang percakapan; video diputar tanpa suara
 (`muted`, `loop`, `playsinline`).
+
+### Background beranda
+
+Latar halaman utama dirender di tiga layer: `#homeBg` (layar masuk), `#sideHomeBg`
+(daftar chat) dan `#emptyHomeBg` (layar kosong) — video diputar `muted`, `loop`, `playsinline`.
+Ada dua tingkatan:
+
+- **Admin — Panel Admin → Background Beranda**: pilih foto (maks 50MB) / video (maks 200MB)
+  → *Simpan Background* (`PUT /api/admin/settings`), berlaku untuk semua pengguna.
+- **Pengguna — Menu → Latar Halaman Utama**: foto/video milik sendiri via `PATCH /api/me { homeBg }`;
+  latar pribadi **mengalahkan** latar global, *Hapus Latar* mengembalikan ke bawaan.
+
+Layar tanpa login mengambil latar global dari `GET /api/settings/public` (tanpa autentikasi).
+URL divalidasi ketat: hanya path `/uploads/…` atau Blob Vercel (`settings.validBgUrl`).
 
 ### Panggilan (WebRTC)
 
