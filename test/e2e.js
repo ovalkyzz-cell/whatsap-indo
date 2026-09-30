@@ -906,6 +906,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(downErr && /Tautan tidak ditemukan/.test(downErr.body),
     'bot Downloader menolak input tanpa tautan dengan rapi');
 
+  const downMediaWait = waitEvent(botSock, 'message:new', 60000);
+  await emitAck(botSock, 'message:send', {
+    chatId: dChat,
+    type: 'text',
+    body: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  });
+  const downMedia = await downMediaWait;
+  ok(downMedia && (downMedia.type === 'image' || downMedia.type === 'video') && !!downMedia.mediaUrl,
+    'bot Downloader menampilkan video/gambar langsung di chat');
+  ok(downMedia && /Judul|Tautan unduh|Tautan sumber/.test(downMedia.body || ''),
+    'bot Downloader tetap menyertakan judul & tautan');
+
   const chatMail = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-email' } });
   ok(chatMail.status === 201, 'admin membuka chat bot Email Generator');
   const eChat = chatMail.data.chat.id;

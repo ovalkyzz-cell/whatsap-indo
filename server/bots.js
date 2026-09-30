@@ -611,6 +611,38 @@ function downloadLinks(node, out, depth) {
   return out;
 }
 
+function isSafeMediaUrl(u) {
+  return typeof u === 'string' && /^https?:\/\/[^\s<>"']{8,600}$/i.test(u.trim());
+}
+
+function guessMime(url) {
+  const path = String(url || '').split(/[?#]/)[0].toLowerCase();
+  if (/\.png$/.test(path)) return 'image/png';
+  if (/\.webp$/.test(path)) return 'image/webp';
+  if (/\.gif$/.test(path)) return 'image/gif';
+  if (/\.(jpg|jpeg)$/.test(path)) return 'image/jpeg';
+  if (/\.mp4$/.test(path)) return 'video/mp4';
+  if (/\.webm$/.test(path)) return 'video/webm';
+  if (/\.mkv$/.test(path)) return 'video/x-matroska';
+  if (/\.mov$/.test(path)) return 'video/quicktime';
+  return null;
+}
+
+// pilih media preview: video langsung bila ada file .mp4, selain itu thumbnail
+function pickMedia(res, links, title) {
+  const name = (String(title || 'media').replace(/[^\w.\- ]+/g, '').trim().slice(0, 80)) || 'media';
+  const videoUrl = (links || []).find((u) => isSafeMediaUrl(u) && /\.mp4(\?|#|$)/i.test(u));
+  if (videoUrl) {
+    return { type: 'video', url: videoUrl.trim(), name: name.endsWith('.mp4') ? name : `${name}.mp4`, mime: 'video/mp4' };
+  }
+  const thumb = [res.thumbnail, res.thumb, res.image, res.image_url, res.cover, res.poster]
+    .find((u) => isSafeMediaUrl(u));
+  if (thumb) {
+    return { type: 'image', url: thumb.trim(), name, mime: guessMime(thumb) || 'image/jpeg' };
+  }
+  return null;
+}
+
 async function downReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
@@ -671,6 +703,10 @@ async function downReply(raw) {
     'Klik tautan untuk membuka, atau salin tempel di aplikasi unduh favoritmu.',
     'Balas "menu" bila butuh perintah lain.'
   );
+
+  // tampilan langsung: video .mp4 bila tersedia, selain itu thumbnail/pratinjau
+  const media = pickMedia(res, links, title);
+  if (media) return { text: out.join('\n'), media };
   return out.join('\n');
 }
 

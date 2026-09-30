@@ -14,6 +14,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
 | Kartu angka | Kode/token khusus (` ```angka `) tampil dengan **font angka profesional** (tabular, tracking lebar) + Copy |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
+| Preview unduh | Bot Downloader menampilkan **gambar / video langsung** di chat (thumbnail atau file `.mp4`) disertai tautan unduh |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
@@ -65,7 +66,7 @@ public/
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 209 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 211 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 6 bot admin & edit nama bot
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
@@ -169,7 +170,7 @@ membawa **badge centang biru**.
 | **Verif AM Prem** | `bot-verif-am` | `send <email>` → kirim tautan verifikasi Alight Motion Premium; `cek <email> <token>` → cek status verifikasi; `menu` |
 | **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → **respon JSON rapi** + tombol Copy; `menu` |
 | **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT); kode keluar sebagai **blok kode ala VS Code + Copy**; `menu` |
-| **Downloader** | `bot-down` | kirim tautan video → deteksi platform (TikTok, IG, YouTube, FB, X, dll) → judul, kreator & tautan unduh; `menu` |
+| **Downloader** | `bot-down` | kirim tautan video → deteksi platform (TikTok, IG, YouTube, FB, X, dll) → **preview gambar/video langsung di chat** + judul, kreator & tautan unduh; `menu` |
 | **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
 | **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
 

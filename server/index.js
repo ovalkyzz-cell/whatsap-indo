@@ -1528,15 +1528,23 @@ async function markBotReceipt(messageId, botId, chatId, senderId) {
 }
 
 // simpan balasan bot, kabari penerima daring, notifikasi yang luring
-async function deliverBotMessage(bot, chatId, text, targets) {
+async function deliverBotMessage(bot, chatId, text, targets, media) {
   const id = crypto.randomUUID();
   const now = Date.now();
+  const hasMedia = !!(media && media.url && /^https?:\/\//i.test(String(media.url)));
+  const type = !hasMedia ? 'text' : (media.type === 'video' ? 'video' : 'image');
   await db.run(
-    `INSERT INTO messages (id, chat_id, sender_id, type, body, created_at) VALUES (?, ?, ?, 'text', ?, ?)`,
+    `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     chatId,
     bot.id,
-    String(text).slice(0, 8000),
+    type,
+    String(text || '').slice(0, 8000),
+    hasMedia ? String(media.url).slice(0, 500) : null,
+    hasMedia ? String(media.name || '').slice(0, 200) || null : null,
+    null,
+    hasMedia ? String(media.mime || '').slice(0, 100) || null : null,
     now
   );
 
@@ -1563,7 +1571,7 @@ async function deliverBotMessage(bot, chatId, text, targets) {
     await Promise.race([
       pushNotify(offline, {
         title: bot.name,
-        body: String(text).slice(0, 140),
+        body: (String(text || '').trim() || (hasMedia ? String(media.name || 'Mengirim media') : 'Pesan')).slice(0, 140),
         chatId,
         messageId: id,
         icon: bot.avatar || null,
@@ -1615,7 +1623,13 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
       clearInterval(keepalive);
     }
     await stopTyping();
-    if (out) await deliverBotMessage(bot, chatId, out, targets);
+    if (out) {
+      // balasan bot boleh berupa teks saja atau { text, media } (preview gambar/video)
+      const payload = out && typeof out === 'object' ? out : { text: out };
+      if (payload.text || payload.media) {
+        await deliverBotMessage(bot, chatId, payload.text || '', targets, payload.media);
+      }
+    }
   } catch (err) {
     console.error('bot:', err.message);
     await stopTyping();
