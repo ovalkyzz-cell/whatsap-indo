@@ -879,11 +879,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chatAi = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-ai' } });
   ok(chatAi.status === 201, 'admin membuka chat bot AI');
   const aChat = chatAi.data.chat.id;
-  const mAi = waitEvent(botSock, 'message:new', 70000);
-  await emitAck(botSock, 'message:send', { chatId: aChat, type: 'text', body: 'gemini halo dari uji' });
-  const ma = await mAi;
-  ok(ma && ma.senderId === 'bot-ai' && /^(🤖|⚠️)/.test(ma.body),
-    'bot AI membalas dengan model dipilih atau pesan layanan sibuk');
+  for (const perintah of ['gemini halo dari uji', 'gpt halo dari uji', 'deepseek halo dari uji', 'claude halo dari uji']) {
+    const tunggu = waitEvent(botSock, 'message:new', 130000);
+    await emitAck(botSock, 'message:send', { chatId: aChat, type: 'text', body: perintah });
+    const balas = await tunggu;
+    const namaModel = perintah.split(' ')[0];
+    ok(balas && balas.senderId === 'bot-ai' && String(balas.body).startsWith('🤖'),
+      `bot AI model ${namaModel} menjawab nyata tanpa error`);
+  }
 
   botSock.close();
 

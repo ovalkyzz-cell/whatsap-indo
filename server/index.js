@@ -1598,9 +1598,22 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
     if (chat && chat.type !== 'direct') return; // bot tidak membalas di grup
 
     await emitToUsers(targets, 'typing', { chatId, userId: bot.id, typing: true });
-    const out = type !== 'text'
-      ? '❌ Bot hanya memproses pesan teks. Kirim teks, atau balas "menu" untuk melihat perintah.'
-      : await bots.reply(bot, text);
+    // pertahankan indikator "mengetik" selama bot memproses (mis. menunggu jawaban AI)
+    let finished = false;
+    const keepalive = setInterval(() => {
+      if (finished) return;
+      emitToUsers(targets, 'typing', { chatId, userId: bot.id, typing: true }).catch(() => { /* koneksi sudah ditutup */ });
+    }, 2500);
+
+    let out;
+    try {
+      out = type !== 'text'
+        ? '❌ Bot hanya memproses pesan teks. Kirim teks, atau balas "menu" untuk melihat perintah.'
+        : await bots.reply(bot, text);
+    } finally {
+      finished = true;
+      clearInterval(keepalive);
+    }
     await stopTyping();
     if (out) await deliverBotMessage(bot, chatId, out, targets);
   } catch (err) {

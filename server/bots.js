@@ -13,6 +13,10 @@ const db = require('./db');
 const BASE = String(process.env.MAZVAL_API_BASE || 'https://api-mazval.zone.id').replace(/\/+$/, '');
 const API_KEY = String(process.env.MAZVAL_API_KEY || '');
 const API_TIMEOUT = Number(process.env.MAZVAL_API_TIMEOUT) || 45000;
+// AI: timeout lebih panjang karena api-mazval melakukan fallback internal hingga ±75 detik,
+// sedangkan total waktu satu pertanyaan dibatasi AI_BUDGET supaya admin tidak menunggu lama
+const AI_TIMEOUT = Math.max(Number(process.env.MAZVAL_API_TIMEOUT) || 45000, 75000);
+const AI_BUDGET = Number(process.env.MAZVAL_AI_BUDGET_MS) || 120000;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const HR = '────────────────────────';
@@ -72,7 +76,7 @@ function errBlock(title, reason) {
 
 /* ---------- pemanggilan API api-mazval ---------- */
 
-async function callApi(path, params) {
+async function callApi(path, params, opts) {
   if (!API_KEY) throw new Error('Konfigurasi API bot belum lengkap (MAZVAL_API_KEY belum diatur).');
   const url = new URL(BASE + path);
   for (const [key, value] of Object.entries(params || {})) {
@@ -85,7 +89,7 @@ async function callApi(path, params) {
     res = await fetch(url.toString(), {
       method: 'GET',
       headers: { Accept: 'application/json', 'User-Agent': 'WhatsapIndo-Bot/1.0' },
-      signal: AbortSignal.timeout(API_TIMEOUT),
+      signal: AbortSignal.timeout((opts && opts.timeout) || API_TIMEOUT),
     });
   } catch (e) {
     throw new Error('Layanan api-mazval tidak dapat dihubungi. Coba lagi sebentar lagi.');
@@ -382,6 +386,16 @@ function pickAnswer(body) {
   return '';
 }
 
+const aiDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// satu percobaan tanya ke model: wajib menghasilkan jawaban, kalau kosong dianggap gagal
+async function aiAsk(model, prompt, timeout) {
+  const body = await callApi(model.path, { prompt }, { timeout });
+  const answer = pickAnswer(body);
+  if (!answer) throw new Error((body && (body.error || body.message)) || 'Respons AI kosong');
+  return answer;
+}
+
 async function aiReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
@@ -403,26 +417,46 @@ async function aiReply(raw) {
     ].join('\n');
   }
 
-  let body;
-  try {
-    body = await callApi(model.path, { prompt });
-  } catch (e) {
-    const msg = String(e && e.message || '');
-    if (/tidak tersedia|HTTP 502|HTTP 503|HTTP 504/i.test(msg)) {
-      return [
-        '⚠️ Model sedang sibuk',
-        '',
-        `${model.label} belum bisa menjawab sekarang. Coba lagi dalam beberapa menit atau pilih model lain dengan awalan "gemini", "deepseek", atau "claude".`,
-      ].join('\n');
+  // jawaban AI wajib keluar: coba ulang model pilihan, lalu model cadangan lain
+  // sebelum menyerah, semua dalam satu anggaran waktu supaya tidak bikin nunggu lama
+  const chain = [model, ...AI_MODELS.filter((m) => m.path !== model.path)];
+  const startedAt = Date.now();
+  const errors = [];
+  let answer = null;
+  let used = model;
+
+  for (const candidate of chain) {
+    const tries = candidate.path === model.path ? 3 : 1;
+    for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
+      const remaining = AI_BUDGET - (Date.now() - startedAt);
+      if (remaining < 25000) break;
+      if (attempt) await aiDelay(10000);
+      try {
+        answer = await aiAsk(candidate, prompt, Math.min(AI_TIMEOUT, remaining));
+        used = candidate;
+      } catch (err) {
+        errors.push(`${candidate.label}: ${String((err && err.message) || err).slice(0, 160)}`);
+      }
     }
-    throw e;
+    if (answer) break;
+    await aiDelay(8000);
   }
 
-  const answer = pickAnswer(body);
-  if (!answer) return errBlock('Jawaban tidak diterima', body && (body.error || body.message) || 'Respons API kosong.');
+  if (!answer) {
+    return [
+      '⚠️ Jawaban AI belum bisa diberikan sekarang',
+      '',
+      'Semua model sedang mengalami gangguan sesaat. Kirim ulang pertanyaanmu beberapa saat lagi, jawaban langsung muncul.',
+      errors.length ? `\nCatatan: ${errors[errors.length - 1]}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  const header = used.path === model.path
+    ? `🤖 ${model.label}`
+    : `🤖 ${model.label} (cadangan: ${used.label})`;
 
   return [
-    `🤖 ${model.label}`,
+    header,
     HR,
     sanitize(answer, 6000),
     HR,
