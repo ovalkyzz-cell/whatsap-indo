@@ -290,6 +290,11 @@ app.get('/api/auth/me', auth.requireAuth, (req, res) => {
 });
 
 // ---------- users ----------
+// akses bot: khusus admin & pengguna premium (premium aktif selama premium_until)
+function canUseBots(user) {
+  return auth.isAdmin(user) || auth.isPremium(user);
+}
+
 app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   const q = String(req.query.q || '').trim();
   const like = `%${q}%`;
@@ -300,8 +305,8 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
     like,
     like
   );
-  // bot internal hanya terlihat oleh admin
-  const canSeeBots = auth.isAdmin(req.user);
+  // bot internal hanya terlihat oleh admin & pengguna premium
+  const canSeeBots = canUseBots(req.user);
   // email yang dipribatkan tidak bisa ditemukan lewat email
   const visible = rows.filter((r) => {
     if (bots.isBot(r) && !canSeeBots) return false;
@@ -321,7 +326,7 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
 app.get('/api/users/:id', auth.requireAuth, ah(async (req, res) => {
   const row = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!row) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
-  if (bots.isBot(row) && !auth.isAdmin(req.user)) {
+  if (bots.isBot(row) && !canUseBots(req.user)) {
     return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
   }
   res.json({
@@ -418,15 +423,18 @@ async function listChats(userId) {
 }
 
 app.get('/api/chats', auth.requireAuth, ah(async (req, res) => {
-  res.json({ chats: await listChats(req.user.id) });
+  let chats = await listChats(req.user.id);
+  // chat bot disembunyikan bagi yang kehilangan akses (bukan admin/premium)
+  if (!canUseBots(req.user)) chats = chats.filter((c) => !(c.peer && c.peer.isBot));
+  res.json({ chats });
 }));
 
 app.post('/api/chats/direct', auth.requireAuth, ah(async (req, res) => {
   const peerId = String(req.body?.peerId || '');
   const peer = await db.get('SELECT * FROM users WHERE id = ?', peerId);
   if (!peer) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
-  if (bots.isBot(peer) && !auth.isAdmin(req.user)) {
-    return res.status(403).json({ error: 'Bot ini hanya dapat digunakan oleh admin.' });
+  if (bots.isBot(peer) && !canUseBots(req.user)) {
+    return res.status(403).json({ error: 'Bot hanya dapat digunakan oleh admin dan pengguna premium.' });
   }
   const chat = await helpers.getOrCreateDirectChat(req.user.id, peerId);
   const row = await db.get(
@@ -1648,10 +1656,10 @@ async function handleSend(user, payload) {
     throw new Error('Bukan anggota chat ini');
   }
 
-  // bot internal: akses dibatasi untuk admin
+  // bot internal: akses dibatasi untuk admin & pengguna premium
   const botPeer = await bots.peerInChat(chatId);
-  if (botPeer && !auth.isAdmin(user)) {
-    throw new Error('Bot ini hanya dapat digunakan oleh admin.');
+  if (botPeer && !canUseBots(user)) {
+    throw new Error('Bot hanya dapat digunakan oleh admin dan pengguna premium.');
   }
 
   const cleanType = ['text', 'image', 'video', 'audio', 'file'].includes(type) ? type : 'text';

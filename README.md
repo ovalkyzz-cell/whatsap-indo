@@ -18,7 +18,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
-| Bot admin | **30 bot khusus admin** — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 24 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM) |
+| Bot premium | **30 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 24 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
@@ -68,9 +68,9 @@ public/
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 233 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 245 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time, 30 bot admin & edit nama bot
+               # blokir akun, monitor admin real-time, 30 bot (admin & premium) & edit nama bot
   bot-reply.js # 37 assert unit test balasan 30 bot (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
@@ -176,11 +176,13 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
-### Bot admin (6 bot inti + 24 bot generik = 30 bot)
+### Bot (6 bot inti + 24 bot generik = 30 bot) — khusus admin & premium
 
 Tiga puluh bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
-`verified = 1`, status `active` — tampil di pencarian **hanya untuk admin** dan selalu
-membawa **badge centang biru**. Enam bot inti ditulis manual; 24 bot generik digenerate
+`verified = 1`, status `active` — tampil di pencarian **hanya untuk admin dan pengguna
+premium** (`premium_until` masih aktif; diberikan lewat `POST /api/admin/premium`) dan
+selalu membawa **badge centang biru**. Enam bot inti ditulis manual; 24 bot generik
+digenerate
 dari spesifikasi `GENERIC_SPECS` — menu, pemetaan argumen, format baris + blok JSON, dan
 preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar tersedia.
 
@@ -248,12 +250,15 @@ Cara kerja:
 3. Balasan disimpan sebagai pesan biasa dari akun bot: notifikasi push bila admin luring,
    badge terverifikasi, dan teks berformat profesional (header, langkah, kode token).
 
-Pembatasan akses (semua menolak user biasa):
+Pembatasan akses (gerbang `canUseBots` = **admin ATAU premium aktif**; menolak user biasa):
 
-- `GET /api/users/search` — bot tidak ikut ditampilkan untuk non-admin;
-- `GET /api/users/:id` — `404` untuk non-admin;
-- `POST /api/chats/direct` — `403` "Bot ini hanya dapat digunakan oleh admin.";
-- `message:send` di chat bot — ditolak bila pengirim bukan admin;
+- `GET /api/users/search` — bot tidak ikut ditampilkan untuk non-admin/non-premium;
+- `GET /api/users/:id` — `404` untuk non-admin/non-premium;
+- `GET /api/chats` — chat bot disembunyikan bila akses premium habis;
+- `POST /api/chats/direct` — `403` "Bot hanya dapat digunakan oleh admin dan pengguna premium.";
+- `message:send` di chat bot — ditolak bila pengirim bukan admin/premium (pesan sama);
+- premium **dicabut** (`POST /api/admin/premium/revoke`) → bot langsung hilang dari pencarian
+  & daftar chat, membuka chat bot kembali `403`;
 - bot **tidak bisa ditambahkan ke grup** (`POST /api/chats/:id/members` → `403`) dan tidak
   membalas di grup;
 - bot **tidak bisa dipanggil**: `call:invite` ditolak server ("Bot tidak dapat dipanggil"),

@@ -837,15 +837,76 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const tokBiasa = lgBotUser.data.token;
   const suBiasa = await api('/api/users/search?q=Verif', { token: tokBiasa });
   ok(suBiasa.status === 200 && (suBiasa.data.users || []).every((u) => !String(u.id).startsWith('bot-')),
-    'bot disembunyikan dari pencarian user biasa');
+    'bot disembunyikan dari pencarian user non-premium');
   const profBiasa = await api('/api/users/bot-verif-am', { token: tokBiasa });
-  ok(profBiasa.status === 404, 'profil bot tidak terbuka untuk user biasa');
+  ok(profBiasa.status === 404, 'profil bot tidak terbuka untuk user non-premium');
   const bukaBiasa = await api('/api/chats/direct', {
     method: 'POST',
     token: tokBiasa,
     body: { peerId: 'bot-verif-am' },
   });
-  ok(bukaBiasa.status === 403 && /admin/i.test(bukaBiasa.data.error || ''), 'user biasa ditolak membuka chat bot');
+  ok(bukaBiasa.status === 403 && /admin dan pengguna premium/i.test(bukaBiasa.data.error || ''),
+    'user non-premium ditolak membuka chat bot');
+
+  // ---- pengguna premium: bot khusus admin & premium ----
+  const premEmail = `prem${stamp}@test.id`;
+  const rpPrem = await signup({ email: premEmail, name: 'Pengguna Premium', password: 'secret123' });
+  ok(rpPrem.status === 201 && !!rpPrem.data.token, 'akun uji premium disiapkan');
+  const tokPrem = rpPrem.data.token;
+  // id paket diambil dinamis (bisa berubah lewat pengaturan admin)
+  const cfgPrem = await admApi('/api/admin/settings');
+  const planPrem = (cfgPrem.data.plans || [])[0];
+  ok(!!planPrem, 'daftar paket premium tersedia');
+  const grantPrem = await admApi('/api/admin/premium', {
+    method: 'POST',
+    body: { email: premEmail, plan: planPrem ? planPrem.id : '' },
+  });
+  ok(grantPrem.status === 200 && grantPrem.data.user.premiumActive === true,
+    `admin memberikan premium (aktif) ke akun uji${grantPrem.status === 200 ? '' : ' — ' + JSON.stringify(grantPrem.data)}`);
+
+  const cariPrem = await api('/api/users/search?q=Verif', { token: tokPrem });
+  ok((cariPrem.data.users || []).some((u) => u.id === 'bot-verif-am'),
+    'user premium melihat bot di pencarian');
+  const profPrem = await api('/api/users/bot-verif-am', { token: tokPrem });
+  ok(profPrem.status === 200 && profPrem.data.user.isBot === true, 'user premium membuka profil bot');
+  const bukaPrem = await api('/api/chats/direct', {
+    method: 'POST',
+    token: tokPrem,
+    body: { peerId: 'bot-verif-am' },
+  });
+  ok(bukaPrem.status === 201 && !!bukaPrem.data.chat, 'user premium membuka chat bot');
+
+  const premSock = io(BASE, { auth: { token: tokPrem } });
+  await new Promise((r) => premSock.on('connect', r));
+  const premMenuWait = waitEvent(premSock, 'message:new', 12000).catch(() => null);
+  const premAck = await emitAck(premSock, 'message:send', {
+    chatId: bukaPrem.data.chat ? bukaPrem.data.chat.id : null, type: 'text', body: 'menu',
+  });
+  ok(premAck && premAck.ok === true, 'pesan user premium ke bot diterima server');
+  const premMenu = await premMenuWait;
+  ok(premMenu && premMenu.senderId === 'bot-verif-am' && /VERIF AM PREM/.test(premMenu.body),
+    `bot membalas pengguna premium${premMenu ? '' : ' (timeout)'}`);
+  premSock.close();
+
+  // premium dicabut -> akses bot tertutup kembali
+  const revokePrem = await admApi('/api/admin/premium/revoke', {
+    method: 'POST',
+    body: { email: premEmail },
+  });
+  ok(revokePrem.status === 200 && revokePrem.data.user.premiumActive === false,
+    'admin mencabut premium akun uji');
+  const bukaPasca = await api('/api/chats/direct', {
+    method: 'POST',
+    token: tokPrem,
+    body: { peerId: 'bot-verif-am' },
+  });
+  ok(bukaPasca.status === 403, 'setelah premium dicabut, buka chat bot ditolak lagi');
+  const cariPasca = await api('/api/users/search?q=Verif', { token: tokPrem });
+  ok(!(cariPasca.data.users || []).some((u) => String(u.id).startsWith('bot-')),
+    'bot hilang dari pencarian setelah premium dicabut');
+  const chatsPasca = await api('/api/chats', { token: tokPrem });
+  ok(!(chatsPasca.data.chats || []).some((c) => c.peer && c.peer.isBot),
+    'chat bot disembunyikan dari daftar chat user non-premium');
 
   await admLogin(); // sesi admin segar sebelum socket bot dipasang
   const botSock = io(BASE, { auth: { token: admToken } });
