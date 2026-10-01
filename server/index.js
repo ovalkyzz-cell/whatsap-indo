@@ -1415,8 +1415,9 @@ io.on('connection', (socket) => {
         const id = String(callId || '');
         if (!id) return reply({ ok: false, error: 'Permintaan panggilan tidak valid' });
         if (!targetId || targetId === user.id) return reply({ ok: false, error: 'Tidak dapat menelepon pengguna ini' });
-        const target = await db.get('SELECT id FROM users WHERE id = ?', targetId);
+        const target = await db.get('SELECT id, is_bot FROM users WHERE id = ?', targetId);
         if (!target) return reply({ ok: false, error: 'Pengguna tidak ditemukan' });
+        if (bots.isBot(target)) return reply({ ok: false, error: 'Bot tidak dapat dipanggil' });
 
         await calls.create({ id, callerId: user.id, calleeId: targetId, kind });
         const delivered = await emitToUser(targetId, 'call:incoming', {

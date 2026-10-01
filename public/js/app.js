@@ -336,6 +336,12 @@ function updateChatStatus() {
   const chat = currentChat();
   if (!chat) return;
   const peer = chat.peer;
+  // bot tidak bisa dipanggil: tombol panggilan disembunyikan di header chat
+  const botPeer = !!(peer && peer.isBot);
+  for (const id of ['btnCallVoice', 'btnCallVideo']) {
+    const el = $(id);
+    if (el) el.style.display = botPeer ? 'none' : '';
+  }
   const t = S.typing[chat.id];
   if (t && Object.keys(t).length) {
     $('chatStatus').textContent = 'sedang mengetik...';
@@ -2500,6 +2506,7 @@ $('btnCallVideo').addEventListener('click', () => startCall('video'));
 function startCall(kind) {
   const chat = currentChat();
   if (!chat || !chat.peer) { toast('Pilih chat terlebih dahulu'); return; }
+  if (chat.peer.isBot) { toast('Bot tidak bisa dipanggil'); return; }
   if (S.call) { toast('Sedang dalam panggilan lain'); return; }
   if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
 

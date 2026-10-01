@@ -18,7 +18,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
-| Bot admin | **6 bot khusus admin**: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* — API dari api-mazval |
+| Bot admin | **30 bot khusus admin** — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 24 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
@@ -38,7 +38,7 @@ npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
 npm test           # test end-to-end (server harus berjalan)
-npm run test:bots  # unit test balasan 6 bot (API dimock, tanpa jaringan)
+npm run test:bots  # unit test balasan 30 bot (API dimock, tanpa jaringan)
 ```
 
 Variabel lingkungan opsional:
@@ -48,7 +48,7 @@ Variabel lingkungan opsional:
   supaya sesi pengguna tidak hilang saat server restart)
 - `ADMIN_EMAILS` — daftar email admin dipisah koma (selain `ovalkyzz@gmail.com`); akun dengan
   email ini otomatis **aktif** tanpa persetujuan dan berhak memakai panel admin
-- `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai keenam bot
+- `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai seluruh bot
   (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap)
 - `MAZVAL_API_BASE` — base URL api-mazval (default `https://api-mazval.zone.id`)
 - `MAZVAL_API_TIMEOUT` — batas tunggu respons API bot dalam ms (default `45000`)
@@ -61,17 +61,17 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
-  bots.js      # 6 bot admin + perintah + pemanggilan API api-mazval
+  bots.js      # 30 bot admin (6 inti + 24 generik) + perintah + API api-mazval
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file
 public/
   index.html   # shell SPA (auth, chat, drawer, modal panggilan)
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 216 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 233 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time, 6 bot admin & edit nama bot
-  bot-reply.js # 25 assert unit test balasan 6 bot (API dimock, tanpa jaringan)
+               # blokir akun, monitor admin real-time, 30 bot admin & edit nama bot
+  bot-reply.js # 37 assert unit test balasan 30 bot (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -176,11 +176,13 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
-### Bot admin (Verif AM Prem, Generate NFToken, AI, Downloader, Email, Tools)
+### Bot admin (6 bot inti + 24 bot generik = 30 bot)
 
-Enam bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
+Tiga puluh bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
 `verified = 1`, status `active` — tampil di pencarian **hanya untuk admin** dan selalu
-membawa **badge centang biru**.
+membawa **badge centang biru**. Enam bot inti ditulis manual; 24 bot generik digenerate
+dari spesifikasi `GENERIC_SPECS` — menu, pemetaan argumen, format baris + blok JSON, dan
+preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar tersedia.
 
 | Bot | ID | Perintah |
 |---|---|---|
@@ -190,6 +192,37 @@ membawa **badge centang biru**.
 | **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, dll — `max.com` tidak salah jadi Twitter) → **preview gambar/video langsung di chat** + judul, kreator & tautan unduh; URL tanpa `https://` diterima; bila platform tak memberi tautan, bot memberi panduan cobalt; `menu` |
 | **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
 | **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
+| **Cuaca** | `bot-cuaca` | `cuaca <kota>` → suhu, kelembaban, angin, matahari (`/api/info/cuaca`) |
+| **Info Gempa** | `bot-gempa` | `gempa` → gempa terkini BMKG (`/api/info/gempa`) |
+| **Jadwal Sholat** | `bot-sholat` | `sholat <kota>`, `doa <kata>` (`/api/info/jadwal-sholat`, `/api/info/doa`) |
+| **Al-Quran** | `bot-quran` | `surat <1-114>` → Arab, latin & terjemah (`/api/info/alquran`) |
+| **Tafsir Mimpi** | `bot-mimpi` | `mimpi <teks>`, `nama <nama>` (`/api/info/tafsir-mimpi`, `/api/info/arti-nama`) |
+| **Kurs & Kripto** | `bot-kurs` | `kurs <dari> <ke> [jumlah]`, `kripto <koin>` (`/api/tools/currency`, `/api/info/crypto`) |
+| **Cek Nomor** | `bot-nomor` | `nomor <08xx>`, `negara <nama>` (`/api/tools/cek-nomor`, `/api/tools/countryInfo`) |
+| **Stalk GitHub** | `bot-github` | `github <user>` (`/api/stalk/github`) |
+| **Stalk Sosmed** | `bot-stalk` | `twitter <user>`, `channel <user>`, `pinterest <user>`, `threads <user>` (`/api/stalk/*`) |
+| **Quotes & Pantun** | `bot-quotes` | `pantun`, `bucin`, `anime` (`/api/random/*`, `/api/r/quotesanime`) |
+| **Tebak-Tebakan** | `bot-tebak` | `tebak`, `tekateki`, `asahotak` (`/api/random/*`) |
+| **Meme Random** | `bot-meme` | `meme`, `papayang`, `acak` → sering menyertakan **gambar langsung** |
+| **Waifu Random** | `bot-waifu` | `waifu` → gambar acak (`/api/random/waifu`) |
+| **Cari Anime & Game** | `bot-anime` | `anime <judul>`, `manga <judul>`, `game <judul>` (Otakotaku, Mangatoon, MCPEDL) |
+| **Pencarian Web** | `bot-web` | `ddg <kata>`, `brave <kata>`, `gambar <kata>` (DuckDuckGo, Brave, Bing Images) |
+| **Cari Media** | `bot-media` | `yt <kata>`, `musik <kata>`, `pin <kata>` (YouTube, Apple Music, Pinterest) |
+| **Stiker** | `bot-stiker` | `stiker <kata>`, `paket <kata>` (Stickerly, Combot) |
+| **Screenshot Web** | `bot-ss` | `ss <url>` → tangkapan layar jadi **pesan gambar** (`/api/tools/ssweb`) |
+| **QR Code** | `bot-qr` | `buat <teks>` → QR jadi gambar; `baca <url gambar>` (`/api/tools/qr-*`) |
+| **Kode Pos & Wilayah** | `bot-pos` | `kodepos <area>`, `provinsi`, `jarak <dari> <ke>` |
+| **Jadwal Bola** | `bot-bola` | `bola [tanggal]` → pertandingan hari itu (TheSportsDB) |
+| **Generator Gambar** | `bot-brat` | `brat <teks>`, `brathd <teks>`, `smeme <teks>` → **gambar langsung di chat** |
+| **Security Domain** | `bot-domain` | `recon <domain>`, `subdomain <domain>` (`/api/tools/domain-recon`, `/api/tools/subdomains`) |
+| **Cari NPM** | `bot-npm` | `npm <paket>` → versi, lisensi, deskripsi (`/api/tools/npmjs`) |
+
+Setiap bot generik menjawab `menu` dengan kotak nama + daftar perintah + contoh; input
+tanpa perintah atau argumen kurang dibalas **blok error rapi** (`❌` + alasan + contoh);
+respons API ditampilkan sebagai baris ringkas + daftar data (maks 5 bullet) + **blok JSON
+dengan tombol Copy**; URL gambar/video di respons otomatis dikirim sebagai **pesan media**
+(host tanpa ekstensi seperti `api.qrserver.com`, `api.brattxt.xyz`, `image.thum.io` ikut
+dikenali).
 
 **Format pesan kaya (frontend `public/js/app.js`):**
 
@@ -207,9 +240,11 @@ Cara kerja:
 
 1. Pesan masuk ke chat direct dengan bot → server menandai pesan **dibaca** (pengirim langsung
    mendapat centang biru) dan menampilkan indikator *mengetik*.
-2. `server/bots.js` memanggil API **api-mazval** (`/api/tools/am-verif-send`,
-   `/api/tools/am-verif-check`, `/api/tools/nftoken-generate`, `/api/ai/*`) memakai
-   `MAZVAL_API_KEY` — kunci tidak pernah disimpan di kode maupun dikirim ke klien.
+2. `server/bots.js` memanggil API **api-mazval** — bot inti memakai endpoint akses akun
+   (`/api/tools/am-verif-*`, `/api/tools/nftoken-generate`, `/api/ai/*`, `/api/download/*`,
+   `/api/tempmail/*`) dan bot generik endpoint publiknya (`/api/info/*`, `/api/tools/*`,
+   `/api/stalk/*`, `/api/random/*`, `/api/s/*`, `/api/image/*` dst.) memakai `MAZVAL_API_KEY`
+   — kunci tidak pernah disimpan di kode maupun dikirim ke klien.
 3. Balasan disimpan sebagai pesan biasa dari akun bot: notifikasi push bila admin luring,
    badge terverifikasi, dan teks berformat profesional (header, langkah, kode token).
 
@@ -220,7 +255,10 @@ Pembatasan akses (semua menolak user biasa):
 - `POST /api/chats/direct` — `403` "Bot ini hanya dapat digunakan oleh admin.";
 - `message:send` di chat bot — ditolak bila pengirim bukan admin;
 - bot **tidak bisa ditambahkan ke grup** (`POST /api/chats/:id/members` → `403`) dan tidak
-  membalas di grup.
+  membalas di grup;
+- bot **tidak bisa dipanggil**: `call:invite` ditolak server ("Bot tidak dapat dipanggil"),
+  tombol panggilan suara/video disembunyikan di header chat & info kontak, dan `startCall`
+  di frontend ikut menjaga dengan toast "Bot tidak bisa dipanggil".
 
 Foto profil bot — **khusus admin**:
 
@@ -230,7 +268,8 @@ Foto profil bot — **khusus admin**:
 - endpoint juga menerima `name` dan `about`; URL foto di luar `/uploads/*` atau Blob Vercel
   ditolak `400`; akun non-bot → `404`; user biasa → `403`;
 - badge centang biru & penanda `isBot` tetap melekat setelah diedit; tombol panggilan
-  suara/video disembunyikan di info kontak bot dan labelnya "Bot resmi • Siap membantu".
+  suara/video disembunyikan di info kontak **dan** header chat bot, labelnya
+  "Bot resmi • Siap membantu", dan server menolak `call:invite` ke bot.
 
 ### Keamanan
 

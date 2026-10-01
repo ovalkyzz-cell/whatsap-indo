@@ -1186,6 +1186,204 @@ async function toolsReply(raw) {
   return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}".`);
 }
 
+/* ---------- bot generik ----------
+   Setiap spesifikasi memetakan perintah ke endpoint api-mazval yang benar-benar
+   tersedia. Balasan otomatis: baris ringkas, daftar data (maks 5), blok JSON
+   rapi (Copy), dan preview gambar/video bila respons memuat media. */
+
+const NOEXT_MEDIA_HOSTS = ['api.qrserver.com', 'api.brattxt.xyz', 'image.thum.io'];
+
+function prettifyKey(key) {
+  return String(key || '').replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^./, (c) => c.toUpperCase());
+}
+
+function scalarFields(node, prefix, out, depth) {
+  if (!node || typeof node !== 'object' || Array.isArray(node) || depth > 2) return out;
+  for (const [k, v] of Object.entries(node)) {
+    if (v === null || v === undefined || v === '') continue;
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (typeof v === 'object') scalarFields(v, key, out, depth + 1);
+    else out.push([key, v]);
+    if (out.length >= 18) break;
+  }
+  return out;
+}
+
+function firstArray(node, depth) {
+  if (!node || depth > 4) return null;
+  if (Array.isArray(node)) return node.length ? node : null;
+  if (typeof node !== 'object') return null;
+  for (const v of Object.values(node)) {
+    const hit = firstArray(v, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function mediaFromNode(node, depth) {
+  if (!node || depth > 5) return null;
+  if (typeof node === 'string') {
+    const u = node.trim();
+    if (!isSafeMediaUrl(u)) return null;
+    const path = u.split(/[?#]/)[0].toLowerCase();
+    if (/\.(png|jpe?g|webp|gif|bmp)$/.test(path)) {
+      return { type: 'image', url: u, name: 'pratinjau.jpg', mime: guessMime(u) || 'image/jpeg' };
+    }
+    if (/\.(mp4|webm|mov|mkv)$/.test(path)) {
+      return { type: 'video', url: u, name: 'pratinjau.mp4', mime: guessMime(u) || 'video/mp4' };
+    }
+    let host = '';
+    try { host = new URL(u).hostname; } catch { return null; }
+    if (NOEXT_MEDIA_HOSTS.includes(host)) return { type: 'image', url: u, name: 'pratinjau.jpg', mime: 'image/jpeg' };
+    return null;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const m = mediaFromNode(item, depth + 1);
+      if (m) return m;
+    }
+    return null;
+  }
+  if (typeof node === 'object') {
+    for (const k of ['url', 'image', 'thumbnail', 'screenshot', 'preview']) {
+      if (k in node) {
+        const m = mediaFromNode(node[k], depth + 1);
+        if (m) return m;
+      }
+    }
+    for (const v of Object.values(node)) {
+      const m = mediaFromNode(v, depth + 1);
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
+function unwrapBody(body) {
+  if (!body || typeof body !== 'object') return null;
+  if (body.result !== undefined && body.result !== null) return body.result;
+  if (body.data !== undefined && body.data !== null) return body.data;
+  const skip = new Set(['status', 'success', 'creator', 'endpoint', 'message', 'sumber', 'source']);
+  const out = {};
+  for (const [k, v] of Object.entries(body)) if (!skip.has(k)) out[k] = v;
+  return Object.keys(out).length ? out : null;
+}
+
+function normalizeArg(key, value) {
+  const v = String(value || '').trim();
+  if (['url', 'link'].includes(key) && v && !/^https?:\/\//i.test(v)) return 'https://' + v.replace(/^\/+/, '');
+  return v;
+}
+
+function buildParams(cmd, args) {
+  const spec = cmd.params;
+  if (!spec) return {};
+  if (typeof spec === 'object' && !Array.isArray(spec)) {
+    const out = {};
+    for (const [key, role] of Object.entries(spec)) {
+      if (role === 'rest') {
+        if (!args) return null;
+        out[key] = normalizeArg(key, args);
+      } else if (role === 'rest?') {
+        if (args) out[key] = normalizeArg(key, args);
+      } else {
+        out[key] = role;
+      }
+    }
+    return out;
+  }
+  const tokens = args
+    ? args.split(/[\s,]+/).filter(Boolean).filter((t) => !['ke', '->', '→'].includes(t.toLowerCase()))
+    : [];
+  const out = { ...(cmd.defaults || {}) };
+  for (let i = 0; i < spec.length; i++) {
+    if (tokens[i] !== undefined) out[spec[i]] = normalizeArg(spec[i], tokens[i]);
+    else if (out[spec[i]] === undefined) return null;
+  }
+  return out;
+}
+
+function genericLines(label, data) {
+  const lines = ['✅ ' + label, ''];
+  const fields = scalarFields(data, '', [], 0);
+  for (const [k, v] of fields.slice(0, 16)) lines.push(`${prettifyKey(k)}: ${String(v).slice(0, 180)}`);
+  const list = firstArray(data, 0);
+  if (list && list.length) {
+    lines.push('', `Data (${list.length}):`);
+    for (const item of list.slice(0, 5)) {
+      if (item && typeof item === 'object') {
+        const parts = scalarFields(item, '', [], 0).slice(0, 4)
+          .map(([k, v]) => `${prettifyKey(k)} ${String(v).slice(0, 80)}`);
+        lines.push(`• ${parts.join(' · ')}`);
+      } else {
+        lines.push(`• ${String(item).slice(0, 160)}`);
+      }
+    }
+    if (list.length > 5) lines.push(`• … +${list.length - 5} lainnya`);
+  }
+  const json = JSON.stringify(data, null, 2);
+  if (json && json !== '{}') {
+    lines.push('', json.length <= 2600 ? jsonFence(data) : fence('json', json.slice(0, 2400) + '\n… (dipotong)'));
+  }
+  lines.push('', 'Balas "menu" untuk daftar perintah lain.');
+  return lines.join('\n');
+}
+
+function specMenu(spec) {
+  const lines = [
+    '╭─────────────────────────────',
+    `│ ${spec.name.toUpperCase()}`,
+    `│ ${spec.tagline}`,
+    '╰─────────────────────────────',
+    '',
+    'Perintah:',
+  ];
+  for (const c of spec.commands) lines.push(`  ${c.usage.padEnd(26)}— ${c.desc}`);
+  lines.push('', 'Contoh:');
+  for (const c of spec.commands.slice(0, 3)) if (c.example) lines.push(`  ${c.example}`);
+  lines.push('', 'Balas "menu" kapan saja untuk membuka daftar ini.');
+  return lines.join('\n');
+}
+
+async function genericReply(spec, raw) {
+  const text = String(raw || '').trim();
+  const word = firstWord(text);
+  const key = word.replace(/[?:!,.]+$/, '');
+  if (!word || ['menu', 'help', 'bantuan', '?'].includes(key)) return specMenu(spec);
+  const cmd = spec.commands.find((c) => c.words.includes(key));
+  if (!cmd) {
+    return errBlock('Perintah tidak dikenal', `Perintah ${spec.name}: ${spec.commands.map((c) => c.usage).join(' · ')}.`);
+  }
+  const params = buildParams(cmd, rest(text));
+  if (params === null) return errBlock(cmd.usage, `Contoh: ${cmd.example || cmd.usage}`);
+  let body;
+  try {
+    body = await callApi(cmd.path, params, { timeout: cmd.timeout });
+  } catch (e) {
+    return errBlock(cmd.label || spec.name, e.message);
+  }
+  if (body && (body.success === false || body.status === false)) {
+    return errBlock(cmd.label || spec.name, body.error || body.message || 'Data tidak ditemukan.');
+  }
+  let data = unwrapBody(body);
+  if (data === null) return errBlock(cmd.label || spec.name, 'Layanan tidak mengembalikan data.');
+  if (typeof data !== 'object') data = { hasil: data };
+  const media = mediaFromNode(data, 0) || mediaFromNode(body, 0);
+  const out = { text: genericLines(cmd.label || spec.name, data) };
+  if (media) out.media = media;
+  return out;
+}
+
+function makeBotFromSpec(spec) {
+  return {
+    id: spec.id,
+    email: spec.email,
+    name: spec.name,
+    about: spec.about,
+    reply: (text) => genericReply(spec, text),
+  };
+}
+
 /* ---------- manajemen akun bot ---------- */
 
 async function seed() {
@@ -1251,6 +1449,289 @@ async function reply(bot, text) {
   const def = byId.get(String(bot && bot.id));
   if (!def) return null;
   return def.reply(text);
+}
+
+/* ---------- 24 bot generik: total30 bot ----------
+   Hanya endpoint api-mazval yang sudah teruji dipakai di sini (lihat tiap
+   spesifikasi). Balasan, menu, dan format seluruhnya digenerate dari spesifikasi. */
+
+const GENERIC_SPECS = [
+  {
+    id: 'bot-cuaca', email: 'cuaca@bot.whatsap-indo', name: 'Cuaca',
+    tagline: 'Cuaca kota saat ini',
+    about: 'Cuaca kota real-time: suhu, kelembaban & angin. Contoh: cuaca Jakarta.',
+    commands: [
+      { words: ['cuaca', 'weather'], usage: 'cuaca <kota>', example: 'cuaca Jakarta',
+        desc: 'Cuaca kota saat ini', params: { kota: 'rest' }, path: '/api/info/cuaca', label: 'Cuaca' },
+    ],
+  },
+  {
+    id: 'bot-gempa', email: 'gempa@bot.whatsap-indo', name: 'Info Gempa',
+    tagline: 'Gempa bumi terkini',
+    about: 'Gempa bumi terkini dari BMKG. Contoh: gempa.',
+    commands: [
+      { words: ['gempa', 'quake', 'earthquake'], usage: 'gempa', example: 'gempa',
+        desc: 'Gempa terkini (BMKG)', params: null, path: '/api/info/gempa', label: 'Gempa' },
+    ],
+  },
+  {
+    id: 'bot-sholat', email: 'sholat@bot.whatsap-indo', name: 'Jadwal Sholat',
+    tagline: 'Jadwal sholat & doa harian',
+    about: 'Jadwal sholat per kota & kumpulan doa harian. Contoh: sholat Jakarta.',
+    commands: [
+      { words: ['sholat', 'jadwalsholat', 'salat'], usage: 'sholat <kota>', example: 'sholat Jakarta',
+        desc: 'Jadwal sholat kota', params: { kota: 'rest' }, path: '/api/info/jadwal-sholat', label: 'Jadwal Sholat' },
+      { words: ['doa'], usage: 'doa <kata>', example: 'doa tidur',
+        desc: 'Cari doa harian', params: { q: 'rest' }, path: '/api/info/doa', label: 'Doa' },
+    ],
+  },
+  {
+    id: 'bot-quran', email: 'quran@bot.whatsap-indo', name: 'Al-Quran',
+    tagline: 'Teks Arab, latin & terjemah',
+    about: 'Teks surah Al-Quran lengkap: Arab, latin & terjemah. Contoh: surat 1.',
+    commands: [
+      { words: ['surat', 'ayat'], usage: 'surat <1-114>', example: 'surat 112',
+        desc: 'Teks & terjemah surah', params: { nomor: 'rest' }, path: '/api/info/alquran', label: 'Surah' },
+    ],
+  },
+  {
+    id: 'bot-mimpi', email: 'mimpi@bot.whatsap-indo', name: 'Tafsir Mimpi',
+    tagline: 'Tafsir mimpi & arti nama',
+    about: 'Tafsir mimpi primbon & arti nama lengkap. Contoh: mimpi ular.',
+    commands: [
+      { words: ['mimpi', 'tafsir'], usage: 'mimpi <teks>', example: 'mimpi ular',
+        desc: 'Tafsir mimpi primbon', params: { mimpi: 'rest' }, path: '/api/info/tafsir-mimpi', label: 'Tafsir Mimpi' },
+      { words: ['nama', 'arti'], usage: 'nama <nama>', example: 'nama Budi',
+        desc: 'Arti sebuah nama', params: { nama: 'rest' }, path: '/api/info/arti-nama', label: 'Arti Nama' },
+    ],
+  },
+  {
+    id: 'bot-kurs', email: 'kurs@bot.whatsap-indo', name: 'Kurs & Kripto',
+    tagline: 'Mata uang dunia & kripto',
+    about: 'Kurs mata uang dunia & harga kripto terkini. Contoh: kurs USD IDR 100.',
+    commands: [
+      { words: ['kurs', 'konversi'], usage: 'kurs <dari> <ke> [jumlah]', example: 'kurs USD IDR 100',
+        desc: 'Konversi mata uang', params: ['from', 'to', 'amount'],
+        defaults: { from: 'USD', to: 'IDR', amount: '1' }, path: '/api/tools/currency', label: 'Kurs' },
+      { words: ['kripto', 'crypto'], usage: 'kripto <koin>', example: 'kripto bitcoin',
+        desc: 'Harga kripto (USD & IDR)', params: { coin: 'rest' }, path: '/api/info/crypto', label: 'Kripto' },
+    ],
+  },
+  {
+    id: 'bot-nomor', email: 'nomor@bot.whatsap-indo', name: 'Cek Nomor',
+    tagline: 'Info nomor HP & negara',
+    about: 'Info operator/prefix nomor HP & data negara. Contoh: nomor 081234567890.',
+    commands: [
+      { words: ['nomor', 'ceknomor'], usage: 'nomor <08xx>', example: 'nomor 081234567890',
+        desc: 'Info operator nomor', params: { nomor: 'rest' }, path: '/api/tools/cek-nomor', label: 'Cek Nomor' },
+      { words: ['negara'], usage: 'negara <nama>', example: 'negara Indonesia',
+        desc: 'Data sebuah negara', params: { name: 'rest' }, path: '/api/tools/countryInfo', label: 'Negara' },
+    ],
+  },
+  {
+    id: 'bot-github', email: 'github@bot.whatsap-indo', name: 'Stalk GitHub',
+    tagline: 'Profil GitHub siapa saja',
+    about: 'Profil GitHub lengkap: bio, followers, repo. Contoh: github octocat.',
+    commands: [
+      { words: ['github'], usage: 'github <user>', example: 'github octocat',
+        desc: 'Profil GitHub', params: { user: 'rest' }, path: '/api/stalk/github', label: 'Profil GitHub' },
+    ],
+  },
+  {
+    id: 'bot-stalk', email: 'stalker@bot.whatsap-indo', name: 'Stalk Sosmed',
+    tagline: 'Intip profil sosial media',
+    about: 'Intip profil Twitter, YouTube, Pinterest & Threads. Contoh: twitter elonmusk.',
+    commands: [
+      { words: ['twitter', 'x'], usage: 'twitter <user>', example: 'twitter elonmusk',
+        desc: 'Profil Twitter / X', params: { user: 'rest' }, path: '/api/stalk/twitter', label: 'Profil Twitter' },
+      { words: ['channel'], usage: 'channel <user>', example: 'channel MrBeast',
+        desc: 'Profil channel YouTube', params: { user: 'rest' }, path: '/api/stalk/youtube', label: 'Channel YouTube' },
+      { words: ['pinterest'], usage: 'pinterest <user>', example: 'pinterest nasa',
+        desc: 'Profil Pinterest', params: { user: 'rest' }, path: '/api/stalk/pinterest', label: 'Profil Pinterest' },
+      { words: ['threads'], usage: 'threads <user>', example: 'threads zuck',
+        desc: 'Profil Threads', params: { user: 'rest' }, path: '/api/stalk/threads', label: 'Profil Threads' },
+    ],
+  },
+  {
+    id: 'bot-quotes', email: 'quotes@bot.whatsap-indo', name: 'Quotes & Pantun',
+    tagline: 'Pantun, quote bucin & anime',
+    about: 'Pantun, quote bucin & quote anime acak. Contoh: pantun.',
+    commands: [
+      { words: ['pantun'], usage: 'pantun', example: 'pantun',
+        desc: 'Pantun acak', params: null, path: '/api/random/pantun', label: 'Pantun' },
+      { words: ['bucin', 'quote'], usage: 'bucin', example: 'bucin',
+        desc: 'Quote romantis acak', params: null, path: '/api/random/quote-bucin', label: 'Quote Bucin' },
+      { words: ['anime'], usage: 'anime', example: 'anime',
+        desc: 'Quote anime acak', params: null, path: '/api/r/quotesanime', label: 'Quote Anime' },
+    ],
+  },
+  {
+    id: 'bot-tebak', email: 'tebak@bot.whatsap-indo', name: 'Tebak-Tebakan',
+    tagline: 'Teka-teki & asah otak',
+    about: 'Tebak-tebakan, teka-teki & asah otak. Contoh: tebak.',
+    commands: [
+      { words: ['tebak'], usage: 'tebak', example: 'tebak',
+        desc: 'Tebak-tebakan acak', params: null, path: '/api/random/tebaktebakan', label: 'Tebak-Tebakan' },
+      { words: ['tekateki', 'teka'], usage: 'tekateki', example: 'tekateki',
+        desc: 'Teka-teki acak', params: null, path: '/api/random/tekateki', label: 'Teka-Teki' },
+      { words: ['asahotak'], usage: 'asahotak', example: 'asahotak',
+        desc: 'Asah otak acak', params: null, path: '/api/random/asahotak', label: 'Asah Otak' },
+    ],
+  },
+  {
+    id: 'bot-meme', email: 'meme@bot.whatsap-indo', name: 'Meme Random',
+    tagline: 'Meme & konten acak',
+    about: 'Meme, meme bergambar & konten Reddit acak. Contoh: meme.',
+    commands: [
+      { words: ['meme'], usage: 'meme', example: 'meme',
+        desc: 'Meme acak', params: null, path: '/api/random/meme', label: 'Meme' },
+      { words: ['papayang'], usage: 'papayang', example: 'papayang',
+        desc: 'Foto random (Papayang)', params: null, path: '/api/random/papayang', label: 'Papayang' },
+      { words: ['acak'], usage: 'acak', example: 'acak',
+        desc: 'Konten Reddit acak', params: null, path: '/api/r/lahelu', label: 'Konten Acak' },
+    ],
+  },
+  {
+    id: 'bot-waifu', email: 'waifu@bot.whatsap-indo', name: 'Waifu Random',
+    tagline: 'Gambar waifu acak',
+    about: 'Gambar waifu acak setiap kali diminta. Contoh: waifu.',
+    commands: [
+      { words: ['waifu'], usage: 'waifu', example: 'waifu',
+        desc: 'Gambar waifu acak', params: null, path: '/api/random/waifu', label: 'Waifu' },
+    ],
+  },
+  {
+    id: 'bot-anime', email: 'animedl@bot.whatsap-indo', name: 'Cari Anime & Game',
+    tagline: 'Cari anime, manga & game',
+    about: 'Cari anime (Otakotaku), manga (Mangatoon) & game (MCPEDL). Contoh: anime naruto.',
+    commands: [
+      { words: ['anime'], usage: 'anime <judul>', example: 'anime naruto',
+        desc: 'Cari anime (Otakotaku)', params: { q: 'rest' }, path: '/api/s/otakotaku', label: 'Cari Anime' },
+      { words: ['manga'], usage: 'manga <judul>', example: 'manga one piece',
+        desc: 'Cari manga (Mangatoon)', params: { q: 'rest' }, path: '/api/s/mangatoon', label: 'Cari Manga' },
+      { words: ['game'], usage: 'game <judul>', example: 'game minecraft',
+        desc: 'Cari game (MCPEDL)', params: { q: 'rest' }, path: '/api/s/mcpedl', label: 'Cari Game' },
+    ],
+  },
+  {
+    id: 'bot-web', email: 'websearch@bot.whatsap-indo', name: 'Pencarian Web',
+    tagline: 'DuckDuckGo, Brave & gambar',
+    about: 'Cari di DuckDuckGo, Brave & gambar Bing. Contoh: ddg nodejs.',
+    commands: [
+      { words: ['ddg', 'cari'], usage: 'ddg <kata>', example: 'ddg nodejs',
+        desc: 'Cari (DuckDuckGo)', params: { q: 'rest' }, path: '/api/s/duckduckgo', label: 'DuckDuckGo' },
+      { words: ['brave'], usage: 'brave <kata>', example: 'brave resep nasi goreng',
+        desc: 'Cari (Brave)', params: { q: 'rest' }, path: '/api/s/brave', label: 'Brave Search' },
+      { words: ['gambar'], usage: 'gambar <kata>', example: 'gambar kucing',
+        desc: 'Cari gambar (Bing)', params: { q: 'rest' }, path: '/api/s/bimg', label: 'Gambar' },
+    ],
+  },
+  {
+    id: 'bot-media', email: 'mediasearch@bot.whatsap-indo', name: 'Cari Media',
+    tagline: 'YouTube, musik & Pinterest',
+    about: 'Cari video YouTube, lagu Apple Music & pin Pinterest. Contoh: yt dangdut.',
+    commands: [
+      { words: ['yt'], usage: 'yt <kata>', example: 'yt judul lagu',
+        desc: 'Cari video YouTube', params: { q: 'rest' }, path: '/api/s/youtube', label: 'Cari YouTube' },
+      { words: ['musik', 'lagu'], usage: 'musik <kata>', example: 'musik konser live',
+        desc: 'Cari musik (Apple Music)', params: { q: 'rest' }, path: '/api/s/applemusic', label: 'Cari Musik' },
+      { words: ['pin'], usage: 'pin <kata>', example: 'pin wallpaper aesthetic',
+        desc: 'Cari pin Pinterest', params: { q: 'rest' }, path: '/api/s/pinterest', label: 'Cari Pinterest' },
+    ],
+  },
+  {
+    id: 'bot-stiker', email: 'stiker@bot.whatsap-indo', name: 'Stiker',
+    tagline: 'Stiker WhatsApp & paket stiker',
+    about: 'Cari stiker WhatsApp (Stickerly) & paket stiker (Combot). Contoh: stiker kucing.',
+    commands: [
+      { words: ['stiker', 'sticker'], usage: 'stiker <kata>', example: 'stiker kucing',
+        desc: 'Cari stiker (Stickerly)', params: { q: 'rest' }, path: '/api/sticker/stickerly', label: 'Stiker' },
+      { words: ['paket'], usage: 'paket <kata>', example: 'paket lucu',
+        desc: 'Cari paket stiker (Combot)', params: { q: 'rest' }, path: '/api/sticker/combot-search', label: 'Paket Stiker' },
+    ],
+  },
+  {
+    id: 'bot-ss', email: 'screenshot@bot.whatsap-indo', name: 'Screenshot Web',
+    tagline: 'Screenshot situs apa pun',
+    about: 'Screenshot situs apa pun langsung dari chat. Contoh: ss https://example.com.',
+    commands: [
+      { words: ['ss', 'screenshot'], usage: 'ss <url>', example: 'ss https://example.com',
+        desc: 'Screenshot sebuah situs', params: { url: 'rest' }, path: '/api/tools/ssweb', label: 'Screenshot' },
+    ],
+  },
+  {
+    id: 'bot-qr', email: 'qr@bot.whatsap-indo', name: 'QR Code',
+    tagline: 'Buat & baca QR',
+    about: 'Buat QR dari teks & baca QR dari gambar. Contoh: buat halo dunia.',
+    commands: [
+      { words: ['buat', 'qrcode'], usage: 'buat <teks>', example: 'buat halo dunia',
+        desc: 'QR dari teks/tautan', params: { text: 'rest' }, path: '/api/tools/qr-create', label: 'QR Dibuat' },
+      { words: ['baca', 'scan'], usage: 'baca <url gambar>', example: 'baca https://i.imgur.com/contoh.png',
+        desc: 'Baca isi QR dari gambar', params: { url: 'rest' }, path: '/api/tools/qr-detect', label: 'QR Terbaca' },
+    ],
+  },
+  {
+    id: 'bot-pos', email: 'kodepos@bot.whatsap-indo', name: 'Kode Pos & Wilayah',
+    tagline: 'Kode pos, provinsi & jarak',
+    about: 'Cari kode pos, daftar provinsi & jarak antar kota. Contoh: kodepos gambir.',
+    commands: [
+      { words: ['kodepos'], usage: 'kodepos <area>', example: 'kodepos gambir',
+        desc: 'Cari kode pos', params: { q: 'rest' }, path: '/api/tools/kodepos', label: 'Kode Pos' },
+      { words: ['provinsi'], usage: 'provinsi', example: 'provinsi',
+        desc: 'Daftar provinsi + kode', params: null, path: '/api/info/provinsi', label: 'Provinsi' },
+      { words: ['jarak'], usage: 'jarak <dari> <ke>', example: 'jarak Jakarta Bandung',
+        desc: 'Jarak dua kota', params: ['dari', 'ke'], path: '/api/info/jarakkota', label: 'Jarak Antar Kota' },
+    ],
+  },
+  {
+    id: 'bot-bola', email: 'bola@bot.whatsap-indo', name: 'Jadwal Bola',
+    tagline: 'Jadwal pertandingan',
+    about: 'Jadwal pertandingan sepak bola (TheSportsDB). Contoh: bola.',
+    commands: [
+      { words: ['bola', 'jadwalbola'], usage: 'bola [tanggal YYYY-MM-DD]', example: 'bola 2026-10-05',
+        desc: 'Jadwal pertandingan hari ini', params: { date: 'rest?' }, path: '/api/info/jadwal-bola', label: 'Jadwal Bola' },
+    ],
+  },
+  {
+    id: 'bot-brat', email: 'brat@bot.whatsap-indo', name: 'Generator Gambar',
+    tagline: 'Brat, Brat HD & meme custom',
+    about: 'Gambar teks Brat, Brat HD & meme custom. Contoh: brat halo guys.',
+    commands: [
+      { words: ['brat'], usage: 'brat <teks>', example: 'brat halo guys',
+        desc: 'Gambar teks Brat', params: { text: 'rest' }, path: '/api/image/brat', label: 'Gambar Brat' },
+      { words: ['brathd'], usage: 'brathd <teks>', example: 'brathd halo dunia',
+        desc: 'Gambar teks Brat HD', params: { text: 'rest' }, path: '/api/image/brathd', label: 'Gambar Brat HD' },
+      { words: ['smeme'], usage: 'smeme <teks>', example: 'smeme halo dunia',
+        desc: 'Meme custom (memegen)', params: { text: 'rest' }, path: '/api/image/smeme', label: 'Meme Custom' },
+    ],
+  },
+  {
+    id: 'bot-domain', email: 'recon@bot.whatsap-indo', name: 'Security Domain',
+    tagline: 'Recon DNS & subdomain',
+    about: 'Recon DNS & daftar subdomain sebuah domain. Contoh: recon example.com.',
+    commands: [
+      { words: ['recon'], usage: 'recon <domain>', example: 'recon example.com',
+        desc: 'Recon DNS sebuah domain', params: { domain: 'rest' }, path: '/api/tools/domain-recon', label: 'Domain Recon' },
+      { words: ['subdomain'], usage: 'subdomain <domain>', example: 'subdomain example.com',
+        desc: 'Daftar subdomain', params: { domain: 'rest' }, path: '/api/tools/subdomains', label: 'Subdomain' },
+    ],
+  },
+  {
+    id: 'bot-npm', email: 'npmbot@bot.whatsap-indo', name: 'Cari NPM',
+    tagline: 'Info paket npm',
+    about: 'Info paket npm: versi, lisensi & deskripsi. Contoh: npm express.',
+    commands: [
+      { words: ['npm'], usage: 'npm <paket>', example: 'npm express',
+        desc: 'Info paket npm', params: { query: 'rest' }, path: '/api/tools/npmjs', label: 'Paket NPM' },
+    ],
+  },
+];
+
+const GENERIC_BOTS = GENERIC_SPECS.map(makeBotFromSpec);
+for (const bot of GENERIC_BOTS) {
+  BOTS.push(bot);
+  byId.set(bot.id, bot);
+  DEFAULT_NAMES.add(bot.name);
 }
 
 module.exports = {

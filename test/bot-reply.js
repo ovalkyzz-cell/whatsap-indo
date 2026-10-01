@@ -35,6 +35,17 @@ const fakeResponses = {
   '/api/tempmail/domains': { status: 'success', data: { domains: ['bhap.me', 'xelio.sbs'] } },
   '/api/tempmail/inbox': { status: 'success', data: { email: 'uji123@bhap.me', total_messages: 1,
     messages: [{ from: 'no-reply@x.com', subject: 'Kode OTP kamu', date: 'just now', link: 'l1' }], otp: '493821', verification_link: null, body: null } },
+  // bot generik (30 bot) — dipetakan langsung ke endpoint api-mazval
+  '/api/info/cuaca': { success: true, endpoint: '/api/info/cuaca',
+    data: { kota: 'Jakarta', suhu_c: '27', kelembaban: 73, deskripsi: 'Cerah' } },
+  '/api/tools/currency': { status: true, result: { from: 'USD', to: 'IDR', amount: 100, rate: 16000, result: 1600000, date: '2026-10-01' } },
+  '/api/info/jarakkota': { status: true, result: {
+    dari: { kota: 'Jakarta', latitude: -6.17 }, ke: { kota: 'Bandung', latitude: -6.92 },
+    jarak_km: 119.63, metode: 'Haversine' } },
+  '/api/info/provinsi': { success: true, data: { total: 2, provinsi: [{ kode: '1', nama: 'Bali' }, { kode: '2', nama: 'Jawa Barat' }] } },
+  '/api/image/brat': { status: true, result: { url: 'https://api.brattxt.xyz/?text=halo%20guys', text: 'halo guys' } },
+  '/api/tools/ssweb': { status: true, result: { url: 'https://image.thum.io/get/width/1200/crop/800/https://example.com', target: 'https://example.com' } },
+  '/api/tools/cek-nomor': { status: false, message: 'Nomor tidak valid' },
 };
 global.__calls = [];
 global.fetch = async (url) => {
@@ -149,6 +160,56 @@ const bots = require(path);
   const ds = await bots.reply({ id: 'bot-ai' }, 'deepseek buat variabel');
   ok(ds.includes('```js\nconst a = 1;\n```') && ds.includes('Balas "menu" untuk memilih model lain.'),
     'AI: blok kode tak seimbang ditutup sebelum footer');
+
+  // ---- bot generik: total 30 bot ----
+  ok(bots.BOTS.length === 30, `total bot terdaftar ${bots.BOTS.length} (harus 30)`);
+
+  const gm = await bots.reply({ id: 'bot-cuaca' }, 'menu');
+  ok(gm.includes('CUACA') && gm.includes('cuaca <kota>') && gm.includes('Contoh:'),
+    'Bot generik: menu rapi (nama, perintah & contoh)');
+
+  const gUnknown = await bots.reply({ id: 'bot-cuaca' }, 'halo');
+  ok(/Perintah tidak dikenal/.test(gUnknown) && gUnknown.includes('cuaca <kota>'),
+    'Bot generik: perintah tak dikenal ditolak lengkap dengan daftar perintah');
+
+  const gc = await bots.reply({ id: 'bot-cuaca' }, 'cuaca Jakarta');
+  ok(gc && typeof gc === 'object' && lastCall().path === '/api/info/cuaca' && lastCall().params.kota === 'Jakarta',
+    'Bot generik: argumen dipetakan ke parameter API (kota)');
+  ok(gc.text.includes('✅ Cuaca') && gc.text.includes('Kota: Jakarta') && gc.text.includes('```json'),
+    'Bot generik: format baris ringkas + blok JSON rapi');
+
+  const kurs = await bots.reply({ id: 'bot-kurs' }, 'kurs USD ke IDR 100');
+  ok(lastCall().path === '/api/tools/currency' && lastCall().params.from === 'USD'
+    && lastCall().params.to === 'IDR' && lastCall().params.amount === '100',
+    'Bot generik: "kurs USD ke IDR 100" dipecah benar (kata "ke" dibuang)');
+
+  const panggilanSebelum = global.__calls.length;
+  const jarakKurang = await bots.reply({ id: 'bot-pos' }, 'jarak Jakarta');
+  ok(/jarak <dari> <ke>/.test(jarakKurang) && /Contoh: jarak Jakarta Bandung/.test(jarakKurang)
+    && global.__calls.length === panggilanSebelum,
+    'Bot generik: argumen kurang dibalas blok error tanpa memanggil API');
+
+  const jarak = await bots.reply({ id: 'bot-pos' }, 'jarak Jakarta Bandung');
+  ok(jarak.text.includes('Jarak') && jarak.text.includes('Dari kota: Jakarta') && jarak.text.includes('119.63'),
+    'Bot generik: objek bersarang (dari/ke) jadi baris "Kunci.sub: nilai"');
+
+  const prov = await bots.reply({ id: 'bot-pos' }, 'provinsi');
+  ok(prov.text.includes('Data (2)') && prov.text.includes('• Kode 1 · Nama Bali') && prov.text.includes('```json'),
+    'Bot generik: daftar data jadi bullet maks 5 + blok JSON');
+
+  const brat = await bots.reply({ id: 'bot-brat' }, 'brat halo guys');
+  ok(brat && typeof brat === 'object' && brat.media && brat.media.type === 'image'
+    && brat.media.url.includes('api.brattxt.xyz'),
+    'Bot generik: gambar Brat (host tanpa ekstensi) dikirim sebagai pesan gambar');
+
+  const ss = await bots.reply({ id: 'bot-ss' }, 'ss example.com');
+  ok(ss && typeof ss === 'object' && lastCall().params.url === 'https://example.com'
+    && ss.media && ss.media.url.includes('image.thum.io'),
+    'Bot generik: URL tanpa https:// dilengkapi + screenshot jadi media');
+
+  const nomorFail = await bots.reply({ id: 'bot-nomor' }, 'nomor 0812');
+  ok(typeof nomorFail === 'string' && /Nomor tidak valid/.test(nomorFail) && !/✅/.test(nomorFail),
+    'Bot generik: status:false API dipercikkan sebagai blok error rapi');
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

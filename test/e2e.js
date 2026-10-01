@@ -1044,6 +1044,85 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     body: { about: 'Generator NFToken Alight Motion. Ketik "menu".' },
   });
 
+  console.log('\n[27] Total 30 bot: seed, menu, media, rename & tanpa panggilan');
+
+  // socket uji bisa terputus di tengah run panjang (sesi baru / ping) — sambung ulang
+  let feedSock = botSock;
+  if (!botSock.connected) {
+    feedSock = io(BASE, { auth: { token: admToken } });
+    await new Promise((r) => feedSock.on('connect', r));
+  }
+  ok(feedSock.connected === true, 'socket admin uji terhubung saat [27]');
+  const cariBot = await admApi('/api/users/search?q=bot.whatsap-indo');
+  const daftarBot = (cariBot.data.users || []).filter((u) => u.isBot);
+  ok(daftarBot.length === 30, `terdeteksi 30 bot admin (dapat ${daftarBot.length})`);
+  ok(daftarBot.every((u) => u.verified === true), 'seluruh bot terverifikasi');
+
+  const chatByBot = {};
+  const gagalBuka = [];
+  for (const u of daftarBot) {
+    const buka = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: u.id } });
+    if (buka.status !== 201 || !buka.data.chat) gagalBuka.push(`${u.id}:${buka.status}`);
+    else chatByBot[u.id] = buka.data.chat.id;
+  }
+  ok(gagalBuka.length === 0,
+    `chat dengan semua 30 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
+  ok(!!chatByBot['bot-brat'] && !!chatByBot['bot-pos'], 'chat bot-brat & bot-pos siap dipakai uji balasan');
+
+  const menuWait = waitEvent(feedSock, 'message:new', 12000).catch(() => null);
+  const menuAck = await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-brat'], type: 'text', body: 'menu' });
+  ok(menuAck && menuAck.ok === true,
+    `pesan "menu" ke bot-brat diterima server${menuAck && menuAck.ok ? '' : ' — ' + (menuAck && menuAck.error)}`);
+  const menuGenerik = await menuWait;
+  ok(menuGenerik && menuGenerik.senderId === 'bot-brat'
+    && /GENERATOR GAMBAR/.test(menuGenerik.body)
+    && menuGenerik.body.includes('brat <teks>')
+    && menuGenerik.body.includes('smeme <teks>'),
+    `bot generik membalas menu profesional (dapat: ${menuGenerik ? menuGenerik.senderId : 'timeout'})`);
+
+  const bratWait = waitEvent(feedSock, 'message:new', 30000).catch(() => null);
+  const bratAck = await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-brat'], type: 'text', body: 'brat halo dari uji' });
+  ok(bratAck && bratAck.ok === true, 'perintah brat diterima server');
+  const bratMsg = await bratWait;
+  ok(bratMsg && bratMsg.senderId === 'bot-brat' && bratMsg.type === 'image'
+    && !!bratMsg.mediaUrl && /brattxt/.test(bratMsg.mediaUrl),
+    `bot Generator Gambar mengirim gambar langsung (dapat: ${bratMsg ? bratMsg.type : 'timeout'})`);
+
+  const provWait = waitEvent(feedSock, 'message:new', 25000).catch(() => null);
+  const provAck = await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-pos'], type: 'text', body: 'provinsi' });
+  ok(provAck && provAck.ok === true, 'perintah provinsi diterima server');
+  const provMsg = await provWait;
+  ok(provMsg && provMsg.senderId === 'bot-pos' && /✅ Provinsi/.test(provMsg.body)
+    && provMsg.body.includes('```json'),
+    `bot Kode Pos & Wilayah menjawab daftar provinsi dengan blok JSON (dapat: ${provMsg ? 'balasan' : 'timeout'})`);
+
+  const kurangArgWait = waitEvent(feedSock, 'message:new', 12000).catch(() => null);
+  const kurangAck = await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-pos'], type: 'text', body: 'jarak Jakarta' });
+  ok(kurangAck && kurangAck.ok === true, 'perintah jarak tanpa argumen diterima server');
+  const kurangArg = await kurangArgWait;
+  ok(kurangArg && /jarak <dari> <ke>/.test(kurangArg.body) && /Contoh/.test(kurangArg.body),
+    'perintah dengan argumen kurang dibalas blok error rapi');
+
+  const renameBiasa = await api('/api/admin/bots/bot-cuaca', {
+    method: 'PATCH',
+    token: tokBiasa,
+    body: { name: 'Hacked' },
+  });
+  ok(renameBiasa.status === 403, 'user biasa tidak bisa mengganti nama bot');
+
+  const renameBotBaru = await admApi('/api/admin/bots/bot-cuaca', { method: 'PATCH', body: { name: 'Cuaca Resmi' } });
+  ok(renameBotBaru.status === 200 && renameBotBaru.data.user.name === 'Cuaca Resmi',
+    'admin mengganti nama bot generik baru');
+  await admApi('/api/admin/bots/bot-cuaca', { method: 'PATCH', body: { name: 'Cuaca' } });
+
+  let callBotAck = null;
+  feedSock.emit('call:invite', { to: 'bot-ai', callId: `call-bot-${stamp}`, kind: 'audio' }, (r) => { callBotAck = r; });
+  await new Promise((r) => setTimeout(r, 500));
+  ok(callBotAck && callBotAck.ok === false && /Bot tidak dapat dipanggil/.test(callBotAck.error || ''),
+    `server menolak panggilan ke bot (dapat: ${callBotAck ? callBotAck.error : 'tanpa balasan'})`);
+  ok(jsText.includes('Bot tidak bisa dipanggil') && jsText.includes('botPeer'),
+    'frontend menyembunyikan tombol & menjaga startCall untuk bot');
+
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('TEST ERROR:', e); process.exit(1); });
