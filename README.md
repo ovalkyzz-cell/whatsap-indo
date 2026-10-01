@@ -14,11 +14,11 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
 | Kartu angka | Kode/token khusus (` ```angka `) tampil dengan **font angka profesional** (tabular, tracking lebar) + Copy |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
-| Preview unduh | Bot Downloader menampilkan **gambar / video langsung** di chat (thumbnail atau file `.mp4`) disertai tautan unduh |
+| Preview unduh | Bot Downloader **mengunduh file video ke server** lalu menampilkannya sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
-| Bot premium | **30 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 24 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM) |
+| Bot premium | **45 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 36 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
@@ -38,7 +38,7 @@ npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
 npm test           # test end-to-end (server harus berjalan)
-npm run test:bots  # unit test balasan 30 bot (API dimock, tanpa jaringan)
+npm run test:bots  # unit test balasan 45 bot (API dimock, tanpa jaringan)
 ```
 
 Variabel lingkungan opsional:
@@ -61,17 +61,19 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
-  bots.js      # 30 bot admin (6 inti + 24 generik) + perintah + API api-mazval
-  upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file
+  bots.js      # 45 bot admin (9 inti + 36 generik) + perintah + API api-mazval + resolver video
+  upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
+               # storeBuffer/storeRemoteFile — simpan hasil unduhan bot (fs / Vercel Blob)
 public/
   index.html   # shell SPA (auth, chat, drawer, modal panggilan)
   css/style.css
   js/app.js    # state, API client, renderer, socket, WebRTC
 test/
-  e2e.js       # 245 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # 254 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time, 30 bot (admin & premium) & edit nama bot
-  bot-reply.js # 37 assert unit test balasan 30 bot (API dimock, tanpa jaringan)
+               # blokir akun, monitor admin real-time, 45 bot (admin & premium), edit nama bot
+               # & 15 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan)
+  bot-reply.js # 47 assert unit test balasan 45 bot (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -176,12 +178,12 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
-### Bot (6 bot inti + 24 bot generik = 30 bot) — khusus admin & premium
+### Bot (9 bot inti + 36 bot generik = 45 bot) — khusus admin & premium
 
-Tiga puluh bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
+Empat puluh lima bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
 `verified = 1`, status `active` — tampil di pencarian **hanya untuk admin dan pengguna
 premium** (`premium_until` masih aktif; diberikan lewat `POST /api/admin/premium`) dan
-selalu membawa **badge centang biru**. Enam bot inti ditulis manual; 24 bot generik
+selalu membawa **badge centang biru**. Sembilan bot inti ditulis manual; 36 bot generik
 digenerate
 dari spesifikasi `GENERIC_SPECS` — menu, pemetaan argumen, format baris + blok JSON, dan
 preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar tersedia.
@@ -191,9 +193,12 @@ preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar ter
 | **Verif AM Prem** | `bot-verif-am` | `send <email>` → kirim tautan verifikasi Alight Motion Premium; `cek <email> <token>` → cek status verifikasi; `menu` |
 | **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → **respon JSON rapi** + tombol Copy; `menu` |
 | **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT, awalan dibuang dari isi); kode keluar sebagai **blok kode ala VS Code + Copy** (fence dijaga selalu seimbang); perintah tanpa pertanyaan ditolak; `menu` |
-| **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, dll — `max.com` tidak salah jadi Twitter) → **preview gambar/video langsung di chat** + judul, kreator & tautan unduh; URL tanpa `https://` diterima; bila platform tak memberi tautan, bot memberi panduan cobalt; `menu` |
+| **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, dll — `max.com` tidak salah jadi Twitter) → **file video diunduh ke server lalu tampil sebagai pesan video** (kapsi *Hasil unduhan: X MB — siap ditonton & diunduh*) + judul, kreator & tautan unduh; resolver otomatis bila platform hanya memberi metadata: endpoint aio api-mazval → instance Piped (YouTube, di-probe Range dulu supaya benar-benar bisa diunduh); URL tanpa `https://` diterima; gagal resolver → thumbnail + panduan cobalt; `menu` |
 | **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
 | **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
+| **Screenshot Kode** | `bot-kodesnap` | `kode <teks>` → render kode jadi **gambar PNG tersimpan** (`/api/image/codesnap`); `menu` |
+| **Unduh Kode npm** | `bot-npm-zip` | `zip <paket> [versi]` → source code npm jadi **berkas .zip tersimpan** (`/api/tools/npm2zip`); `menu` |
+| **Katalog Model AI** | `bot-model-ai` | `daftar`, `cari <kata>`, `gratis` → katalog model mimo (`/api/mimo/models`); `menu` |
 | **Cuaca** | `bot-cuaca` | `cuaca <kota>` → suhu, kelembaban, angin, matahari (`/api/info/cuaca`) |
 | **Info Gempa** | `bot-gempa` | `gempa` → gempa terkini BMKG (`/api/info/gempa`) |
 | **Jadwal Sholat** | `bot-sholat` | `sholat <kota>`, `doa <kata>` (`/api/info/jadwal-sholat`, `/api/info/doa`) |
@@ -218,6 +223,18 @@ preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar ter
 | **Generator Gambar** | `bot-brat` | `brat <teks>`, `brathd <teks>`, `smeme <teks>` → **gambar langsung di chat** |
 | **Security Domain** | `bot-domain` | `recon <domain>`, `subdomain <domain>` (`/api/tools/domain-recon`, `/api/tools/subdomains`) |
 | **Cari NPM** | `bot-npm` | `npm <paket>` → versi, lisensi, deskripsi (`/api/tools/npmjs`) |
+| **OCR Gambar** | `bot-ocr` | `baca <url gambar>` → teks hasil OCR (`/api/tools/ocr`) |
+| **Suara MyInstants** | `bot-suara` | `suara <kata>`, `trending` → suara/botol meme (`/api/s/myinstants`) |
+| **Font Keren** | `bot-font` | `font <gaya>` → gaya font unik (`/api/s/8font`) |
+| **Cari Repo** | `bot-repo` | `repo <kata>` → repositori GitHub (`/api/s/gitagram`) |
+| **Pencarian Lahelu** | `bot-cari-lahelu` | `lahelu <kata>` (`/api/s/lahelu`) |
+| **Terjemah** | `bot-terjemah` | `terjemah <teks>` → en → id (`/api/tools/translate`) |
+| **Cek IP** | `bot-ip` | `ip <alamat>` → info geolokasi ISP (`/api/tools/ip-lookup`) |
+| **Stalk Twitter / X** | `bot-stalker-x` | `twitter <user>` → profil X (`/api/stalk/twitter`) |
+| **Stalk Channel** | `bot-channel` | `channel <user>` → channel YouTube (`/api/stalk/youtube`) |
+| **Cari Gambar** | `bot-gambar` | `gambar <kata>` → hasil gambar (`/api/s/bimg`) |
+| **Cari Pinterest** | `bot-pin` | `pin <kata>` (`/api/s/pinterest`) |
+| **Cari Game** | `bot-game` | `game <kata>` → game Android/PC (`/api/s/mcpedl`) |
 
 Setiap bot generik menjawab `menu` dengan kotak nama + daftar perintah + contoh; input
 tanpa perintah atau argumen kurang dibalas **blok error rapi** (`❌` + alasan + contoh);
@@ -249,6 +266,11 @@ Cara kerja:
    — kunci tidak pernah disimpan di kode maupun dikirim ke klien.
 3. Balasan disimpan sebagai pesan biasa dari akun bot: notifikasi push bila admin luring,
    badge terverifikasi, dan teks berformat profesional (header, langkah, kode token).
+4. **Hasil unduhan video/audio/berkas** (Downloader, npm zip) disimpan dulu ke penyimpanan
+   kita — `server/upload.js` `storeRemoteFile`/`storeBuffer` menaruh file ke `uploads/`
+   (lokal) atau **Vercel Blob** (produksi, `BLOB_READ_WRITE_TOKEN`) dengan validasi tipe
+   lewat magic bytes; pesan lalu memuat media `/uploads/…` + kapsi *Hasil unduhan: X MB*
+   sehingga file tetap bisa ditonton/diunduh meski tautan pihak ketiga kedaluwarsa.
 
 Pembatasan akses (gerbang `canUseBots` = **admin ATAU premium aktif**; menolak user biasa):
 

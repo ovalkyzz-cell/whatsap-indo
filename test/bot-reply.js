@@ -1,5 +1,5 @@
 'use strict';
-/* Unit test balasan keenam bot dengan API mock (tanpa jaringan).
+/* Unit test balasan bot inti, 3 bot kustom baru & 45 bot total dengan API mock (tanpa jaringan).
    Jalankan: npm run test:bots  */
 process.env.MAZVAL_API_KEY = 'test-key';
 const path = require('path').join(__dirname, '..', 'server', 'bots.js');
@@ -35,7 +35,7 @@ const fakeResponses = {
   '/api/tempmail/domains': { status: 'success', data: { domains: ['bhap.me', 'xelio.sbs'] } },
   '/api/tempmail/inbox': { status: 'success', data: { email: 'uji123@bhap.me', total_messages: 1,
     messages: [{ from: 'no-reply@x.com', subject: 'Kode OTP kamu', date: 'just now', link: 'l1' }], otp: '493821', verification_link: null, body: null } },
-  // bot generik (30 bot) — dipetakan langsung ke endpoint api-mazval
+  // bot generik (45 bot total) — dipetakan langsung ke endpoint api-mazval
   '/api/info/cuaca': { success: true, endpoint: '/api/info/cuaca',
     data: { kota: 'Jakarta', suhu_c: '27', kelembaban: 73, deskripsi: 'Cerah' } },
   '/api/tools/currency': { status: true, result: { from: 'USD', to: 'IDR', amount: 100, rate: 16000, result: 1600000, date: '2026-10-01' } },
@@ -46,14 +46,49 @@ const fakeResponses = {
   '/api/image/brat': { status: true, result: { url: 'https://api.brattxt.xyz/?text=halo%20guys', text: 'halo guys' } },
   '/api/tools/ssweb': { status: true, result: { url: 'https://image.thum.io/get/width/1200/crop/800/https://example.com', target: 'https://example.com' } },
   '/api/tools/cek-nomor': { status: false, message: 'Nomor tidak valid' },
+  // bot baru (15): katalog model, terjemah, IP lookup, OCR
+  '/api/mimo/models': { success: true, data: { total: 3, free: 2, premium: 1, providers: 2, models: [
+    { id: 'mimo-v2-flash', name: 'MiMo V2 Flash', provider: 'xiaomi', premium: false },
+    { id: 'mimo-v2-pro', name: 'MiMo V2 Pro', provider: 'xiaomi', premium: true },
+    { id: 'gemma-3', name: 'Gemma 3', provider: 'google', premium: false },
+  ] } },
+  '/api/tools/translate': { status: true, result: { translation: 'selamat pagi', source: 'en', target: 'id', match: 1 } },
+  '/api/tools/ip-lookup': { success: true, data: { ip: '1.1.1.1', country: 'Australia', isp: 'Cloudflare' } },
+  '/api/tools/ocr': { success: true, data: { url: 'https://placehold.co/600x200.png?text=Halo+Dunia', text: 'Halo Dunia', confidence: 0.98 } },
+  '/api/s/8font': { status: true, result: { fonts: [{ style: 'bold', text: '𝐥𝐨𝐯𝐞' }] } },
+};
+
+// endpoint biner (kode PNG codesnap & arsip zip npm2zip) menyiabkan buffer sungguhan
+const PNG_MAGIC = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fake-png-body')]);
+const ZIP_MAGIC = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('fake-zip-body')]);
+const binaryResponses = {
+  '/api/image/codesnap': { contentType: 'image/png', filename: 'snippet.png', bytes: PNG_MAGIC },
+  '/api/tools/npm2zip': { contentType: 'application/zip', filename: 'left-pad.zip', bytes: ZIP_MAGIC },
 };
 global.__calls = [];
 global.fetch = async (url) => {
   const u = new URL(url);
   global.__calls.push({ path: u.pathname, params: Object.fromEntries(u.searchParams) });
+  const binKey = Object.keys(binaryResponses).find((k) => u.pathname.endsWith(k));
+  if (binKey) {
+    const bin = binaryResponses[binKey];
+    return {
+      ok: true, status: 200,
+      headers: { get: (h) => (
+        h === 'content-type' ? bin.contentType
+          : h === 'content-disposition' ? `attachment; filename="${bin.filename}"` : null
+      ) },
+      arrayBuffer: async () => bin.bytes.buffer.slice(bin.bytes.byteOffset, bin.bytes.byteOffset + bin.bytes.byteLength),
+      json: async () => { throw new Error('bukan JSON'); },
+    };
+  }
   const key = Object.keys(fakeResponses).find((k) => u.pathname.endsWith(k));
   const body = key ? fakeResponses[key] : { success: false, error: 'endpoint tak dikenal: ' + u.pathname };
-  return { ok: true, status: 200, json: async () => body };
+  return {
+    ok: true, status: 200,
+    headers: { get: () => 'application/json' },
+    json: async () => body,
+  };
 };
 const bots = require(path);
 
@@ -161,8 +196,8 @@ const bots = require(path);
   ok(ds.includes('```js\nconst a = 1;\n```') && ds.includes('Balas "menu" untuk memilih model lain.'),
     'AI: blok kode tak seimbang ditutup sebelum footer');
 
-  // ---- bot generik: total 30 bot ----
-  ok(bots.BOTS.length === 30, `total bot terdaftar ${bots.BOTS.length} (harus 30)`);
+  // ---- bot generik: total 45 bot ----
+  ok(bots.BOTS.length === 45, `total bot terdaftar ${bots.BOTS.length} (harus 45)`);
 
   const gm = await bots.reply({ id: 'bot-cuaca' }, 'menu');
   ok(gm.includes('CUACA') && gm.includes('cuaca <kota>') && gm.includes('Contoh:'),
@@ -210,6 +245,59 @@ const bots = require(path);
   const nomorFail = await bots.reply({ id: 'bot-nomor' }, 'nomor 0812');
   ok(typeof nomorFail === 'string' && /Nomor tidak valid/.test(nomorFail) && !/✅/.test(nomorFail),
     'Bot generik: status:false API dipercikkan sebagai blok error rapi');
+
+  // ---- 15 bot baru: 3 kustom + 12 generik ----
+  const ks = await bots.reply({ id: 'bot-kodesnap' }, 'kode console.log(1)');
+  ok(ks && typeof ks === 'object' && ks.media && ks.media.type === 'image'
+    && ks.media.cached === true && /^\/uploads\//.test(ks.media.url) && /\.png/.test(ks.media.url)
+    && lastCall().path === '/api/image/codesnap',
+    'Bot baru: kodesnap merender kode jadi gambar tersimpan');
+
+  const ksErr = await bots.reply({ id: 'bot-kodesnap' }, 'halo');
+  ok(typeof ksErr === 'string' && /Perintah tidak dikenal/.test(ksErr),
+    'Bot baru: kodesnap menolak perintah asing');
+
+  const nz = await bots.reply({ id: 'bot-npm-zip' }, 'zip left-pad');
+  ok(nz && typeof nz === 'object' && nz.media && nz.media.type === 'file'
+    && /left-pad/.test(nz.media.name || '') && /\.zip/i.test(nz.media.name || '')
+    && nz.media.cached === true && /^\/uploads\//.test(nz.media.url)
+    && lastCall().path === '/api/tools/npm2zip' && lastCall().params.package === 'left-pad',
+    'Bot baru: npm zip mengunduh source pack jadi berkas tersimpan');
+
+  const callsSebelum = global.__calls.length;
+  const nzBad = await bots.reply({ id: 'bot-npm-zip' }, 'zip BAD!');
+  ok(typeof nzBad === 'string' && /tidak valid/.test(nzBad)
+    && global.__calls.length === callsSebelum,
+    'Bot baru: npm zip menolak nama paket tidak valid tanpa memanggil API');
+
+  const ml = await bots.reply({ id: 'bot-model-ai' }, 'daftar');
+  ok(typeof ml === 'string' && /Katalog Model AI/.test(ml) && /MiMo V2 Flash/.test(ml)
+    && lastCall().path === '/api/mimo/models',
+    'Bot baru: katalog model menampilkan daftar model');
+  const mlGratis = await bots.reply({ id: 'bot-model-ai' }, 'gratis');
+  ok(/Model gratis/.test(mlGratis) && /Gemma 3/.test(mlGratis) && !/MiMo V2 Pro/.test(mlGratis),
+    'Bot baru: filter gratis menyembunyikan model premium');
+
+  const tj = await bots.reply({ id: 'bot-terjemah' }, 'terjemah good morning');
+  const tjText = typeof tj === 'string' ? tj : tj && tj.text || '';
+  ok(/Terjemahan/.test(tjText) && /selamat pagi/.test(tjText)
+    && lastCall().path === '/api/tools/translate' && lastCall().params.text === 'good morning',
+    'Bot baru: terjemah memetakan argumen ke endpoint translate');
+
+  const ipb = await bots.reply({ id: 'bot-ip' }, 'ip 1.1.1.1');
+  const ipText = typeof ipb === 'string' ? ipb : ipb && ipb.text || '';
+  ok(/Info IP/.test(ipText) && lastCall().path === '/api/tools/ip-lookup'
+    && lastCall().params.ip === '1.1.1.1',
+    'Bot baru: cek IP mengirim argumen ke ip-lookup');
+
+  const ocr = await bots.reply({ id: 'bot-ocr' }, 'baca https://placehold.co/600x200.png?text=Halo');
+  ok(ocr && typeof ocr === 'object' && ocr.media && ocr.media.type === 'image'
+    && lastCall().path === '/api/tools/ocr' && lastCall().params.url.startsWith('https://placehold.co/'),
+    'Bot baru: OCR membaca gambar & membalas media');
+
+  const fontMenu = await bots.reply({ id: 'bot-font' }, 'menu');
+  ok(/FONT KEREN/i.test(fontMenu) && /font <gaya>/.test(fontMenu),
+    'Bot baru: menu Font Keren rapi');
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

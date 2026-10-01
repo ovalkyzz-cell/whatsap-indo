@@ -988,6 +988,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const downMedia = await downMediaWait;
   ok(downMedia && (downMedia.type === 'image' || downMedia.type === 'video') && !!downMedia.mediaUrl,
     'bot Downloader menampilkan video/gambar langsung di chat');
+  const downTersimpan = !!(downMedia && downMedia.type === 'video' && /^\/uploads\//.test(downMedia.mediaUrl || ''));
+  ok(!downTersimpan || /Hasil unduhan/.test(downMedia.body || ''),
+    'file video hasil unduhan tersimpan di server + kapsi "Hasil unduhan"');
   ok(downMedia && /Judul|Tautan unduh|Tautan sumber/.test(downMedia.body || ''),
     'bot Downloader tetap menyertakan judul & tautan');
 
@@ -1105,7 +1108,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     body: { about: 'Generator NFToken Alight Motion. Ketik "menu".' },
   });
 
-  console.log('\n[27] Total 30 bot: seed, menu, media, rename & tanpa panggilan');
+  console.log('\n[27] Total 45 bot: seed, menu, media, rename & tanpa panggilan');
 
   // socket uji bisa terputus di tengah run panjang (sesi baru / ping) — sambung ulang
   let feedSock = botSock;
@@ -1116,7 +1119,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(feedSock.connected === true, 'socket admin uji terhubung saat [27]');
   const cariBot = await admApi('/api/users/search?q=bot.whatsap-indo');
   const daftarBot = (cariBot.data.users || []).filter((u) => u.isBot);
-  ok(daftarBot.length === 30, `terdeteksi 30 bot admin (dapat ${daftarBot.length})`);
+  ok(daftarBot.length === 45, `terdeteksi 45 bot admin (dapat ${daftarBot.length})`);
   ok(daftarBot.every((u) => u.verified === true), 'seluruh bot terverifikasi');
 
   const chatByBot = {};
@@ -1127,7 +1130,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else chatByBot[u.id] = buka.data.chat.id;
   }
   ok(gagalBuka.length === 0,
-    `chat dengan semua 30 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
+    `chat dengan semua 45 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
   ok(!!chatByBot['bot-brat'] && !!chatByBot['bot-pos'], 'chat bot-brat & bot-pos siap dipakai uji balasan');
 
   const menuWait = waitEvent(feedSock, 'message:new', 12000).catch(() => null);
@@ -1183,6 +1186,54 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     `server menolak panggilan ke bot (dapat: ${callBotAck ? callBotAck.error : 'tanpa balasan'})`);
   ok(jsText.includes('Bot tidak bisa dipanggil') && jsText.includes('botPeer'),
     'frontend menyembunyikan tombol & menjaga startCall untuk bot');
+
+  console.log('\n[28] 15 bot baru: kodesnap, npm zip, katalog model & bot generik');
+
+  const ksWait = waitEvent(feedSock, 'message:new', 30000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-kodesnap'], type: 'text', body: 'kode console.log(1)' });
+  const ksMsg = await ksWait;
+  ok(ksMsg && ksMsg.senderId === 'bot-kodesnap' && ksMsg.type === 'image'
+    && /^\/uploads\//.test(ksMsg.mediaUrl || ''),
+    `bot Screenshot Kode mengirim gambar hasil render tersimpan (dapat: ${ksMsg ? ksMsg.type : 'timeout'})`);
+
+  const nzWait = waitEvent(feedSock, 'message:new', 60000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-npm-zip'], type: 'text', body: 'zip left-pad' });
+  const nzMsg = await nzWait;
+  ok(nzMsg && nzMsg.senderId === 'bot-npm-zip' && nzMsg.type === 'file'
+    && /^\/uploads\//.test(nzMsg.mediaUrl || '') && /\.zip/i.test(nzMsg.mediaUrl || ''),
+    `bot Unduh Kode npm mengirim berkas zip tersimpan (dapat: ${nzMsg ? nzMsg.type : 'timeout'})`);
+  ok(nzMsg && /siap diunduh/.test(nzMsg.body || ''),
+    'kapsi npm zip menjelaskan hasil unduhan');
+
+  const mlWait = waitEvent(feedSock, 'message:new', 15000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-model-ai'], type: 'text', body: 'daftar' });
+  const mlMsg = await mlWait;
+  ok(mlMsg && mlMsg.senderId === 'bot-model-ai' && /Katalog Model AI|Daftar model/.test(mlMsg.body || ''),
+    `bot Katalog Model AI menampilkan daftar model (dapat: ${mlMsg ? 'balasan' : 'timeout'})`);
+
+  const ocrWait = waitEvent(feedSock, 'message:new', 15000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-ocr'], type: 'text', body: 'menu' });
+  const ocrMenu = await ocrWait;
+  ok(ocrMenu && ocrMenu.senderId === 'bot-ocr' && /OCR/.test(ocrMenu.body || '') && /baca /.test(ocrMenu.body || ''),
+    'bot OCR Gambar membalas menu profesional');
+
+  const tjWait = waitEvent(feedSock, 'message:new', 25000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-terjemah'], type: 'text', body: 'terjemah good morning' });
+  const tjMsg = await tjWait;
+  ok(tjMsg && tjMsg.senderId === 'bot-terjemah' && /Terjemahan/.test(tjMsg.body || ''),
+    `bot Terjemah menerjemahkan kalimat (dapat: ${tjMsg ? 'balasan' : 'timeout'})`);
+
+  const ipWait = waitEvent(feedSock, 'message:new', 15000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-ip'], type: 'text', body: 'ip 1.1.1.1' });
+  const ipMsg = await ipWait;
+  ok(ipMsg && ipMsg.senderId === 'bot-ip' && /Info IP/.test(ipMsg.body || ''),
+    `bot Cek IP menjawab info IP (dapat: ${ipMsg ? 'balasan' : 'timeout'})`);
+
+  const tw2Wait = waitEvent(feedSock, 'message:new', 25000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-stalker-x'], type: 'text', body: 'twitter nasa' });
+  const tw2Msg = await tw2Wait;
+  ok(tw2Msg && tw2Msg.senderId === 'bot-stalker-x' && /Profil Twitter/.test(tw2Msg.body || ''),
+    `bot Stalk Twitter menjawab profil (dapat: ${tw2Msg ? 'balasan' : 'timeout'})`);
 
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);

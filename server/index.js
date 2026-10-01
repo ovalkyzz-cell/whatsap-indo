@@ -15,7 +15,7 @@ const bus = require('./bus');
 const settings = require('./settings');
 const bots = require('./bots');
 const webpush = require('web-push');
-const { router: uploadRouter, UPLOAD_DIR } = require('./upload');
+const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile } = require('./upload');
 
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
@@ -300,7 +300,7 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   const like = `%${q}%`;
   const rows = await db.all(
     `SELECT * FROM users WHERE id <> ? AND (LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))
-     ORDER BY LOWER(name) LIMIT 30`,
+     ORDER BY LOWER(name) LIMIT 60`,
     req.user.id,
     like,
     like
@@ -1540,19 +1540,48 @@ async function markBotReceipt(messageId, botId, chatId, senderId) {
 async function deliverBotMessage(bot, chatId, text, targets, media) {
   const id = crypto.randomUUID();
   const now = Date.now();
-  const hasMedia = !!(media && media.url && /^https?:\/\//i.test(String(media.url)));
-  const type = !hasMedia ? 'text' : (media.type === 'video' ? 'video' : 'image');
+  let mediaUrl = media && media.url ? String(media.url) : '';
+  let mediaSize = media && media.size ? Number(media.size) || null : null;
+  let mediaName = media && media.name ? String(media.name).slice(0, 200) : '';
+  const allowed = ['image', 'video', 'audio', 'file'];
+  let type = media && allowed.includes(media.type) ? media.type : (mediaUrl ? 'image' : null);
+  let caption = String(text || '');
+  const isRemote = /^https?:\/\//i.test(mediaUrl);
+  const isStored = /^\/uploads\//.test(mediaUrl);
+  const hasMedia = !!mediaUrl && (isRemote || isStored);
+
+  // hasil unduhan video/audio/berkas disimpan dulu ke penyimpanan kita:
+  // tautan pihak ketiga cepat kedaluwarsa, file tersimpan tetap bisa
+  // ditonton/diunduh kapan saja. `media.cached` = sudah tersimpan oleh bot.
+  if (hasMedia && isRemote && !media.cached && ['video', 'audio', 'file'].includes(type)) {
+    const saved = await storeRemoteFile(mediaUrl, type, { name: mediaName });
+    if (saved) {
+      mediaUrl = saved.url;
+      mediaSize = saved.size;
+      if (!mediaName) mediaName = saved.name.slice(0, 200);
+      const mb = (saved.size / (1024 * 1024)).toFixed(1);
+      const tail = type === 'video'
+        ? 'siap ditonton & diunduh'
+        : type === 'audio'
+          ? 'siap didengarkan'
+          : 'siap diunduh';
+      caption = `${caption ? caption + '\n\n' : ''}📥 Hasil unduhan: ${mb} MB — ${tail}.`.slice(0, 8000);
+    }
+  }
+
+  if (!hasMedia) type = null;
+  const msgType = type || 'text';
   await db.run(
     `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     chatId,
     bot.id,
-    type,
-    String(text || '').slice(0, 8000),
-    hasMedia ? String(media.url).slice(0, 500) : null,
-    hasMedia ? String(media.name || '').slice(0, 200) || null : null,
-    null,
+    msgType,
+    caption.slice(0, 8000),
+    hasMedia ? mediaUrl.slice(0, 500) : null,
+    hasMedia ? mediaName || null : null,
+    hasMedia ? mediaSize : null,
     hasMedia ? String(media.mime || '').slice(0, 100) || null : null,
     now
   );
@@ -1580,7 +1609,7 @@ async function deliverBotMessage(bot, chatId, text, targets, media) {
     await Promise.race([
       pushNotify(offline, {
         title: bot.name,
-        body: (String(text || '').trim() || (hasMedia ? String(media.name || 'Mengirim media') : 'Pesan')).slice(0, 140),
+        body: (String(caption || '').trim() || (hasMedia ? String(mediaName || 'Mengirim media') : 'Pesan')).slice(0, 140),
         chatId,
         messageId: id,
         icon: bot.avatar || null,

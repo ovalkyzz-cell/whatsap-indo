@@ -1,17 +1,21 @@
 'use strict';
 
-/* Enam bot internal khusus admin:
+/* Sembilan bot internal khusus admin:
    - Verif AM Prem : verifikasi & kirim tautan Alight Motion Premium
-   - Generate NFToken : generator NFToken (respon JSON + tombol Copy)
+   - Generate NFToken : generator NFToken Alight Motion
    - AI : ChatGPT, Gemini, Deepseek, Claude (kode muncul sebagai blok kode)
    - Downloader : unduh video TikTok/IG/YouTube/FB/X & lainnya
    - Email Generator : email sementara, inbox, OTP & baca pesan
    - Tools : terjemah, cuaca, IP, QR, npm
+   - Screenshot Kode : render kode jadi gambar PNG (codesnap)
+   - Unduh Kode npm : unduh source code paket npm sebagai zip
+   - Katalog Model AI : daftar model AI (mimo/models)
    Semua memanggil API api-mazval (base + key lewat env, tidak disimpan di kode). */
 
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
+const { storeBuffer } = require('./upload');
 
 const BASE = String(process.env.MAZVAL_API_BASE || 'https://api-mazval.zone.id').replace(/\/+$/, '');
 const API_KEY = String(process.env.MAZVAL_API_KEY || '');
@@ -66,6 +70,27 @@ const BOTS = [
     name: 'Tools',
     about: 'Terjemah · Cuaca · IP · QR · npm. Ketik "menu".',
     reply: toolsReply,
+  },
+  {
+    id: 'bot-kodesnap',
+    email: 'kodesnap@bot.whatsap-indo',
+    name: 'Screenshot Kode',
+    about: 'Render potongan kode jadi gambar ala VS Code. Contoh: kode console.log("halo").',
+    reply: kodesnapReply,
+  },
+  {
+    id: 'bot-npm-zip',
+    email: 'npmzip@bot.whatsap-indo',
+    name: 'Unduh Kode npm',
+    about: 'Unduh source code paket npm sebagai file zip. Contoh: zip express.',
+    reply: npmZipReply,
+  },
+  {
+    id: 'bot-model-ai',
+    email: 'modelai@bot.whatsap-indo',
+    name: 'Katalog Model AI',
+    about: 'Daftar model AI: gratis, berbayar & provider. Contoh: daftar.',
+    reply: modelListReply,
   },
 ];
 
@@ -161,6 +186,44 @@ async function callApi(path, params, opts) {
     throw new Error((body && (body.error || body.message)) || `Permintaan gagal (HTTP ${res.status}).`);
   }
   return body || {};
+}
+
+// versi biner callApi: untuk endpoint yang mengembalikan file langsung
+// (kode PNG codesnap, arsip zip npm2zip) alih-alih JSON
+async function callApiBuffer(path, params, opts) {
+  if (!API_KEY) throw new Error('Konfigurasi API bot belum lengkap (MAZVAL_API_KEY belum diatur).');
+  const url = new URL(BASE + path);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+  }
+  url.searchParams.set('apikey', API_KEY);
+
+  let res;
+  try {
+    res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Accept: '*/*', 'User-Agent': 'WhatsapIndo-Bot/1.0' },
+      signal: AbortSignal.timeout((opts && opts.timeout) || API_TIMEOUT),
+    });
+  } catch (e) {
+    throw new Error('Layanan api-mazval tidak dapat dihubungi. Coba lagi sebentar lagi.');
+  }
+
+  const ct = String(res.headers.get('content-type') || '');
+  if (ct.includes('json')) {
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    if (body && body.success === false) throw new Error(body.error || 'Permintaan ditolak API.');
+    if (!res.ok) throw new Error((body && (body.error || body.message)) || `Permintaan gagal (HTTP ${res.status}).`);
+  } else if (!res.ok) {
+    throw new Error(`Permintaan gagal (HTTP ${res.status}).`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!buffer.length) throw new Error('Layanan tidak mengembalikan file.');
+  const cd = String(res.headers.get('content-disposition') || '');
+  const filename = (cd.match(/filename="?([^";]+)"?/i) || [])[1] || '';
+  return { buffer, contentType: ct, filename };
 }
 
 function asObject(data) {
@@ -701,6 +764,93 @@ function pickMedia(sources, links, title) {
   return null;
 }
 
+// ---- resolver file video langsung ----
+// Sebagian platform hanya mengembalikan metadata + tautan cobalt.tools
+// (bukan file). Supaya hasil unduhan benar-benar tampil di chat dan bisa
+// disimpan, coba dua jalur: endpoint aio api-mazval, lalu instance Piped
+// untuk YouTube (mp4 muxed: audio + video dalam satu file).
+function linksFromBody(body) {
+  const data = body && body.data !== undefined ? body.data : body;
+  const res = data && typeof data === 'object' && data.result && typeof data.result === 'object'
+    ? data.result
+    : (data && typeof data === 'object' ? data : {});
+  const links = [];
+  if (typeof data === 'object' && typeof data.result === 'string' && /^https?:\/\//i.test(data.result)) {
+    links.push(data.result.trim());
+  }
+  [res.download, res.media, res.links, res.formats]
+    .filter((x) => x && typeof x === 'object')
+    .forEach((x) => downloadLinks(x, links, 0));
+  const all = [...new Set(links)]
+    .filter((l) => isSafeMediaUrl(l))
+    .filter((l) => !/^(https?:\/\/)?(www\.)?(cobalt\.tools|api\.qrcode)/i.test(l) || /cobalt\.tools\/api/i.test(l));
+  return { data, res, all };
+}
+
+function ytIdFrom(u) {
+  try {
+    const x = new URL(u);
+    const host = x.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return x.pathname.split('/')[1] || null;
+    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+      const v = x.searchParams.get('v');
+      if (v) return v;
+      const m = x.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{6,})/);
+      if (m) return m[1];
+    }
+  } catch { /* bukan URL YouTube */ }
+  return null;
+}
+
+const PIPED_INSTANCES = [
+  'https://api.piped.private.coffee',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.leptons.xyz',
+];
+
+// probe ringan (Range 1KB) untuk memastikan tautan benar-benar bisa diunduh
+// dan tipenya bukan halaman HTML/JSON; sebagian CDN menolak tanpa kredensial.
+async function videoUrlPlayable(url) {
+  try {
+    const res = await fetch(url, {
+      headers: { Range: 'bytes=0-1023', 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: 'video/*,*/*' },
+      signal: AbortSignal.timeout(8000),
+      redirect: 'follow',
+    });
+    const ct = String(res.headers.get('content-type') || '');
+    const ok = (res.status === 200 || res.status === 206) && !/text\/html|application\/json|text\/plain/i.test(ct);
+    if (res.body && typeof res.body.cancel === 'function') { try { await res.body.cancel(); } catch { /* abaikan */ } }
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveYouTubeVideo(id) {
+  const deadline = Date.now() + 30000; // batas total supaya balasan bot tidak terlalu lama
+  for (const base of PIPED_INSTANCES) {
+    if (Date.now() > deadline) break;
+    try {
+      const res = await fetch(`${base}/streams/${encodeURIComponent(id)}`, {
+        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const mux = (Array.isArray(data.videoStreams) ? data.videoStreams : [])
+        .filter((s) => s && typeof s.url === 'string' && !s.videoOnly && /mp4/i.test(String(s.mimeType || '')) && /^https?:\/\/[^\s<>"']{8,4000}$/i.test(s.url.trim()))
+        .sort((a, b) => (Number(b.height) || 0) - (Number(a.height) || 0));
+      for (const s of mux.slice(0, 5)) {
+        if (Date.now() > deadline) break;
+        if (await videoUrlPlayable(String(s.url).trim())) {
+          return { url: String(s.url).trim(), quality: s.quality || '' };
+        }
+      }
+    } catch { /* instance ini sedang mati, coba berikutnya */ }
+  }
+  return null;
+}
+
 async function downReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
@@ -734,7 +884,6 @@ async function downReply(raw) {
   const title = res.title || res.name || res.caption || res.description || '';
   const author = res.author || res.author_name || res.uploader || res.owner || res.username || res.channel || '';
   const source = res.url || res.link || url;
-  const note = res.download && res.download.note ? String(res.download.note) : '';
 
   // kumpulkan tautan unduh dari struktur respons yang umum dipakai api-mazval
   const links = [];
@@ -744,14 +893,54 @@ async function downReply(raw) {
   [res.download, res.media, res.links, res.formats]
     .filter((x) => x && typeof x === 'object')
     .forEach((x) => downloadLinks(x, links, 0));
-  const all = [...new Set(links)]
-    .filter((l) => isSafeMediaUrl(l))
+
+  let media = pickMedia([res, typeof data === 'object' ? data : null, body], links, title);
+  const extraLinks = [];
+
+  // jalur 1: platform hanya memberi metadata/cobalt -> coba endpoint aio api-mazval
+  if ((!media || media.type !== 'video') && platform && platform.path !== '/api/download/aio') {
+    console.log(`[down] fallback aio ${url}`);
+    try {
+      const fbBody = await callApi('/api/download/aio', { url }, { timeout: 25000 });
+      if (fbBody && fbBody.success !== false && fbBody.status !== false) {
+        const fb = linksFromBody(fbBody);
+        const fbMedia = pickMedia([fb.res, typeof fb.data === 'object' ? fb.data : null, fbBody], fb.all, fb.res.title || fb.res.name || title);
+        extraLinks.push(...fb.all);
+        if (fbMedia && fbMedia.type === 'video') media = fbMedia;
+      }
+    } catch { /* upstream aio sedang tidak tersedia, lanjut */ }
+  }
+
+  // jalur 2: YouTube -> instance Piped menyediakan file mp4 muxed (audio+video)
+  if (!media || media.type !== 'video') {
+    const yt = ytIdFrom(url);
+    if (yt) {
+      console.log(`[down] resolver piped yt=${yt}`);
+      const resolved = await resolveYouTubeVideo(yt);
+      console.log(`[down] piped result=${resolved ? resolved.url : 'null'}`);
+      if (resolved) {
+        const base = (title || 'youtube').replace(/[^\w.\- ]+/g, '').trim().slice(0, 70) || 'video';
+        media = { type: 'video', url: resolved.url, name: `${base}.mp4`, mime: 'video/mp4' };
+        extraLinks.push(resolved.url);
+      }
+    }
+  }
+
+  // batas 4000 karakter: URL video googlevideo/piped biasanya panjang (>1000)
+  const all = [...new Set([...links, ...extraLinks])]
+    .filter((l) => /^https?:\/\/[^\s<>"']{8,4000}$/i.test(String(l || '')))
     .filter((l) => !/^(https?:\/\/)?(www\.)?(cobalt\.tools|api\.qrcode)/i.test(l) || /cobalt\.tools\/api/i.test(l));
 
-  const media = pickMedia([res, typeof data === 'object' ? data : null, body], all, title);
   // tautan sumber tak perlu diulang di daftar unduh, kecuali memang file media langsung
   const DIRECT_FILE = /\.(mp4|mp3|m4a|webm|mkv|mov|png|jpe?g|webp)(\?|#|$)/i;
-  const dl = all.filter((l) => l !== source || DIRECT_FILE.test(l));
+  const haveVideo = !!(media && media.type === 'video');
+  const dl = all
+    .filter((l) => l !== source || DIRECT_FILE.test(l))
+    .filter((l) => (haveVideo ? !/cobalt\.tools\/api/i.test(l) : true));
+
+  const note = res.download && res.download.note && !haveVideo
+    ? String(res.download.note)
+    : '';
 
   const label = platform ? platform.label : 'Media';
   const hasInfo = !!(title || dl.length || media);
@@ -770,11 +959,13 @@ async function downReply(raw) {
 
   if (dl.length) {
     out.push('Tautan unduh:');
-    dl.slice(0, 6).forEach((l) => {
+    const hasLong = dl.some((l) => l.length > 250);
+    dl.filter((l) => l.length <= 250).slice(0, 6).forEach((l) => {
       const low = l.toLowerCase();
       const keyIcon = Object.keys(DL_ICON).find((k) => low.includes(`format=${k}`) || low.includes(`.${k}`));
       out.push(`${DL_ICON[keyIcon] || '🔗'} ${l}`);
     });
+    if (hasLong) out.push('📎 File video langsung ditampilkan di atas pesan ini (tersimpan permanen di server).');
     out.push('');
   } else {
     out.push(
@@ -1186,6 +1377,206 @@ async function toolsReply(raw) {
   return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}".`);
 }
 
+/* ---------- Bot 7: Screenshot Kode (PNG biner codesnap) ---------- */
+
+const KODESNAP_MENU = [
+  '╭─────────────────────────────',
+  '│ SCREENSHOT KODE',
+  '│ Render kode jadi gambar ala VS Code',
+  '╰─────────────────────────────',
+  '',
+  'Perintah yang tersedia:',
+  '',
+  '1. kode <teks>',
+  '   Render kode jadi gambar (maks 600 karakter).',
+  '',
+  'Contoh:',
+  '  kode console.log("halo dunia")',
+  '  kode const jumlah = 1 + 2;',
+  '',
+  'Balas "menu" kapan saja untuk membuka daftar perintah.',
+].join('\n');
+
+async function kodesnapReply(raw) {
+  const text = String(raw || '').trim();
+  const cmd = firstWord(text);
+  const arg = rest(text);
+
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return KODESNAP_MENU;
+  if (!['kode', 'kodesnap', 'snapshot', 'code'].includes(cmd)) {
+    return errBlock('Perintah tidak dikenal', 'Gunakan: kode <teks>. Contoh: kode console.log("halo")');
+  }
+  if (!arg) return errBlock('Kode belum diisi', 'Gunakan: kode console.log("halo dunia")');
+
+  let out;
+  try {
+    out = await callApiBuffer('/api/image/codesnap', { text: arg.slice(0, 600) }, { timeout: 30000 });
+  } catch (e) {
+    return errBlock('Render kode gagal', e.message);
+  }
+  const stored = await storeBuffer(out.buffer, 'image', 'kodesnap.png');
+  if (!stored) return errBlock('Render kode gagal', 'Gambar hasil render gagal disimpan.');
+
+  return {
+    text: [
+      '✅ Kode berhasil dirender jadi gambar.',
+      '',
+      `Panjang kode: ${arg.length} karakter`,
+      'Klik gambarnya untuk menyimpan, atau balas "menu" untuk perintah lain.',
+    ].join('\n'),
+    media: { type: 'image', url: stored.url, name: stored.name, mime: 'image/png', size: stored.size, cached: true },
+  };
+}
+
+/* ---------- Bot 8: Unduh Kode npm (zip biner npm2zip) ---------- */
+
+const NPMZIP_MENU = [
+  '╭─────────────────────────────',
+  '│ UNDUH KODE NPM',
+  '│ Source code paket npm (.zip)',
+  '╰─────────────────────────────',
+  '',
+  'Perintah yang tersedia:',
+  '',
+  '1. zip <paket> [versi]',
+  '   Unduh kode sumber paket npm sebagai zip.',
+  '',
+  'Contoh:',
+  '  zip express',
+  '  zip left-pad 1.3.0',
+  '  zip @types/node',
+  '',
+  'Balas "menu" kapan saja untuk membuka daftar perintah.',
+].join('\n');
+
+async function npmZipReply(raw) {
+  const text = String(raw || '').trim();
+  const cmd = firstWord(text);
+  const arg = rest(text);
+
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return NPMZIP_MENU;
+  if (!['zip', 'unduh', 'source', 'kodezip'].includes(cmd)) {
+    return errBlock('Perintah tidak dikenal', 'Gunakan: zip <paket>. Contoh: zip express');
+  }
+
+  const tokens = arg.split(/\s+/).filter(Boolean);
+  const pkg = tokens[0] || '';
+  const ver = tokens[1] || '';
+  if (!pkg) return errBlock('Nama paket belum diisi', 'Gunakan: zip express');
+  if (!/^(@[a-z0-9._~-]+\/)?[a-z0-9._~-]+$/i.test(pkg)) {
+    return errBlock('Nama paket tidak valid', 'Contoh: zip express, zip left-pad 1.3.0, atau zip @types/node');
+  }
+
+  let out;
+  try {
+    out = await callApiBuffer(
+      '/api/tools/npm2zip',
+      ver ? { package: pkg, version: ver } : { package: pkg },
+      { timeout: 60000 }
+    );
+  } catch (e) {
+    return errBlock('Unduhan kode gagal', e.message);
+  }
+
+  const stored = await storeBuffer(out.buffer, 'file', out.filename || `${pkg}.zip`);
+  if (!stored) return errBlock('Unduhan kode gagal', 'File zip gagal disimpan.');
+  const mb = (stored.size / (1024 * 1024)).toFixed(1);
+
+  return {
+    text: [
+      `✅ Kode sumber ${pkg}${ver ? `@${ver}` : ''} siap diunduh.`,
+      '',
+      `File   : ${stored.name}`,
+      `Ukuran : ${mb} MB`,
+      '',
+      'Klik file untuk mengunduh, atau balas "menu" untuk perintah lain.',
+    ].join('\n'),
+    media: { type: 'file', url: stored.url, name: stored.name, mime: 'application/zip', size: stored.size, cached: true },
+  };
+}
+
+/* ---------- Bot 9: Katalog Model AI (mimo/models) ---------- */
+
+const MODEL_MENU = [
+  '╭─────────────────────────────',
+  '│ KATALOG MODEL AI',
+  '│ Daftar model mimo & providernya',
+  '╰─────────────────────────────',
+  '',
+  'Perintah yang tersedia:',
+  '',
+  '1. daftar',
+  '   Ringkasan katalog + model teratas.',
+  '',
+  '2. cari <kata>',
+  '   Cari model berdasarkan nama/provider.',
+  '',
+  '3. gratis',
+  '   Hanya model yang gratis dipakai.',
+  '',
+  'Contoh:',
+  '  daftar',
+  '  cari xiaomi',
+  '  gratis',
+  '',
+  'Balas "menu" kapan saja untuk membuka daftar perintah.',
+].join('\n');
+
+async function modelListReply(raw) {
+  const text = String(raw || '').trim();
+  const cmd = firstWord(text).replace(/[?:!,.]+$/, '');
+  const arg = rest(text);
+
+  if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return MODEL_MENU;
+  if (!['daftar', 'list', 'model', 'cari', 'gratis', 'free'].includes(cmd)) {
+    return errBlock('Perintah tidak dikenal', 'Gunakan: daftar · cari <kata> · gratis');
+  }
+
+  let body;
+  try {
+    body = await callApi('/api/mimo/models', {}, { timeout: 20000 });
+  } catch (e) {
+    return errBlock('Katalog model tidak tersedia', e.message);
+  }
+  if (body && (body.success === false || body.status === 'error')) {
+    return errBlock('Katalog model tidak tersedia', body.error || body.message || 'Respons API tidak valid.');
+  }
+
+  const data = (body && body.data) || {};
+  const models = Array.isArray(data.models) ? data.models : [];
+  if (!models.length) return errBlock('Katalog model', 'Daftar model tidak tersedia saat ini.');
+
+  let list = models;
+  let heading = 'Daftar model';
+  if (cmd === 'cari') {
+    const q = arg.trim().toLowerCase();
+    if (!q) return errBlock('Kata kunci belum diisi', 'Gunakan: cari xiaomi');
+    list = models.filter((m) =>
+      [m.id, m.name, m.provider].some((v) => String(v || '').toLowerCase().includes(q))
+    );
+    if (!list.length) return errBlock('Model tidak ditemukan', `Tidak ada model yang cocok dengan "${arg.trim()}".`);
+    heading = `Hasil cari "${arg.trim()}"`;
+  } else if (cmd === 'gratis' || cmd === 'free') {
+    list = models.filter((m) => !m.premium);
+    heading = 'Model gratis';
+  }
+
+  const lines = [
+    '✅ Katalog Model AI',
+    '',
+    `Total   : ${data.total ?? models.length} model (${data.free ?? '-'} gratis, ${data.premium ?? '-'} berbayar)`,
+    `Provider: ${data.providers ?? '-'}`,
+    '',
+    `${heading} (${list.length}):`,
+  ];
+  for (const m of list.slice(0, 12)) {
+    lines.push(`• ${m.name || m.id || '-'} — ${m.provider || '-'}${m.premium ? ' (berbayar)' : ' (gratis)'}`);
+  }
+  if (list.length > 12) lines.push(`• … +${list.length - 12} lainnya`);
+  lines.push('', 'Perintah: daftar · cari <kata> · gratis', 'Balas "menu" bila butuh perintah lain.');
+  return lines.join('\n');
+}
+
 /* ---------- bot generik ----------
    Setiap spesifikasi memetakan perintah ke endpoint api-mazval yang benar-benar
    tersedia. Balasan otomatis: baris ringkas, daftar data (maks 5), blok JSON
@@ -1451,7 +1842,7 @@ async function reply(bot, text) {
   return def.reply(text);
 }
 
-/* ---------- 24 bot generik: total30 bot ----------
+/* ---------- 36 bot generik: total45 bot ----------
    Hanya endpoint api-mazval yang sudah teruji dipakai di sini (lihat tiap
    spesifikasi). Balasan, menu, dan format seluruhnya digenerate dari spesifikasi. */
 
@@ -1723,6 +2114,116 @@ const GENERIC_SPECS = [
     commands: [
       { words: ['npm'], usage: 'npm <paket>', example: 'npm express',
         desc: 'Info paket npm', params: { query: 'rest' }, path: '/api/tools/npmjs', label: 'Paket NPM' },
+    ],
+  },
+  {
+    id: 'bot-ocr', email: 'ocr@bot.whatsap-indo', name: 'OCR Gambar',
+    tagline: 'Ambil teks dari gambar',
+    about: 'Baca teks di dalam gambar lewat OCR. Contoh: baca https://i.imgur.com/foto.jpg.',
+    commands: [
+      { words: ['baca', 'ocr'], usage: 'baca <url gambar>', example: 'baca https://placehold.co/600x200.png?text=Halo',
+        desc: 'Baca teks dari gambar', params: { url: 'rest' }, path: '/api/tools/ocr', label: 'OCR' },
+    ],
+  },
+  {
+    id: 'bot-suara', email: 'suara@bot.whatsap-indo', name: 'Suara MyInstants',
+    tagline: 'Sound efek MyInstants',
+    about: 'Cari sound efek populer MyInstants. Contoh: suara tik.',
+    commands: [
+      { words: ['suara', 'sound'], usage: 'suara <kata>', example: 'suara tik',
+        desc: 'Cari sound efek', params: { q: 'rest' }, path: '/api/s/myinstants', label: 'Sound MyInstants' },
+      { words: ['trending', 'populer'], usage: 'trending', example: 'trending',
+        desc: 'Sound sedang naik daun', params: null, path: '/api/s/myinstants', label: 'Sound Trending' },
+    ],
+  },
+  {
+    id: 'bot-font', email: 'font@bot.whatsap-indo', name: 'Font Keren',
+    tagline: 'Kumpulan gaya font unik',
+    about: 'Cari gaya font untuk nickname, bio & caption. Contoh: font love.',
+    commands: [
+      { words: ['font', 'gaya'], usage: 'font <gaya>', example: 'font love',
+        desc: 'Cari gaya font', params: { q: 'rest' }, path: '/api/s/8font', label: 'Font' },
+    ],
+  },
+  {
+    id: 'bot-repo', email: 'repo@bot.whatsap-indo', name: 'Cari Repo',
+    tagline: 'Pencarian repository kode',
+    about: 'Cari repository kode lewat Gitagram. Contoh: repo express.',
+    commands: [
+      { words: ['repo', 'repository'], usage: 'repo <kata>', example: 'repo express',
+        desc: 'Cari repository', params: { search: 'rest' }, path: '/api/s/gitagram', label: 'Repository' },
+    ],
+  },
+  {
+    id: 'bot-cari-lahelu', email: 'carilahelu@bot.whatsap-indo', name: 'Pencarian Lahelu',
+    tagline: 'Cari konten di Lahelu',
+    about: 'Pencarian konten Lahelu. Contoh: lahelu meme.',
+    commands: [
+      { words: ['lahelu'], usage: 'lahelu <kata>', example: 'lahelu meme',
+        desc: 'Cari di Lahelu', params: { query: 'rest' }, path: '/api/s/lahelu', label: 'Lahelu' },
+    ],
+  },
+  {
+    id: 'bot-terjemah', email: 'terjemah@bot.whatsap-indo', name: 'Terjemah',
+    tagline: 'Inggris ke Indonesia',
+    about: 'Terjemahkan kalimat Inggris ke Indonesia. Contoh: terjemah good morning.',
+    commands: [
+      { words: ['terjemah', 'translate'], usage: 'terjemah <teks>', example: 'terjemah good morning',
+        desc: 'Terjemah en → id', params: { text: 'rest', from: 'en', id: 'id' }, path: '/api/tools/translate', label: 'Terjemahan' },
+    ],
+  },
+  {
+    id: 'bot-ip', email: 'ipcheck@bot.whatsap-indo', name: 'Cek IP',
+    tagline: 'Info IP & domain',
+    about: 'Info lokasi, ISP & ASN sebuah IP/domain. Contoh: ip 8.8.8.8.',
+    commands: [
+      { words: ['ip', 'geo'], usage: 'ip <ip/domain>', example: 'ip 8.8.8.8',
+        desc: 'Info alamat IP', params: { ip: 'rest' }, path: '/api/tools/ip-lookup', label: 'Info IP' },
+    ],
+  },
+  {
+    id: 'bot-stalker-x', email: 'stalkx@bot.whatsap-indo', name: 'Stalk Twitter / X',
+    tagline: 'Profil Twitter siapa saja',
+    about: 'Profil Twitter / X lengkap. Contoh: twitter elonmusk.',
+    commands: [
+      { words: ['twitter', 'x'], usage: 'twitter <user>', example: 'twitter elonmusk',
+        desc: 'Profil Twitter / X', params: { user: 'rest' }, path: '/api/stalk/twitter', label: 'Profil Twitter' },
+    ],
+  },
+  {
+    id: 'bot-channel', email: 'channel@bot.whatsap-indo', name: 'Stalk Channel',
+    tagline: 'Profil channel YouTube',
+    about: 'Statistik channel YouTube: subscriber, video & views. Contoh: channel MrBeast.',
+    commands: [
+      { words: ['channel'], usage: 'channel <user>', example: 'channel MrBeast',
+        desc: 'Profil channel YouTube', params: { user: 'rest' }, path: '/api/stalk/youtube', label: 'Channel YouTube' },
+    ],
+  },
+  {
+    id: 'bot-gambar', email: 'imgsearch@bot.whatsap-indo', name: 'Cari Gambar',
+    tagline: 'Pencarian gambar Bing',
+    about: 'Cari gambar lewat Bing Image. Contoh: gambar kucing.',
+    commands: [
+      { words: ['gambar'], usage: 'gambar <kata>', example: 'gambar kucing',
+        desc: 'Cari gambar', params: { q: 'rest' }, path: '/api/s/bimg', label: 'Gambar' },
+    ],
+  },
+  {
+    id: 'bot-pin', email: 'pinsearch@bot.whatsap-indo', name: 'Cari Pinterest',
+    tagline: 'Pencarian pin Pinterest',
+    about: 'Cari pin Pinterest. Contoh: pin wallpaper aesthetic.',
+    commands: [
+      { words: ['pin', 'pinterest'], usage: 'pin <kata>', example: 'pin wallpaper aesthetic',
+        desc: 'Cari pin Pinterest', params: { q: 'rest' }, path: '/api/s/pinterest', label: 'Pinterest' },
+    ],
+  },
+  {
+    id: 'bot-game', email: 'gamesearch@bot.whatsap-indo', name: 'Cari Game',
+    tagline: 'Cari game & mod di MCPEDL',
+    about: 'Cari game, resource pack & mod. Contoh: game minecraft.',
+    commands: [
+      { words: ['game'], usage: 'game <judul>', example: 'game minecraft',
+        desc: 'Cari game (MCPEDL)', params: { q: 'rest' }, path: '/api/s/mcpedl', label: 'Game' },
     ],
   },
 ];

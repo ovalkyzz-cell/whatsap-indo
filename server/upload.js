@@ -144,4 +144,95 @@ router.post('/upload', requireAuth, (req, res) => {
   });
 });
 
-module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob };
+/* ---------- simpan hasil unduhan bot (video/audio/berkas) ----------
+   Tautan unduhan dari pihak ketiga cepat kedaluwarsa & diblokir hotlink,
+   jadi hasil unduhan disimpan ke penyimpanan yang sama dengan upload
+   pengguna: folder uploads/ secara lokal, atau Vercel Blob di hosting. */
+
+const REMOTE_LIMITS = { video: 50 * 1024 * 1024, audio: 15 * 1024 * 1024, file: 30 * 1024 * 1024, image: 8 * 1024 * 1024 };
+
+const EXT_MIME = {
+  '.mp4': 'video/mp4', '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg',
+  '.zip': 'application/zip', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+};
+
+function safeExt(filename, kind) {
+  const ext = path.extname(String(filename || '')).toLowerCase().slice(0, 8);
+  if (ext && Object.prototype.hasOwnProperty.call(EXT_MIME, ext)) return ext;
+  if (kind === 'video') return '.mp4';
+  if (kind === 'audio') return '.mp3';
+  if (kind === 'image') return '.png';
+  return '.bin';
+}
+
+function safeName(filename, kind) {
+  const base = path.basename(String(filename || '')).replace(/[^\w.\- ()[\]]+/g, '_').slice(0, 120).trim();
+  if (base) return base;
+  return `hasil-unduhan${safeExt('', kind)}`;
+}
+
+// tolak halaman error berkedup file (HTML/JSON) dan jenis yang tidak cocok
+function looksLike(buffer, kind, name) {
+  const head = buffer.slice(0, 64).toString('latin1');
+  if (/^\s*<(!doctype|html|head|script|body)/i.test(head)) return false;
+  if (kind === 'video') return /ftyp|moov|mdat|webm/i.test(head) || head.startsWith('\x1aE\xdf\xa3');
+  if (kind === 'audio') return head.startsWith('ID3') || /OggS|fLaC|ftyp/i.test(head) || /^[\xff][\xfb\xf3\xf2\xe3\xfa]/.test(head);
+  if (kind === 'image') return head.startsWith('\x89PNG') || head.startsWith('\xff\xd8\xff') || head.startsWith('GIF8') || head.startsWith('RIFF');
+  if (kind === 'file') return /\.zip$/i.test(name || '') ? head.startsWith('PK') : true;
+  return true;
+}
+
+async function storeBuffer(buffer, kind, filename) {
+  if (!storageEnabled || !Buffer.isBuffer(buffer) || !buffer.length) return null;
+  const limit = REMOTE_LIMITS[kind] || REMOTE_LIMITS.file;
+  if (buffer.length > limit) return null;
+  const name = safeName(filename, kind);
+  if (!looksLike(buffer, kind, name)) return null;
+  const ext = safeExt(name, kind);
+  const stored = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+  if (useBlob) {
+    try {
+      const { put } = require('@vercel/blob');
+      const object = await put(`uploads/${stored}`, buffer, {
+        access: 'public',
+        token: BLOB_TOKEN || undefined,
+        addRandomSuffix: false,
+        allowOverwrite: false,
+        contentType: EXT_MIME[ext] || 'application/octet-stream',
+      });
+      return { url: object.url, size: buffer.length, name };
+    } catch {
+      return null;
+    }
+  }
+  try {
+    await fs.promises.writeFile(path.join(UPLOAD_DIR, stored), buffer);
+    return { url: `/uploads/${stored}`, size: buffer.length, name };
+  } catch {
+    return null;
+  }
+}
+
+async function storeRemoteFile(url, kind, opts) {
+  try {
+    const res = await fetch(String(url), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: '*/*' },
+      signal: AbortSignal.timeout((opts && opts.timeout) || 40000),
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+    const ct = String(res.headers.get('content-type') || '');
+    if (/text\/html|application\/json|text\/plain/i.test(ct)) return null;
+    const len = Number(res.headers.get('content-length') || 0);
+    const limit = REMOTE_LIMITS[kind] || REMOTE_LIMITS.file;
+    if (len && len > limit) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return await storeBuffer(buf, kind, (opts && opts.name) || '');
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob, storeBuffer, storeRemoteFile };
