@@ -3,6 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { pipeline } = require('stream/promises');
 const express = require('express');
 const multer = require('multer');
 const { requireAuth } = require('./auth');
@@ -149,7 +150,21 @@ router.post('/upload', requireAuth, (req, res) => {
    jadi hasil unduhan disimpan ke penyimpanan yang sama dengan upload
    pengguna: folder uploads/ secara lokal, atau Vercel Blob di hosting. */
 
-const REMOTE_LIMITS = { video: 50 * 1024 * 1024, audio: 15 * 1024 * 1024, file: 30 * 1024 * 1024, image: 8 * 1024 * 1024 };
+// batas unduhan bot: mode filesystem dialirkan langsung ke disk (hemat RAM),
+// mode blob (serverless tanpa filesystem) menampung di memori
+const REMOTE_LIMITS = { video: 512 * 1024 * 1024, audio: 64 * 1024 * 1024, file: 64 * 1024 * 1024, image: 16 * 1024 * 1024 };
+const REMOTE_MEMORY_LIMITS = { video: 64 * 1024 * 1024, audio: 32 * 1024 * 1024, file: 32 * 1024 * 1024, image: 16 * 1024 * 1024 };
+const REMOTE_TIMEOUTS = { video: 180000, audio: 90000, file: 120000, image: 60000 };
+
+function filenameFromDisposition(cd) {
+  const s = String(cd || '');
+  const star = s.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (star) {
+    try { return decodeURIComponent(star[1]).trim(); } catch { /* lanjut */ }
+  }
+  const plain = s.match(/filename\s*=\s*"?([^";]+)"?/i);
+  return plain ? plain[1].trim() : '';
+}
 
 const EXT_MIME = {
   '.mp4': 'video/mp4', '.webm': 'video/webm',
@@ -215,21 +230,80 @@ async function storeBuffer(buffer, kind, filename) {
   }
 }
 
-async function storeRemoteFile(url, kind, opts) {
+// unduh file hasil bot langsung ke disk: hemat RAM untuk video besar,
+// magic bytes dicek dari potongan pertama sebelum file resmi disimpan
+async function streamToDisk(res, kind, filename, limit) {
+  const tmp = path.join(UPLOAD_DIR, `.dl-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.part`);
+  const out = fs.createWriteStream(tmp);
+  let received = 0;
+  let head = Buffer.alloc(0);
   try {
-    const res = await fetch(String(url), {
+    const src = (async function* () {
+      for await (const chunk of res.body) {
+        const buf = Buffer.from(chunk);
+        received += buf.length;
+        if (received > limit) throw new Error('ukuran file melebihi batas');
+        if (head.length < 64) head = Buffer.concat([head, buf]).slice(0, 64);
+        yield buf;
+      }
+    })();
+    await pipeline(src, out);
+  } catch {
+    try { await fs.promises.unlink(tmp); } catch { /* sudah hilang */ }
+    return null;
+  }
+  if (!received) {
+    try { await fs.promises.unlink(tmp); } catch { /* sudah hilang */ }
+    return null;
+  }
+  const name = safeName(filename, kind);
+  if (!looksLike(head, kind, name)) {
+    try { await fs.promises.unlink(tmp); } catch { /* sudah hilang */ }
+    return null;
+  }
+  const stored = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${safeExt(name, kind)}`;
+  try {
+    await fs.promises.rename(tmp, path.join(UPLOAD_DIR, stored));
+    return { url: `/uploads/${stored}`, size: received, name };
+  } catch {
+    try { await fs.promises.unlink(tmp); } catch { /* sudah hilang */ }
+    return null;
+  }
+}
+
+async function storeRemoteFile(url, kind, opts) {
+  const o = opts || {};
+  const timeout = o.timeout || REMOTE_TIMEOUTS[kind] || 60000;
+  const limit = (fsWritable ? REMOTE_LIMITS : REMOTE_MEMORY_LIMITS)[kind]
+    || (fsWritable ? REMOTE_LIMITS.file : REMOTE_MEMORY_LIMITS.file);
+
+  let res;
+  try {
+    res = await fetch(String(url), {
       headers: { 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: '*/*' },
-      signal: AbortSignal.timeout((opts && opts.timeout) || 40000),
+      signal: AbortSignal.timeout(timeout),
       redirect: 'follow',
     });
-    if (!res.ok) return null;
-    const ct = String(res.headers.get('content-type') || '');
-    if (/text\/html|application\/json|text\/plain/i.test(ct)) return null;
-    const len = Number(res.headers.get('content-length') || 0);
-    const limit = REMOTE_LIMITS[kind] || REMOTE_LIMITS.file;
-    if (len && len > limit) return null;
+  } catch {
+    return null;
+  }
+  if (!res || !res.ok) return null;
+  const ct = String(res.headers.get('content-type') || '');
+  if (/text\/html|application\/json|text\/plain/i.test(ct)) return null;
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len && len > limit) return null;
+  const cdName = filenameFromDisposition(res.headers.get('content-disposition'));
+  const name = cdName || o.name || '';
+
+  if (fsWritable && res.body && typeof res.body[Symbol.asyncIterator] === 'function') {
+    return await streamToDisk(res, kind, name, limit);
+  }
+
+  // fallback memori (mode blob / stream tidak tersedia)
+  try {
     const buf = Buffer.from(await res.arrayBuffer());
-    return await storeBuffer(buf, kind, (opts && opts.name) || '');
+    if (buf.length > limit) return null;
+    return await storeBuffer(buf, kind, name);
   } catch {
     return null;
   }

@@ -66,9 +66,96 @@ const binaryResponses = {
   '/api/tools/npm2zip': { contentType: 'application/zip', filename: 'left-pad.zip', bytes: ZIP_MAGIC },
 };
 global.__calls = [];
-global.fetch = async (url) => {
+
+/* host khusus: provider rantai resolver Downloader (semua dimock, tanpa jaringan) */
+const hostHandlers = [
+  { // tikwm (TikTok/Douyin)
+    match: (u) => u.hostname === 'www.tikwm.com',
+    reply: (u) => {
+      const target = u.searchParams.get('url') || '';
+      if (target.includes('ZS8fallback')) {
+        return { ok: true, status: 200, body: { code: 0, data: {
+          title: 'TT Contoh', hdplay: 'https://cdn.example/tt-fallback.mp4',
+          cover: 'https://cdn.example/tt-cover.jpg', author: { nickname: 'kreatorTT' },
+        } } };
+      }
+      return { ok: true, status: 200, body: { code: -1, msg: 'rate limit tikwm' } };
+    },
+  },
+  { // fxtwitter (X/Twitter)
+    match: (u) => u.hostname === 'api.fxtwitter.com',
+    reply: (u) => (u.pathname.includes('9876543210123456789')
+      ? { ok: true, status: 200, body: { code: 200, tweet: {
+          text: 'Video X contoh', author: { screen_name: 'someone' },
+          media: { type: 'video', videos: [{ url: 'https://cdn.example/x-video.mp4' }] },
+        } } }
+      : { ok: true, status: 404, body: { code: 404 } }),
+  },
+  { // probe tunnel cobalt (tanpa ekstensi -> wajib dikenali dari content-type)
+    match: (u) => u.hostname === 'co.otomir23.me' && u.pathname === '/tunnel',
+    reply: () => ({
+      ok: true, status: 206,
+      contentType: 'video/mp4',
+      contentDisposition: 'attachment; filename="ig-reel.mp4"',
+    }),
+  },
+  { // api cobalt (POST)
+    match: (u) => u.hostname === 'co.otomir23.me' && u.pathname === '/',
+    reply: (_u, opts) => {
+      let target = '';
+      try { target = JSON.parse((opts && opts.body) || '{}').url || ''; } catch { /* body kosong */ }
+      if (target.includes('CObaltTunnel9')) {
+        return { ok: true, status: 200, body: { status: 'tunnel', url: 'https://co.otomir23.me/tunnel?id=abc123', filename: 'ig-reel.mp4' } };
+      }
+      return { ok: true, status: 400, body: { status: 'error', error: { code: 'error.api.fetch.empty' } } };
+    },
+  },
+  { // instance Piped (YouTube)
+    match: (u) => u.hostname.endsWith('.coffee') || u.hostname.includes('piped'),
+    reply: (u) => {
+      if (!u.pathname.startsWith('/streams/')) return null;
+      const id = decodeURIComponent(u.pathname.split('/').pop());
+      if (id === 'pipedtest') {
+        return { ok: true, status: 200, body: { title: 'YT Piped', videoStreams: [
+          { url: 'https://cdn.example/yt-fallback.mp4', mimeType: 'video/mp4', height: 720, videoOnly: false, quality: '720p' },
+        ] } };
+      }
+      return { ok: true, status: 404, body: { error: 'stream tidak ditemukan' } };
+    },
+  },
+];
+
+const jsonReply = (body) => ({
+  ok: true, status: 200,
+  headers: { get: () => 'application/json' },
+  json: async () => body,
+});
+
+global.fetch = async (url, opts = {}) => {
   const u = new URL(url);
-  global.__calls.push({ path: u.pathname, params: Object.fromEntries(u.searchParams) });
+  global.__calls.push({
+    path: u.pathname, host: u.hostname, method: opts.method || 'GET',
+    params: Object.fromEntries(u.searchParams),
+  });
+
+  for (const h of hostHandlers) {
+    if (!h.match(u)) continue;
+    const r = h.reply(u, opts);
+    if (!r) break;
+    if (r.contentType) {
+      return {
+        ok: r.ok, status: r.status,
+        headers: { get: (name) => (
+          name === 'content-type' ? r.contentType
+            : name === 'content-disposition' ? r.contentDisposition : null
+        ) },
+        body: undefined,
+        json: async () => { throw new Error('bukan JSON'); },
+      };
+    }
+    return jsonReply(r.body);
+  }
+
   const binKey = Object.keys(binaryResponses).find((k) => u.pathname.endsWith(k));
   if (binKey) {
     const bin = binaryResponses[binKey];
@@ -83,12 +170,15 @@ global.fetch = async (url) => {
     };
   }
   const key = Object.keys(fakeResponses).find((k) => u.pathname.endsWith(k));
-  const body = key ? fakeResponses[key] : { success: false, error: 'endpoint tak dikenal: ' + u.pathname };
-  return {
-    ok: true, status: 200,
-    headers: { get: () => 'application/json' },
-    json: async () => body,
-  };
+  let body = key ? fakeResponses[key] : { success: false, error: 'endpoint tak dikenal: ' + u.pathname };
+
+  // simulasi api-mazval down pada URL tertentu -> menguji rantai resolver
+  const target = u.searchParams.get('url') || '';
+  if (key === '/api/download/youtube' && target.includes('youtu.be/pipedtest')) body = { success: false, error: 'simulasi api-mazval down' };
+  if (key === '/api/download/twitter' && target.includes('status/9876543210123456789')) body = { success: false, error: 'simulasi api-mazval down' };
+  if (key === '/api/download/instagram' && target.includes('CObaltTunnel9')) body = { success: false, error: 'simulasi api-mazval down' };
+
+  return jsonReply(body);
 };
 const bots = require(path);
 
@@ -131,8 +221,10 @@ const bots = require(path);
   const twxText = typeof twx === 'string' ? twx : (twx && twx.text) || '';
   ok(twxText.includes('Twitter / X') && lastCall().path === '/api/download/twitter',
     'Downloader: x.com cocok Twitter / X');
+  const dlMark = global.__calls.length;
   const notTw = await bots.reply({ id: 'bot-down' }, 'https://max.com/video/1');
-  ok(lastCall().path === '/api/download/aio' && !/Twitter/i.test(String(notTw)),
+  const maxCalls = global.__calls.slice(dlMark).filter((c) => c.path.startsWith('/api/download/'));
+  ok(maxCalls[0] && maxCalls[0].path === '/api/download/aio' && !/Twitter/i.test(String(notTw)),
     'Downloader: max.com tidak salah terbaca sebagai Twitter');
 
   // respon status:false -> blok error, bukan "Media ditemukan"
@@ -155,6 +247,43 @@ const bots = require(path);
 
   const unknown = await bots.reply({ id: 'bot-down' }, 'hai');
   ok(/Tautan tidak ditemukan/.test(unknown), 'Downloader: input tanpa URL ditolak');
+
+  // ---- rantai resolver: wajib tetap menghasilkan video walau api-mazval down ----
+  const ttFb = await bots.reply({ id: 'bot-down' }, 'https://vt.tiktok.com/ZS8fallback/');
+  ok(ttFb && typeof ttFb === 'object' && ttFb.media && ttFb.media.type === 'video'
+    && ttFb.media.url === 'https://cdn.example/tt-fallback.mp4'
+    && ttFb.text.includes('TT Contoh') && ttFb.text.includes('TikTok'),
+    'Downloader: tikwm menyelamatkan TikTok (video muncul walau api-mazval hanya memberi catatan)');
+
+  const xFb = await bots.reply({ id: 'bot-down' }, 'https://x.com/someone/status/9876543210123456789');
+  ok(xFb && typeof xFb === 'object' && xFb.media && xFb.media.type === 'video'
+    && xFb.media.url === 'https://cdn.example/x-video.mp4'
+    && xFb.text.includes('Video X contoh') && xFb.text.includes('@someone'),
+    'Downloader: fxtwitter menyelamatkan X/Twitter saat api-mazval down');
+
+  const igFb = await bots.reply({ id: 'bot-down' }, 'https://www.instagram.com/reel/CObaltTunnel9/');
+  ok(igFb && typeof igFb === 'object' && igFb.media && igFb.media.type === 'video'
+    && igFb.media.url === 'https://co.otomir23.me/tunnel?id=abc123'
+    && igFb.media.mime === 'video/mp4' && igFb.media.name === 'ig-reel.mp4',
+    'Downloader: cobalt + probe content-type menghasilkan video untuk Instagram');
+
+  const ytFb = await bots.reply({ id: 'bot-down' }, 'https://youtu.be/pipedtest');
+  ok(ytFb && typeof ytFb === 'object' && ytFb.media && ytFb.media.type === 'video'
+    && ytFb.media.url === 'https://cdn.example/yt-fallback.mp4',
+    'Downloader: instance Piped menyelamatkan YouTube saat api-mazval down');
+
+  // platform baru terdeteksi lewat aio (bukan salah petakan ke platform lain)
+  const rdMark = global.__calls.length;
+  const rd = await bots.reply({ id: 'bot-down' }, 'https://www.reddit.com/r/videos/comments/abc123/title/');
+  const rdCalls = global.__calls.slice(rdMark).filter((c) => c.path.startsWith('/api/download/'));
+  ok(rdCalls[0] && rdCalls[0].path === '/api/download/aio' && !/Twitter/i.test(String(rd)),
+    'Downloader: Reddit terdeteksi lewat aio, bukan salah platform');
+
+  const thMark = global.__calls.length;
+  const th = await bots.reply({ id: 'bot-down' }, 'https://www.threads.net/@akun/post/xyz/');
+  const thCalls = global.__calls.slice(thMark).filter((c) => c.path.startsWith('/api/download/'));
+  ok(thCalls[0] && thCalls[0].path === '/api/download/aio' && !/Twitter/i.test(String(th)),
+    'Downloader: Threads terdeteksi lewat aio, bukan salah platform');
 
   const em = await bots.reply({ id: 'bot-email' }, 'buat uji123');
   ok(em.includes('```angka') && em.includes('uji123@bhap.me'), 'Email: alamat di kartu angka');

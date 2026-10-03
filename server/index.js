@@ -1579,7 +1579,7 @@ async function deliverBotMessage(bot, chatId, text, targets, media) {
     bot.id,
     msgType,
     caption.slice(0, 8000),
-    hasMedia ? mediaUrl.slice(0, 500) : null,
+    hasMedia ? mediaUrl.slice(0, 2000) : null,
     hasMedia ? mediaName || null : null,
     hasMedia ? mediaSize : null,
     hasMedia ? String(media.mime || '').slice(0, 100) || null : null,
@@ -1656,17 +1656,18 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
       out = type !== 'text'
         ? '❌ Bot hanya memproses pesan teks. Kirim teks, atau balas "menu" untuk melihat perintah.'
         : await bots.reply(bot, text);
+      if (out) {
+        // balasan bot boleh berupa teks saja atau { text, media } (preview gambar/video);
+        // indikator mengetik tetap hidup sampai media selesai diunduh & terkirim
+        const payload = out && typeof out === 'object' ? out : { text: out };
+        if (payload.text || payload.media) {
+          await deliverBotMessage(bot, chatId, payload.text || '', targets, payload.media);
+        }
+      }
     } finally {
       finished = true;
       clearInterval(keepalive);
-    }
-    await stopTyping();
-    if (out) {
-      // balasan bot boleh berupa teks saja atau { text, media } (preview gambar/video)
-      const payload = out && typeof out === 'object' ? out : { text: out };
-      if (payload.text || payload.media) {
-        await deliverBotMessage(bot, chatId, payload.text || '', targets, payload.media);
-      }
+      await stopTyping();
     }
   } catch (err) {
     console.error('bot:', err.message);

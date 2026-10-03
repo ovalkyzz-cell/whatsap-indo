@@ -979,7 +979,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(downErr && /Tautan tidak ditemukan/.test(downErr.body),
     'bot Downloader menolak input tanpa tautan dengan rapi');
 
-  const downMediaWait = waitEvent(botSock, 'message:new', 60000);
+  // unduhan video bisa ratusan MB -> beri waktu stream ke server lebih longgar
+  const downMediaWait = waitEvent(botSock, 'message:new', 180000);
   await emitAck(botSock, 'message:send', {
     chatId: dChat,
     type: 'text',
@@ -994,7 +995,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(downMedia && /Judul|Tautan unduh|Tautan sumber/.test(downMedia.body || ''),
     'bot Downloader tetap menyertakan judul & tautan');
 
-  const downBareWait = waitEvent(botSock, 'message:new', 60000);
+  const downBareWait = waitEvent(botSock, 'message:new', 180000);
   await emitAck(botSock, 'message:send', {
     chatId: dChat,
     type: 'text',

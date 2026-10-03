@@ -633,22 +633,41 @@ async function aiReply(raw) {
   ].join('\n');
 }
 
-/* ---------- Bot 4: Downloader video sosial ---------- */
+/* ---------- Bot 4: Downloader video sosial ----------
+   Rantai resolver berlapis agar SEMUA platform pada daftar berfungsi dan
+   hasil VIDEO-nya benar-benar muncul di chat (bukan sekadar tautan):
+     1. api-mazval   -> endpoint khusus platform, lalu endpoint aio universal
+     2. provider khusus tanpa API key -> tikwm (TikTok/Douyin), fxtwitter (X)
+     3. instance cobalt -> IG, FB, X, TikTok, YouTube, SoundCloud, dll
+     4. instance Piped  -> YouTube (mp4 muxed: audio + video dalam 1 file)
+   Kandidat divalidasi lewat probe Range sebelum dikirim; file yang lolos
+   diunduh ke penyimpanan server oleh deliverBotMessage sehingga muncul
+   sebagai pesan video dengan kapsi "Hasil unduhan: X MB". */
+
+const DOWN_BUDGET = Number(process.env.DOWNLOAD_BUDGET_MS) || 90000;
+const DOWN_PROBE_TIMEOUT = 9000;
+const DOWN_JSON_TIMEOUT = 18000;
+const DOWN_AIO_TIMEOUT = 25000;
 
 const DOWN_MENU = [
   '╭─────────────────────────────',
   '│ DOWNLOADER',
-  '│ TikTok · IG · YouTube · FB · X',
+  '│ Video & audio lintas platform',
   '╰─────────────────────────────',
   '',
-  'Kirim tautan video, bot ini otomatis mendeteksi platformnya.',
-  'Tautan lengkap (https://…) atau tempelan polos (youtu.be/xxxx) sama-sama diterima.',
+  'Kirim tautan video — bot mendeteksi platformnya lalu menarik file',
+  'medianya ke server. Hasilnya muncul langsung sebagai PESAN VIDEO',
+  'di chat (lengkap dengan ukuran file), bukan sekadar tautan.',
   '',
   'Platform yang didukung:',
-  '  • TikTok      • Instagram   • YouTube',
-  '  • Facebook    • Twitter / X • Pinterest',
-  '  • Spotify     • SoundCloud  • Douyin',
-  '  • MediaFire   • Terabox     • lainnya',
+  '  • TikTok · Douyin       • Instagram · Threads',
+  '  • YouTube               • Facebook · FB Watch',
+  '  • Twitter / X           • Pinterest',
+  '  • Spotify · SoundCloud  • Reddit · Tumblr',
+  '  • VK · OK.ru            • Dailymotion · Twitch · Vimeo',
+  '  • Bilibili              • Likee · Kwai · SnackVideo',
+  '  • MediaFire · Terabox   • CapCut · IMDb · Streamable',
+  '  • dan lainnya (deteksi otomatis lewat aio)',
   '',
   'Contoh:',
   '  https://www.tiktok.com/@akun/video/123',
@@ -658,18 +677,36 @@ const DOWN_MENU = [
 ].join('\n');
 
 const DOWN_PLATFORMS = [
-  { hosts: ['youtube.com', 'youtu.be'], path: '/api/download/youtube', label: 'YouTube' },
-  { hosts: ['tiktok.com'], path: '/api/download/tiktok', label: 'TikTok' },
+  { hosts: ['youtube.com', 'youtube-nocookie.com', 'youtu.be'], path: '/api/download/youtube', label: 'YouTube' },
+  { hosts: ['tiktok.com', 'tiktokv.com', 'tiktokcdn.com'], path: '/api/download/tiktok', label: 'TikTok' },
   { hosts: ['instagram.com', 'instagr.am'], path: '/api/download/instagram', label: 'Instagram' },
-  { hosts: ['facebook.com', 'fb.watch'], path: '/api/download/facebook', label: 'Facebook' },
+  { hosts: ['facebook.com', 'fb.watch', 'fb.com'], path: '/api/download/facebook', label: 'Facebook' },
   { hosts: ['twitter.com', 'x.com', 't.co'], path: '/api/download/twitter', label: 'Twitter / X' },
   { hosts: ['pinterest.com', 'pin.it'], path: '/api/download/pinterest', label: 'Pinterest' },
   { hosts: ['spotify.com'], path: '/api/download/spotify', label: 'Spotify' },
   { hosts: ['soundcloud.com'], path: '/api/download/soundcloud', label: 'SoundCloud' },
-  { hosts: ['douyin.com'], path: '/api/download/douyin', label: 'Douyin' },
+  { hosts: ['douyin.com', 'iesdouyin.com'], path: '/api/download/douyin', label: 'Douyin' },
   { hosts: ['mediafire.com'], path: '/api/download/mediafire', label: 'MediaFire' },
-  { hosts: ['terabox.com', '1024tera.com', 'teraboxapp.com', 'teraboxlink.com'], path: '/api/download/terabox', label: 'Terabox' },
+  { hosts: ['terabox.com', '1024tera.com', 'teraboxapp.com', 'teraboxlink.com', 'terabox.app'], path: '/api/download/terabox', label: 'Terabox' },
+  { hosts: ['threads.net', 'threads.com'], path: '/api/download/aio', label: 'Threads' },
+  { hosts: ['reddit.com', 'redd.it', 'v.redd.it'], path: '/api/download/aio', label: 'Reddit' },
+  { hosts: ['tumblr.com'], path: '/api/download/aio', label: 'Tumblr' },
+  { hosts: ['vk.com', 'vkvideo.ru'], path: '/api/download/aio', label: 'VK' },
+  { hosts: ['ok.ru'], path: '/api/download/aio', label: 'OK.ru' },
+  { hosts: ['dailymotion.com', 'dai.ly'], path: '/api/download/aio', label: 'Dailymotion' },
+  { hosts: ['twitch.tv'], path: '/api/download/aio', label: 'Twitch' },
+  { hosts: ['vimeo.com'], path: '/api/download/aio', label: 'Vimeo' },
+  { hosts: ['bilibili.com', 'b23.tv'], path: '/api/download/aio', label: 'Bilibili' },
+  { hosts: ['likee.video', 'likee.biz', 'likee.app'], path: '/api/download/aio', label: 'Likee' },
+  { hosts: ['kwai.com', 'kwai.video', 'kuaishou.com'], path: '/api/download/aio', label: 'Kwai' },
+  { hosts: ['snackvideo.com'], path: '/api/download/aio', label: 'SnackVideo' },
+  { hosts: ['capcut.com'], path: '/api/download/aio', label: 'CapCut' },
+  { hosts: ['imdb.com'], path: '/api/download/aio', label: 'IMDb' },
+  { hosts: ['streamable.com'], path: '/api/download/aio', label: 'Streamable' },
 ];
+
+// platform audio-only: tautan audio diterima sebagai media pesan
+const DOWN_AUDIO_ONLY = new Set(['Spotify', 'SoundCloud']);
 
 function hostOf(u) {
   try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; }
@@ -700,7 +737,7 @@ function extractUrl(text) {
 
 const DL_ICON = { mp4: '🎬', mp3: '🎵', hd: '🎞️', sd: '🎞️', audio: '🎵', video: '🎬' };
 
-// kumpulkan tautan unduh dari objek respons (dari objek `download` bila ada)
+// kumpulkan tautan dari struktur respons (string / array / objek bersarang)
 function downloadLinks(node, out, depth) {
   if (!node || depth > 4) return out;
   if (typeof node === 'string') {
@@ -721,6 +758,12 @@ function isSafeMediaUrl(u) {
   return typeof u === 'string' && /^https?:\/\/[^\s<>"']{8,600}$/i.test(u.trim());
 }
 
+// URL file jauh lebih panjang (CDN IG/FB, googlevideo, tunnel cobalt)
+// -> batas 4000 karakter untuk kandidat unduhan
+function isSafeFileUrl(u) {
+  return typeof u === 'string' && /^https?:\/\/[^\s<>"']{8,4000}$/i.test(u.trim());
+}
+
 function guessMime(url) {
   const path = String(url || '').split(/[?#]/)[0].toLowerCase();
   if (/\.png$/.test(path)) return 'image/png';
@@ -731,6 +774,8 @@ function guessMime(url) {
   if (/\.webm$/.test(path)) return 'video/webm';
   if (/\.mkv$/.test(path)) return 'video/x-matroska';
   if (/\.mov$/.test(path)) return 'video/quicktime';
+  if (/\.mp3$/.test(path)) return 'audio/mpeg';
+  if (/\.m4a$/.test(path)) return 'audio/mp4';
   return null;
 }
 
@@ -743,6 +788,13 @@ function urlOf(x) {
   }
   if (x && typeof x === 'object') return urlOf(x.url || x.src || x.href || null);
   return null;
+}
+
+function basenameOf(u) {
+  try {
+    const p = new URL(u).pathname.split('/').filter(Boolean).pop() || '';
+    return decodeURIComponent(p).slice(0, 90);
+  } catch { return ''; }
 }
 
 // pilih media preview: video langsung bila ada file .mp4, selain itu thumbnail
@@ -764,12 +816,153 @@ function pickMedia(sources, links, title) {
   return null;
 }
 
-// ---- resolver file video langsung ----
-// Sebagian platform hanya mengembalikan metadata + tautan cobalt.tools
-// (bukan file). Supaya hasil unduhan benar-benar tampil di chat dan bisa
-// disimpan, coba dua jalur: endpoint aio api-mazval, lalu instance Piped
-// untuk YouTube (mp4 muxed: audio + video dalam satu file).
-function linksFromBody(body) {
+/* ---- klasifikasi & probe kandidat media ---- */
+
+const VIDEO_EXT = /\.(mp4|m4v|webm|mkv|mov|avi|3gp|flv)(\?|#|$)/i;
+const AUDIO_EXT = /\.(mp3|m4a|aac|opus|ogg|wav|flac)(\?|#|$)/i;
+const VIDEO_HINT = /(mime_type=video|video\/mp4|avc1|h264|ext_tw_video|\/vid\/|format=mp4|itag=|type=video)/i;
+const AUDIO_HINT = /(mime_type=audio|format=mp3|audio\/mpeg|type=audio)/i;
+
+function linkScore(u) {
+  const s = String(u || '');
+  if (VIDEO_EXT.test(s)) return 100;
+  if (VIDEO_HINT.test(s)) return 80;
+  if (AUDIO_EXT.test(s)) return 60;
+  if (AUDIO_HINT.test(s)) return 55;
+  if (/\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(s)) return 15;
+  return 40;
+}
+
+function filenameFromDisposition(cd) {
+  const s = String(cd || '');
+  const star = s.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (star) {
+    try { return decodeURIComponent(star[1]).trim().slice(0, 120); } catch { /* lanjut */ }
+  }
+  const plain = s.match(/filename\s*=\s*"?([^";]+)"?/i);
+  return plain ? plain[1].trim().slice(0, 120) : '';
+}
+
+// baca sebagian kecil stream lalu tutup — cukup untuk kenali jenis file
+async function readHead(res, n) {
+  try {
+    const body = res && res.body;
+    if (!body || typeof body.getReader !== 'function') return Buffer.alloc(0);
+    const reader = body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (total < n) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) { chunks.push(Buffer.from(value)); total += value.length; }
+    }
+    try { await reader.cancel(); } catch { /* sudah tertutup */ }
+    return Buffer.concat(chunks).slice(0, n);
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+function classifyMedia(ct, head, filename) {
+  const ext = String(filename || '').toLowerCase().match(/\.([a-z0-9]{2,5})$/);
+  if (ext) {
+    const e = ext[1];
+    if (['mp4', 'm4v', 'webm', 'mkv', 'mov', 'avi', '3gp', 'flv'].includes(e)) return 'video';
+    if (['mp3', 'm4a', 'aac', 'opus', 'ogg', 'wav', 'flac'].includes(e)) return 'audio';
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'].includes(e)) return 'image';
+  }
+  if (/^video\//.test(ct)) return 'video';
+  if (/^audio\//.test(ct)) return 'audio';
+  if (/^image\//.test(ct)) return 'image';
+  const s = head ? head.toString('latin1') : '';
+  if (/ftyp|moov|mdat|webm/i.test(s) || s.startsWith('\x1aE\xdf\xa3')) return 'video';
+  if (s.startsWith('\x89PNG') || s.startsWith('\xff\xd8\xff') || s.startsWith('GIF8')) return 'image';
+  if (s.startsWith('ID3') || /OggS|fLaC/.test(s) || (s.charCodeAt(0) === 0xff && (s.charCodeAt(1) & 0xe0) === 0xe0)) return 'audio';
+  return null;
+}
+
+// probe Ring 2KB: pastikan tautan benar-benar file media (bukan halaman HTML/JSON)
+async function probeMedia(url) {
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { Range: 'bytes=0-2047', 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: 'video/*,audio/*,*/*' },
+      signal: AbortSignal.timeout(DOWN_PROBE_TIMEOUT),
+      redirect: 'follow',
+    });
+  } catch {
+    return null;
+  }
+  if (!res || (res.status !== 200 && res.status !== 206)) return null;
+  const ct = String((res.headers && res.headers.get('content-type')) || '').toLowerCase();
+  const cd = String((res.headers && res.headers.get('content-disposition')) || '');
+  if (/text\/html|application\/json|text\/plain|text\/xml|application\/xml/i.test(ct)) {
+    if (res.body && typeof res.body.cancel === 'function') { try { await res.body.cancel(); } catch { /* abaikan */ } }
+    return null;
+  }
+  const head = await readHead(res, 64);
+  const filename = filenameFromDisposition(cd);
+  const kind = classifyMedia(ct, head, filename);
+  if (!kind) return null;
+  const mime = kind === 'video' ? (/webm/i.test(ct) ? 'video/webm' : 'video/mp4')
+    : kind === 'audio' ? (/mp4|m4a/i.test(ct) ? 'audio/mp4' : 'audio/mpeg')
+      : (guessMime(filename) || ct || 'image/jpeg');
+  return { kind, mime, filename };
+}
+
+function mkMedia(kind, url, name, mime) {
+  const ext = kind === 'video' ? '.mp4' : kind === 'audio' ? '.mp3' : '';
+  let base = String(name || '').replace(/[^\w.\- ()[\]]+/g, '').trim().slice(0, 90);
+  if (base && !/\.[a-z0-9]{2,5}$/i.test(base)) base += ext;
+  if (!base) base = 'media' + ext;
+  return {
+    type: kind,
+    url: String(url).trim(),
+    name: base,
+    mime: mime || (kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mpeg' : 'image/jpeg'),
+  };
+}
+
+// pilih kandidat media: skor -> .mp4/.mp3 langsung diterima tanpa probe,
+// tautan tanpa ekstensi divalidasi lewat probe Range (tunnel cobalt, googlevideo)
+async function pickMediaFromLinks(links, opts) {
+  const o = opts || {};
+  const deadline = o.deadline || 0;
+  const probed = o.probed instanceof Map ? o.probed : new Map();
+  const allowAudio = !!o.audioOnly;
+  const seen = new Set();
+  const cands = [];
+  for (const raw of links || []) {
+    const u = String(raw || '').trim();
+    if (!isSafeFileUrl(u) || seen.has(u)) continue;
+    seen.add(u);
+    if (/^(https?:\/\/)?(www\.)?cobalt\.tools\/?($|\?|#)/i.test(u)) continue; // halaman web, bukan file
+    cands.push({ u, score: linkScore(u) });
+  }
+  cands.sort((a, b) => b.score - a.score);
+
+  for (const c of cands.slice(0, 10)) {
+    if (VIDEO_EXT.test(c.u)) return mkMedia('video', c.u, o.filename || o.title || basenameOf(c.u), guessMime(c.u) || 'video/mp4');
+    if (AUDIO_EXT.test(c.u) && allowAudio) return mkMedia('audio', c.u, o.filename || o.title || basenameOf(c.u), guessMime(c.u) || 'audio/mpeg');
+    if (deadline && Date.now() > deadline) {
+      if (c.score >= 80) return mkMedia('video', c.u, o.filename || o.title || basenameOf(c.u), 'video/mp4');
+      continue;
+    }
+    let probe = probed.get(c.u);
+    if (probe === undefined) {
+      probe = await probeMedia(c.u);
+      probed.set(c.u, probe);
+    }
+    if (!probe) continue;
+    if (probe.kind === 'video') return mkMedia('video', c.u, probe.filename || o.filename || o.title || basenameOf(c.u), probe.mime);
+    if (probe.kind === 'audio' && allowAudio) return mkMedia('audio', c.u, probe.filename || o.filename || o.title || basenameOf(c.u), probe.mime);
+  }
+  return null;
+}
+
+/* ---- pembaca respons api-mazval ---- */
+
+function parseMazval(body) {
   const data = body && body.data !== undefined ? body.data : body;
   const res = data && typeof data === 'object' && data.result && typeof data.result === 'object'
     ? data.result
@@ -782,9 +975,163 @@ function linksFromBody(body) {
     .filter((x) => x && typeof x === 'object')
     .forEach((x) => downloadLinks(x, links, 0));
   const all = [...new Set(links)]
-    .filter((l) => isSafeMediaUrl(l))
+    .filter((l) => isSafeFileUrl(l))
     .filter((l) => !/^(https?:\/\/)?(www\.)?(cobalt\.tools|api\.qrcode)/i.test(l) || /cobalt\.tools\/api/i.test(l));
-  return { data, res, all };
+  return {
+    res,
+    data,
+    body,
+    links: all,
+    title: res.title || res.name || res.caption || res.description || '',
+    author: res.author || res.author_name || res.uploader || res.owner || res.username || res.channel || '',
+    source: res.url || res.link || '',
+  };
+}
+
+/* ---- provider resolver tanpa API key ---- */
+
+async function fetchJson(url, opts) {
+  const o = opts || {};
+  try {
+    const res = await fetch(url, {
+      method: o.method || 'GET',
+      headers: { Accept: 'application/json', 'User-Agent': 'WhatsapIndo-Bot/1.0', ...(o.headers || {}) },
+      body: o.body,
+      signal: AbortSignal.timeout(o.timeout || DOWN_JSON_TIMEOUT),
+      redirect: 'follow',
+    });
+    const body = await res.json();
+    return { ok: res.ok, status: res.status, body };
+  } catch {
+    return null;
+  }
+}
+
+// TikTok / Douyin: tikwm memberi file mp4 (HD, tanpa watermark) langsung
+async function resolveTikwm(target, deadline) {
+  if (Date.now() > deadline) return null;
+  const got = await fetchJson(`https://www.tikwm.com/api/?url=${encodeURIComponent(target)}&hd=1`, {
+    timeout: Math.min(DOWN_JSON_TIMEOUT, Math.max(3000, deadline - Date.now())),
+  });
+  const body = got && got.body;
+  if (!body || body.code !== 0 || !body.data || typeof body.data !== 'object') return null;
+  const d = body.data;
+  const abs = (u) => {
+    if (typeof u !== 'string' || !u) return null;
+    if (!/^https?:\/\//i.test(u)) return null;
+    return isSafeFileUrl(u) ? u : null;
+  };
+  const video = abs(d.hdplay) || abs(d.play) || abs(d.wmplay);
+  const audio = abs(d.music);
+  if (!video && !audio) return null;
+  return {
+    links: [video || audio].filter(Boolean),
+    title: d.title || '',
+    author: (d.author && d.author.nickname) || '',
+    cover: abs(d.cover) || '',
+  };
+}
+
+// Twitter / X: fxtwitter membuka API publik tweet + media (mp4 per varian)
+async function resolveFxTwitter(target, deadline) {
+  if (Date.now() > deadline) return null;
+  const id = (String(target).match(/status(?:es)?\/(\d+)/) || [])[1];
+  if (!id) return null;
+  const got = await fetchJson(`https://api.fxtwitter.com/status/${encodeURIComponent(id)}`, {
+    timeout: Math.min(DOWN_JSON_TIMEOUT, Math.max(3000, deadline - Date.now())),
+  });
+  const tweet = got && got.body && got.body.tweet;
+  if (!tweet || typeof tweet !== 'object') return null;
+  const links = [];
+  downloadLinks(tweet.media, links, 0);
+  if (!links.length) return null;
+  const handle = tweet.author && (tweet.author.screen_name || tweet.author.name);
+  return {
+    links,
+    title: String(tweet.text || '').replace(/\s+/g, ' ').trim().slice(0, 160),
+    author: handle ? `@${String(handle).replace(/^@/, '')}` : '',
+  };
+}
+
+// daftar instance cobalt (public API v10): POST { url } -> tunnel/redirect/picker
+const COBALT_API_KEY = String(process.env.COBALT_API_KEY || '');
+const COBALT_INSTANCES = [
+  'https://co.otomir23.me',
+  'https://cobalt-api.meowing.de',
+  'https://cobalt-backend.canine.tools',
+  'https://api.cobalt.rpkiinval.id',
+  'https://capi.3kh0.net',
+  'https://api.cobalt.tools',
+];
+
+function cobaltResult(body) {
+  if (!body || typeof body !== 'object') return null;
+  if (body.status === 'tunnel' || body.status === 'redirect') {
+    if (!isSafeFileUrl(body.url)) return null;
+    return { links: [String(body.url).trim()], filename: String(body.filename || '').slice(0, 120) };
+  }
+  if (body.status === 'picker' && Array.isArray(body.picker)) {
+    const item = body.picker.find((p) => p && (p.type === 'video' || VIDEO_EXT.test(String(p.url || ''))))
+      || body.picker[0];
+    if (item && isSafeFileUrl(item.url)) {
+      return { links: [String(item.url).trim()], filename: String(item.name || item.title || '').slice(0, 120) };
+    }
+  }
+  return null;
+}
+
+async function resolveCobalt(target, deadline) {
+  for (const base of COBALT_INSTANCES) {
+    if (Date.now() > deadline) break;
+    const headers = { 'Content-Type': 'application/json' };
+    if (COBALT_API_KEY) headers['X-Api-Key'] = COBALT_API_KEY;
+    const got = await fetchJson(base + '/', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        url: target,
+        videoQuality: 'max',
+        audioFormat: 'mp3',
+        filenameStyle: 'pretty',
+        downloadMode: 'auto',
+      }),
+      timeout: Math.min(DOWN_JSON_TIMEOUT, Math.max(3000, deadline - Date.now())),
+    });
+    const out = cobaltResult(got && got.body);
+    if (out) return out;
+  }
+  return null;
+}
+
+const PIPED_INSTANCES = [
+  'https://api.piped.private.coffee',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.leptons.xyz',
+  'https://pipedapi.kavin.rocks',
+];
+
+// YouTube: instance Piped menyediakan file mp4 muxed (audio + video)
+async function resolveYouTubeVideo(id, deadline) {
+  const end = Math.min(deadline || Date.now() + 30000, Date.now() + 30000);
+  for (const base of PIPED_INSTANCES) {
+    if (Date.now() > end) break;
+    const got = await fetchJson(`${base}/streams/${encodeURIComponent(id)}`, {
+      timeout: Math.min(12000, Math.max(3000, end - Date.now())),
+    });
+    const data = got && got.body;
+    if (!data || typeof data !== 'object') continue;
+    const mux = (Array.isArray(data.videoStreams) ? data.videoStreams : [])
+      .filter((s) => s && typeof s.url === 'string' && !s.videoOnly && /mp4/i.test(String(s.mimeType || '')) && isSafeFileUrl(s.url))
+      .sort((a, b) => (Number(b.height) || 0) - (Number(a.height) || 0));
+    for (const s of mux.slice(0, 5)) {
+      if (Date.now() > end) break;
+      const u = String(s.url).trim();
+      if (VIDEO_EXT.test(u)) return { url: u, quality: s.quality || '' };
+      const probe = await probeMedia(u);
+      if (probe && probe.kind === 'video') return { url: u, quality: s.quality || '' };
+    }
+  }
+  return null;
 }
 
 function ytIdFrom(u) {
@@ -802,55 +1149,6 @@ function ytIdFrom(u) {
   return null;
 }
 
-const PIPED_INSTANCES = [
-  'https://api.piped.private.coffee',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.leptons.xyz',
-];
-
-// probe ringan (Range 1KB) untuk memastikan tautan benar-benar bisa diunduh
-// dan tipenya bukan halaman HTML/JSON; sebagian CDN menolak tanpa kredensial.
-async function videoUrlPlayable(url) {
-  try {
-    const res = await fetch(url, {
-      headers: { Range: 'bytes=0-1023', 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: 'video/*,*/*' },
-      signal: AbortSignal.timeout(8000),
-      redirect: 'follow',
-    });
-    const ct = String(res.headers.get('content-type') || '');
-    const ok = (res.status === 200 || res.status === 206) && !/text\/html|application\/json|text\/plain/i.test(ct);
-    if (res.body && typeof res.body.cancel === 'function') { try { await res.body.cancel(); } catch { /* abaikan */ } }
-    return ok;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveYouTubeVideo(id) {
-  const deadline = Date.now() + 30000; // batas total supaya balasan bot tidak terlalu lama
-  for (const base of PIPED_INSTANCES) {
-    if (Date.now() > deadline) break;
-    try {
-      const res = await fetch(`${base}/streams/${encodeURIComponent(id)}`, {
-        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)' },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const mux = (Array.isArray(data.videoStreams) ? data.videoStreams : [])
-        .filter((s) => s && typeof s.url === 'string' && !s.videoOnly && /mp4/i.test(String(s.mimeType || '')) && /^https?:\/\/[^\s<>"']{8,4000}$/i.test(s.url.trim()))
-        .sort((a, b) => (Number(b.height) || 0) - (Number(a.height) || 0));
-      for (const s of mux.slice(0, 5)) {
-        if (Date.now() > deadline) break;
-        if (await videoUrlPlayable(String(s.url).trim())) {
-          return { url: String(s.url).trim(), quality: s.quality || '' };
-        }
-      }
-    } catch { /* instance ini sedang mati, coba berikutnya */ }
-  }
-  return null;
-}
-
 async function downReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
@@ -865,69 +1163,113 @@ async function downReply(raw) {
 
   const platform = platformFor(url);
   const path = platform ? platform.path : '/api/download/aio';
+  const label = platform ? platform.label : 'Media';
+  const startedAt = Date.now();
+  const deadline = startedAt + DOWN_BUDGET;
+  const errors = [];
 
-  let body;
-  try {
-    body = await callApi(path, { url });
-  } catch (e) {
-    return errBlock('Video tidak dapat diunduh', e.message);
-  }
-  if (body && (body.success === false || body.status === false)) {
-    return errBlock('Video tidak dapat diunduh', body.error || body.message || 'Platform tidak mengembalikan data.');
-  }
-
-  const data = body && body.data !== undefined ? body.data : body;
-  const res = data && typeof data === 'object' && data.result && typeof data.result === 'object'
-    ? data.result
-    : (data && typeof data === 'object' ? data : {});
-
-  const title = res.title || res.name || res.caption || res.description || '';
-  const author = res.author || res.author_name || res.uploader || res.owner || res.username || res.channel || '';
-  const source = res.url || res.link || url;
-
-  // kumpulkan tautan unduh dari struktur respons yang umum dipakai api-mazval
+  let title = '';
+  let author = '';
+  let filename = '';
+  let cover = '';
+  let source = url;
+  let sourceFromApi = false;
+  let primaryRes = null;
   const links = [];
-  if (typeof data === 'object' && typeof data.result === 'string' && /^https?:\/\//i.test(data.result)) {
-    links.push(data.result.trim());
-  }
-  [res.download, res.media, res.links, res.formats]
-    .filter((x) => x && typeof x === 'object')
-    .forEach((x) => downloadLinks(x, links, 0));
+  const sources = [];
+  const probed = new Map();
 
-  let media = pickMedia([res, typeof data === 'object' ? data : null, body], links, title);
-  const extraLinks = [];
-
-  // jalur 1: platform hanya memberi metadata/cobalt -> coba endpoint aio api-mazval
-  if ((!media || media.type !== 'video') && platform && platform.path !== '/api/download/aio') {
-    console.log(`[down] fallback aio ${url}`);
-    try {
-      const fbBody = await callApi('/api/download/aio', { url }, { timeout: 25000 });
-      if (fbBody && fbBody.success !== false && fbBody.status !== false) {
-        const fb = linksFromBody(fbBody);
-        const fbMedia = pickMedia([fb.res, typeof fb.data === 'object' ? fb.data : null, fbBody], fb.all, fb.res.title || fb.res.name || title);
-        extraLinks.push(...fb.all);
-        if (fbMedia && fbMedia.type === 'video') media = fbMedia;
+  const absorb = (parsed) => {
+    if (!parsed) return;
+    if (Array.isArray(parsed.links)) {
+      for (const rawLink of parsed.links) {
+        const l = String(rawLink || '').trim();
+        if (isSafeFileUrl(l) && !links.includes(l)) links.push(l);
       }
-    } catch { /* upstream aio sedang tidak tersedia, lanjut */ }
+    }
+    if (!title && parsed.title) title = String(parsed.title).replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!author && parsed.author) author = String(parsed.author).replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!filename && parsed.filename) filename = String(parsed.filename).slice(0, 120);
+    if (!cover && parsed.cover) cover = String(parsed.cover);
+    if (parsed.source && !sourceFromApi) { source = parsed.source; sourceFromApi = true; }
+    if (parsed.res) { sources.push(parsed.res); if (!primaryRes) primaryRes = parsed.res; }
+    if (parsed.data) sources.push(parsed.data);
+    if (parsed.body) sources.push(parsed.body);
+  };
+
+  const pick = () => pickMediaFromLinks(links, {
+    deadline,
+    title,
+    filename,
+    probed,
+    audioOnly: !!platform && DOWN_AUDIO_ONLY.has(platform.label),
+  });
+
+  // 1) api-mazval: endpoint khusus platform (atau aio bila platform tak dikenal)
+  try {
+    const body = await callApi(path, { url });
+    if (body && (body.success === false || body.status === false)) {
+      errors.push(body.error || body.message || 'Platform tidak mengembalikan data.');
+    } else {
+      absorb(parseMazval(body));
+    }
+  } catch (e) {
+    errors.push(e.message);
   }
 
-  // jalur 2: YouTube -> instance Piped menyediakan file mp4 muxed (audio+video)
-  if (!media || media.type !== 'video') {
+  let media = await pick();
+  let provider = media ? 'api-mazval' : '';
+
+  // 2) provider khusus platform tanpa API key
+  if (!media && platform && ['TikTok', 'Douyin'].includes(platform.label)) {
+    absorb(await resolveTikwm(url, deadline));
+    media = await pick();
+    if (media) provider = 'tikwm';
+  }
+  if (!media && platform && platform.label === 'Twitter / X') {
+    absorb(await resolveFxTwitter(url, deadline));
+    media = await pick();
+    if (media) provider = 'fxtwitter';
+  }
+
+  // 3) endpoint universal api-mazval bila langkah 1 memakai endpoint khusus
+  if (!media && path !== '/api/download/aio' && Date.now() < deadline) {
+    try {
+      const body = await callApi('/api/download/aio', { url }, { timeout: DOWN_AIO_TIMEOUT });
+      if (body && (body.success === false || body.status === false)) {
+        errors.push(body.error || body.message || 'Jalur aio tidak mengembalikan data.');
+      } else {
+        absorb(parseMazval(body));
+      }
+    } catch (e) {
+      errors.push(e.message);
+    }
+    media = await pick();
+    if (media) provider = 'api-mazval-aio';
+  }
+
+  // 4) instance cobalt: IG, FB, X, TikTok, YouTube, SoundCloud, Pinterest, dll
+  if (!media && Date.now() < deadline) {
+    absorb(await resolveCobalt(url, deadline));
+    media = await pick();
+    if (media) provider = 'cobalt';
+  }
+
+  // 5) YouTube: instance Piped -> file mp4 muxed (audio + video dalam 1 file)
+  if (!media) {
     const yt = ytIdFrom(url);
     if (yt) {
-      console.log(`[down] resolver piped yt=${yt}`);
-      const resolved = await resolveYouTubeVideo(yt);
-      console.log(`[down] piped result=${resolved ? resolved.url : 'null'}`);
-      if (resolved) {
-        const base = (title || 'youtube').replace(/[^\w.\- ]+/g, '').trim().slice(0, 70) || 'video';
-        media = { type: 'video', url: resolved.url, name: `${base}.mp4`, mime: 'video/mp4' };
-        extraLinks.push(resolved.url);
-      }
+      const resolved = await resolveYouTubeVideo(yt, deadline);
+      if (resolved) absorb({ links: [resolved.url] });
+      media = await pick();
+      if (media) provider = 'piped';
     }
   }
 
-  // batas 4000 karakter: URL video googlevideo/piped biasanya panjang (>1000)
-  const all = [...new Set([...links, ...extraLinks])]
+  console.log(`[down] ${label} ${media ? media.type : 'gagal'} via ${provider || '-'} (${Date.now() - startedAt}ms)${errors.length ? ` — ${String(errors[0]).slice(0, 80)}` : ''}`);
+
+  // tautan unduh: URL panjang (googlevideo/tunnel) tetap disebut lewat catatan
+  const all = [...new Set(links)]
     .filter((l) => /^https?:\/\/[^\s<>"']{8,4000}$/i.test(String(l || '')))
     .filter((l) => !/^(https?:\/\/)?(www\.)?(cobalt\.tools|api\.qrcode)/i.test(l) || /cobalt\.tools\/api/i.test(l));
 
@@ -938,15 +1280,12 @@ async function downReply(raw) {
     .filter((l) => l !== source || DIRECT_FILE.test(l))
     .filter((l) => (haveVideo ? !/cobalt\.tools\/api/i.test(l) : true));
 
-  const note = res.download && res.download.note && !haveVideo
-    ? String(res.download.note)
-    : '';
-
-  const label = platform ? platform.label : 'Media';
+  const res = primaryRes || {};
+  const note = res.download && res.download.note && !haveVideo ? String(res.download.note) : '';
   const hasInfo = !!(title || dl.length || media);
 
   if (!hasInfo && !note) {
-    return errBlock('Video tidak dapat diunduh', 'Platform tidak mengembalikan data unduhan. Coba tautan lain.');
+    return errBlock('Video tidak dapat diunduh', errors[0] || 'Platform tidak mengembalikan data unduhan. Coba tautan lain.');
   }
 
   const out = [
@@ -983,8 +1322,11 @@ async function downReply(raw) {
     'Balas "menu" bila butuh perintah lain.'
   );
 
-  // tampilan langsung: video .mp4 bila tersedia, selain itu thumbnail/pratinjau
-  if (media) return { text: out.join('\n'), media };
+  // tampilan langsung: video bila tersedia, selain itu thumbnail/pratinjau
+  const preview = media
+    || pickMedia(sources, [], title)
+    || (cover ? { type: 'image', url: cover, name: title || 'preview', mime: guessMime(cover) || 'image/jpeg' } : null);
+  if (preview) return { text: out.join('\n'), media: preview };
   return out.join('\n');
 }
 

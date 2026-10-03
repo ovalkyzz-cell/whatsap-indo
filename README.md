@@ -14,7 +14,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
 | Kartu angka | Kode/token khusus (` ```angka `) tampil dengan **font angka profesional** (tabular, tracking lebar) + Copy |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
-| Preview unduh | Bot Downloader **mengunduh file video ke server** lalu menampilkannya sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback: thumbnail + tautan unduh) |
+| Preview unduh | Bot Downloader **wajib menampilkan hasil videonya**: rangkaian resolver otomatis (api-mazval → tikwm → fxtwitter → instance cobalt → Piped) mengambil file medianya, divalidasi via probe Range, lalu **diunduh ke server** dan tampil sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback terakhir: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
@@ -52,6 +52,9 @@ Variabel lingkungan opsional:
   (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap)
 - `MAZVAL_API_BASE` — base URL api-mazval (default `https://api-mazval.zone.id`)
 - `MAZVAL_API_TIMEOUT` — batas tunggu respons API bot dalam ms (default `45000`)
+- `DOWNLOAD_BUDGET_MS` — total waktu maksimal rangkaian resolver Downloader dalam ms
+  (default `90000`); berlaku untuk seluruh jalur: api-mazval, tikwm, fxtwitter, cobalt & Piped
+- `COBALT_API_KEY` — API key opsional bila memakai instance cobalt yang dilindungi key
 
 ## Arsitektur
 
@@ -61,9 +64,11 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
-  bots.js      # 45 bot admin (9 inti + 36 generik) + perintah + API api-mazval + resolver video
+  bots.js      # 45 bot admin (9 inti + 36 generik) + perintah + API api-mazval
+               # + rangkaian resolver Downloader (tikwm, fxtwitter, cobalt, Piped)
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
-               # storeBuffer/storeRemoteFile — simpan hasil unduhan bot (fs / Vercel Blob)
+               # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
+               # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
 public/
   index.html   # shell SPA (auth, chat, drawer, modal panggilan)
   css/style.css
@@ -73,7 +78,8 @@ test/
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 45 bot (admin & premium), edit nama bot
                # & 15 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan)
-  bot-reply.js # 47 assert unit test balasan 45 bot (API dimock, tanpa jaringan)
+  bot-reply.js # 53 assert unit test balasan 45 bot + rantai resolver Downloader
+               # (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -193,7 +199,7 @@ preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar ter
 | **Verif AM Prem** | `bot-verif-am` | `send <email>` → kirim tautan verifikasi Alight Motion Premium; `cek <email> <token>` → cek status verifikasi; `menu` |
 | **Generate NFToken** | `bot-nftoken` | `generate <1-10>` (default 1) → **respon JSON rapi** + tombol Copy; `menu` |
 | **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT, awalan dibuang dari isi); kode keluar sebagai **blok kode ala VS Code + Copy** (fence dijaga selalu seimbang); perintah tanpa pertanyaan ditolak; `menu` |
-| **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, dll — `max.com` tidak salah jadi Twitter) → **file video diunduh ke server lalu tampil sebagai pesan video** (kapsi *Hasil unduhan: X MB — siap ditonton & diunduh*) + judul, kreator & tautan unduh; resolver otomatis bila platform hanya memberi metadata: endpoint aio api-mazval → instance Piped (YouTube, di-probe Range dulu supaya benar-benar bisa diunduh); URL tanpa `https://` diterima; gagal resolver → thumbnail + panduan cobalt; `menu` |
+| **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, Threads, Reddit, dll — `max.com` tidak salah jadi Twitter) → **file media diunduh ke server lalu tampil sebagai pesan video** (kapsi *Hasil unduhan: X MB — siap ditonton & diunduh*) + judul, kreator & tautan unduh; **rangkaian resolver berlapis** bila jalur pertama tak memberi file: endpoint aio api-mazval → **tikwm** (TikTok/Douyin) → **fxtwitter** (X/Twitter) → **instance cobalt** (IG, FB, X, YT, SoundCloud, …) → **instance Piped** (YouTube, mp4 muxed); kandidat tanpa ekstensi **di-probe Range** dulu supaya benar-benar video; URL tanpa `https://` diterima; semua jalur gagal → thumbnail + panduan cobalt; `menu` |
 | **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
 | **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
 | **Screenshot Kode** | `bot-kodesnap` | `kode <teks>` → render kode jadi **gambar PNG tersimpan** (`/api/image/codesnap`); `menu` |
@@ -269,7 +275,9 @@ Cara kerja:
 4. **Hasil unduhan video/audio/berkas** (Downloader, npm zip) disimpan dulu ke penyimpanan
    kita — `server/upload.js` `storeRemoteFile`/`storeBuffer` menaruh file ke `uploads/`
    (lokal) atau **Vercel Blob** (produksi, `BLOB_READ_WRITE_TOKEN`) dengan validasi tipe
-   lewat magic bytes; pesan lalu memuat media `/uploads/…` + kapsi *Hasil unduhan: X MB*
+   lewat magic bytes; file besar dialirkan **streaming langsung ke disk** (batas video
+   512MB, tanpa menumpuk di RAM) dan nama file diambil dari `Content-Disposition`;
+   pesan lalu memuat media `/uploads/…` + kapsi *Hasil unduhan: X MB*
    sehingga file tetap bisa ditonton/diunduh meski tautan pihak ketiga kedaluwarsa.
 
 Pembatasan akses (gerbang `canUseBots` = **admin ATAU premium aktif**; menolak user biasa):
