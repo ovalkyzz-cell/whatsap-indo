@@ -161,18 +161,6 @@ CREATE TABLE IF NOT EXISTS presence (
 );
 CREATE INDEX IF NOT EXISTS idx_presence_user ON presence (user_id, at);
 
-CREATE TABLE IF NOT EXISTS calls (
-  id         TEXT PRIMARY KEY,
-  caller_id  TEXT NOT NULL,
-  callee_id  TEXT NOT NULL,
-  kind       TEXT NOT NULL DEFAULT 'audio',
-  state      TEXT NOT NULL DEFAULT 'ringing',
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls (caller_id);
-CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls (callee_id);
-
 CREATE TABLE IF NOT EXISTS bus (
   seq           BIGSERIAL PRIMARY KEY,
   msg_id        TEXT NOT NULL,
@@ -328,18 +316,6 @@ CREATE TABLE IF NOT EXISTS presence (
   PRIMARY KEY (user_id, socket_id)
 );
 CREATE INDEX IF NOT EXISTS idx_presence_user ON presence (user_id, at);
-
-CREATE TABLE IF NOT EXISTS calls (
-  id         TEXT PRIMARY KEY,
-  caller_id  TEXT NOT NULL,
-  callee_id  TEXT NOT NULL,
-  kind       TEXT NOT NULL DEFAULT 'audio',
-  state      TEXT NOT NULL DEFAULT 'ringing',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls (caller_id);
-CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls (callee_id);
 
 CREATE TABLE IF NOT EXISTS bus (
   seq           INTEGER PRIMARY KEY AUTOINCREMENT,

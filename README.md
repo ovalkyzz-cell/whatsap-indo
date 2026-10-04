@@ -1,6 +1,6 @@
 # Whatsap Indo
 
-Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, kirim **foto / video / audio / file hingga 2GB**, serta **panggilan suara & video** (WebRTC).
+Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, kirim **foto / video / audio / file hingga 2GB**. Fitur panggilan suara & video **tidak tersedia** (sengaja dihapus dari aplikasi).
 
 ## Fitur
 
@@ -16,7 +16,6 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
 | Preview unduh | Bot Downloader **wajib menampilkan hasil videonya**: rangkaian resolver otomatis (api-mazval → tikwm → fxtwitter → instance cobalt → Piped) mengambil file medianya, divalidasi via probe Range, lalu **diunduh ke server** dan tampil sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback terakhir: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
-| Panggilan | WebRTC 1-to-1: suara & video, ring, tolak/akhiri, mute mic/kamera |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
 | Bot premium | **45 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 36 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
@@ -26,8 +25,8 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Latar belakang chat | Ganti background percakapan dengan **foto atau video** (per akun, reset kapan saja) |
 | Background beranda | Latar halaman masuk bisa diganti **foto / video** — oleh admin (berlaku semua pengguna) maupun per akun (Menu → Latar Halaman Utama) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
-| Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat, aksi panggilan |
-| Notifikasi | Nada pesan + notifikasi browser saat tab tidak aktif |
+| Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat |
+| Notifikasi | Nada pesan + notifikasi browser saat tab tidak aktif + **Pusat Notifikasi** (lonceng dengan badge, riwayat notifikasi, tandai sudah dibaca) |
 | Profil | Nama, status, foto profil |
 | Responsif | Layout mobile (sidebar/chat bergantian) dan desktop ala WhatsApp Web |
 
@@ -49,7 +48,9 @@ Variabel lingkungan opsional:
 - `ADMIN_EMAILS` — daftar email admin dipisah koma (selain `ovalkyzz@gmail.com`); akun dengan
   email ini otomatis **aktif** tanpa persetujuan dan berhak memakai panel admin
 - `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai seluruh bot
-  (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap)
+  (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap). **Pengecualian:
+  Generator Gambar** (`brat`/`brathd`/`smeme`) tetap menghasilkan gambar sungguhan lewat
+  generator lokal (`server/bratimg.js` + `sharp`) saat API tidak tersedia
 - `MAZVAL_API_BASE` — base URL api-mazval (default `https://api-mazval.zone.id`)
 - `MAZVAL_API_TIMEOUT` — batas tunggu respons API bot dalam ms (default `45000`)
 - `DOWNLOAD_BUDGET_MS` — total waktu maksimal rangkaian resolver Downloader dalam ms
@@ -60,7 +61,7 @@ Variabel lingkungan opsional:
 
 ```
 server/
-  index.js     # Express + Socket.IO, routing API, signaling WebRTC
+  index.js     # Express + Socket.IO, routing API
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
@@ -69,12 +70,13 @@ server/
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
+  bratimg.js   # generator gambar lokal bot Generator Gambar (SVG -> sharp -> PNG brattxt-*.png)
 public/
-  index.html   # shell SPA (auth, chat, drawer, modal panggilan)
+  index.html   # shell SPA (auth, chat, drawer, pusat notifikasi)
   css/style.css
-  js/app.js    # state, API client, renderer, socket, WebRTC
+  js/app.js    # state, API client, renderer (inkremental), socket, pusat notifikasi
 test/
-  e2e.js       # 254 assert: auth, realtime, receipts, upload, delete, signaling panggilan,
+  e2e.js       # e2e: auth, realtime, receipts, upload, delete, fitur panggilan dihapus,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 45 bot (admin & premium), edit nama bot
                # & 15 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan)
@@ -126,32 +128,17 @@ Ada dua tingkatan:
 Layar tanpa login mengambil latar global dari `GET /api/settings/public` (tanpa autentikasi).
 URL divalidasi ketat: hanya path `/uploads/…` atau Blob Vercel (`settings.validBgUrl`).
 
-### Panggilan (WebRTC)
+### Panggilan (dihapus)
 
-Urutan sinyal:
+Fitur panggilan suara & video WebRTC **tidak ada di aplikasi ini** — modul `server/calls.js`,
+handler `call:*`, tombol panggilan, dan layar dering semuanya dihapus:
 
-1. `call:invite` (ada **ack**) → server menandai panggilan lalu mengirim `call:incoming` ke semua
-   tab/perangkat penerima. Offline → ack `ok:false`.
-2. Penerima menekan *Jawab* → `call:accept` (menutup layar dering di tab lain milik penerima)
-   → membuat SDP **offer**.
-3. Penjawab menerima `offer` → membuat **answer**; keduanya bertukar ICE candidate
-   lewat `call:signal` (hanya untuk panggilan yang terdaftar di server).
-4. Selesai: `call:hangup` / `call:reject` → `call:ended` dengan `reason`
-   (`ended` | `rejected` | `timeout` | `accepted` | `cancelled`).
+- tombol *Panggilan suara* / *Video call* tidak lagi ada di header chat & info kontak;
+- `server/index.js` tidak mendaftarkan listener `call:*` apa pun (event tersebut diabaikan);
+- test `e2e.js` bagian `[11]` mengunci kondisi ini: file modul tidak ada, marker frontend
+  (`startCall`, `RTCPeerConnection`, `call:invite`) hilang, dan event `call:*` tidak dijawab.
 
-Perilaku pelindung:
-
-- dering maksimal **60 detik** (lalu `timeout`), koneksi WebRTC maksimal **20 detik**;
-- `disconnected` diberi toleransi **8 detik** sebelum panggilan ditutup (blip jaringan tidak
-  langsung memutus), `failed` langsung menutup;
-- penelepon/penerima menutup tab saat masih berdering → pihak lain menerima `call:ended`;
-- menolak otomatis bila sudah berada di panggilan lain;
-- STUN publik Google/Twilio (tanpa TURN — untuk jaringan NAT ketat, tambahkan TURN server sendiri).
-
-> **Catatan HTTPS:** browser hanya mengizinkan `getUserMedia` (mikrofon/kamera) di **localhost**
-> atau lewat **HTTPS**. Buka `http://<ip-server>:3000` dari perangkat lain = panggilan akan
-> menolak dengan pesan jelas, karena itu untuk pemakaian luar localhost gunakan reverse proxy TLS
-> (mis. Caddy/Nginx) atau tunnel seperti ngrok.
+Komunikasi berjalan lewat pesan chat (teks, media, status, notifikasi) saja.
 
 ### Keamanan masuk, persetujuan & panel admin
 
@@ -226,7 +213,7 @@ preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar ter
 | **QR Code** | `bot-qr` | `buat <teks>` → QR jadi gambar; `baca <url gambar>` (`/api/tools/qr-*`) |
 | **Kode Pos & Wilayah** | `bot-pos` | `kodepos <area>`, `provinsi`, `jarak <dari> <ke>` |
 | **Jadwal Bola** | `bot-bola` | `bola [tanggal]` → pertandingan hari itu (TheSportsDB) |
-| **Generator Gambar** | `bot-brat` | `brat <teks>`, `brathd <teks>`, `smeme <teks>` → **gambar langsung di chat** |
+| **Generator Gambar** | `bot-brat` | `brat <teks>`, `brathd <teks>`, `smeme <teks>` → **gambar langsung di chat** (PNG lokal `brattxt-*.png` bila API tak tersedia) |
 | **Security Domain** | `bot-domain` | `recon <domain>`, `subdomain <domain>` (`/api/tools/domain-recon`, `/api/tools/subdomains`) |
 | **Cari NPM** | `bot-npm` | `npm <paket>` → versi, lisensi, deskripsi (`/api/tools/npmjs`) |
 | **OCR Gambar** | `bot-ocr` | `baca <url gambar>` → teks hasil OCR (`/api/tools/ocr`) |
@@ -269,7 +256,10 @@ Cara kerja:
    (`/api/tools/am-verif-*`, `/api/tools/nftoken-generate`, `/api/ai/*`, `/api/download/*`,
    `/api/tempmail/*`) dan bot generik endpoint publiknya (`/api/info/*`, `/api/tools/*`,
    `/api/stalk/*`, `/api/random/*`, `/api/s/*`, `/api/image/*` dst.) memakai `MAZVAL_API_KEY`
-   — kunci tidak pernah disimpan di kode maupun dikirim ke klien.
+   — kunci tidak pernah disimpan di kode maupun dikirim ke klien. Bila panggilan API gambar
+   gagal (tanpa kunci / layanan turun / respons tanpa media), **Generator Gambar** langsung
+   me-render PNG di server (`server/bratimg.js`: SVG → `sharp`) lalu menyimpannya ke
+   `/uploads/brattxt-*.png`, sehingga pengguna tetap menerima gambar sungguhan.
 3. Balasan disimpan sebagai pesan biasa dari akun bot: notifikasi push bila admin luring,
    badge terverifikasi, dan teks berformat profesional (header, langkah, kode token).
 4. **Hasil unduhan video/audio/berkas** (Downloader, npm zip) disimpan dulu ke penyimpanan
@@ -290,10 +280,7 @@ Pembatasan akses (gerbang `canUseBots` = **admin ATAU premium aktif**; menolak u
 - premium **dicabut** (`POST /api/admin/premium/revoke`) → bot langsung hilang dari pencarian
   & daftar chat, membuka chat bot kembali `403`;
 - bot **tidak bisa ditambahkan ke grup** (`POST /api/chats/:id/members` → `403`) dan tidak
-  membalas di grup;
-- bot **tidak bisa dipanggil**: `call:invite` ditolak server ("Bot tidak dapat dipanggil"),
-  tombol panggilan suara/video disembunyikan di header chat & info kontak, dan `startCall`
-  di frontend ikut menjaga dengan toast "Bot tidak bisa dipanggil".
+  membalas di grup.
 
 Foto profil bot — **khusus admin**:
 
@@ -302,9 +289,8 @@ Foto profil bot — **khusus admin**:
   chat (event `chat:updated`), tanpa muat ulang;
 - endpoint juga menerima `name` dan `about`; URL foto di luar `/uploads/*` atau Blob Vercel
   ditolak `400`; akun non-bot → `404`; user biasa → `403`;
-- badge centang biru & penanda `isBot` tetap melekat setelah diedit; tombol panggilan
-  suara/video disembunyikan di info kontak **dan** header chat bot, labelnya
-  "Bot resmi • Siap membantu", dan server menolak `call:invite` ke bot.
+- badge centang biru & penanda `isBot` tetap melekat setelah diedit, labelnya
+  "Bot resmi • Siap membantu".
 
 ### Keamanan
 
@@ -314,8 +300,8 @@ Foto profil bot — **khusus admin**:
   dari file buatan pengguna pada origin yang sama.
 - `POST /api/auth/register` dan `/api/auth/login` dibatasi **60 request/menit per IP** (anti
   brute-force) → HTTP `429`.
-- Endpoint API butuh `Authorization: Bearer <JWT>`; signaling panggilan hanya diteruskan ke
-  pengguna yang terdaftar dan merupakan peserta panggilan tersebut.
+- Endpoint API butuh `Authorization: Bearer <JWT>`; event socket hanya diteruskan ke
+  pengguna terautentikasi yang merupakan peserta chat terkait.
 
 ## Lisensi
 

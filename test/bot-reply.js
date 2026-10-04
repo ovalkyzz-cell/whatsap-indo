@@ -366,6 +366,31 @@ const bots = require(path);
     && brat.media.url.includes('api.brattxt.xyz'),
     'Bot generik: gambar Brat (host tanpa ekstensi) dikirim sebagai pesan gambar');
 
+  // cadangan lokal: API eksternal mati -> gambar dibuat langsung di server
+  const nodePath = require('path');
+  const fsPromises = require('fs').promises;
+  const uploadsDir = nodePath.join(__dirname, '..', 'uploads');
+  const realFetch = global.fetch;
+  const cleanup = [];
+  const collect = (r) => { if (r && r.media && typeof r.media.url === 'string' && r.media.url.startsWith('/uploads/')) cleanup.push(r.media.url.slice('/uploads/'.length)); return r; };
+
+  global.fetch = async () => { throw new Error('simulasi: jaringan API mati'); };
+  const bratLocal = collect(await bots.reply({ id: 'bot-brat' }, 'brat halo dari lokal'));
+  const smemeLocal = collect(await bots.reply({ id: 'bot-brat' }, 'smeme atas|bawah'));
+  const bratFail = await bots.reply({ id: 'bot-brat' }, 'brat');
+  global.fetch = realFetch;
+
+  ok(bratLocal && typeof bratLocal === 'object' && bratLocal.media && bratLocal.media.type === 'image'
+    && bratLocal.media.url.startsWith('/uploads/') && /brattxt/.test(bratLocal.media.url)
+    && bratLocal.media.mime === 'image/png',
+    'Generator Gambar: API mati -> tetap mengirim gambar PNG lokal (brattxt)');
+  ok(smemeLocal && smemeLocal.media && smemeLocal.media.type === 'image'
+    && /brattxt-smeme/.test(smemeLocal.media.url),
+    'Generator Gambar: smeme juga punya cadangan gambar lokal');
+  ok(typeof bratFail === 'string' && /Contoh:/.test(bratFail),
+    'Generator Gambar: tanpa teks tetap meminta contoh (bukan gambar kosong)');
+  await Promise.all(cleanup.map((f) => fsPromises.unlink(nodePath.join(uploadsDir, f)).catch(() => {})));
+
   const ss = await bots.reply({ id: 'bot-ss' }, 'ss example.com');
   ok(ss && typeof ss === 'object' && lastCall().params.url === 'https://example.com'
     && ss.media && ss.media.url.includes('image.thum.io'),

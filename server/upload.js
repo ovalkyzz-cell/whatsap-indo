@@ -199,14 +199,24 @@ function looksLike(buffer, kind, name) {
   return true;
 }
 
-async function storeBuffer(buffer, kind, filename) {
+async function storeBuffer(buffer, kind, filename, opts = {}) {
   if (!storageEnabled || !Buffer.isBuffer(buffer) || !buffer.length) return null;
   const limit = REMOTE_LIMITS[kind] || REMOTE_LIMITS.file;
   if (buffer.length > limit) return null;
   const name = safeName(filename, kind);
   if (!looksLike(buffer, kind, name)) return null;
   const ext = safeExt(name, kind);
-  const stored = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+  let stored = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+  // keepName: sebagian nama asli (sudah disanitasi) ikut tersimpan di URL —
+  // dipakai bot gambar lokal supaya berkasnya mudah dikenali (brattxt-*.png)
+  if (opts.keepName) {
+    const base = name
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^\w.-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+    if (base) stored = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${base}${ext}`;
+  }
   if (useBlob) {
     try {
       const { put } = require('@vercel/blob');

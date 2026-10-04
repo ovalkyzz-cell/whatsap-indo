@@ -14,8 +14,18 @@ const S = {
   peerCache: {},  // userId -> user
   statusFeed: [], // hasil /api/status (per pengguna)
   groupDraft: { name: '', members: [] },
-  // call
-  call: null, // { callId, peer, kind, pc, incoming, state, startedAt, timer }
+  more: {},         // chatId -> masih ada pesan lebih lama di server
+};
+
+/* status render panel pesan — dipakai untuk render inkrementen & scroll */
+const UI = {
+  chatId: null,        // chat yang sedang dirender
+  hasMore: true,       // masih ada riwayat sebelumnya di server
+  loadingOlder: false,
+  nearBottom: true,    // posisi scroll dekat bagian bawah
+  newWhileUp: 0,       // pesan baru masuk ketika sedang membaca ke atas
+  raf: 0,              // frame pending untuk listener scroll
+  chatsRaf: 0,         // frame pending untuk render daftar chat
 };
 
 /* ================= helpers ================= */
@@ -115,10 +125,6 @@ function showApp() {
 }
 
 function logout(callServer = true, message) {
-  if (S.call) {
-    try { S.socket?.emit('call:hangup', { to: S.call.peer.id, callId: S.call.callId }); } catch { /* noop */ }
-    closeCall();
-  }
   const token = S.token;
   if (callServer && token) {
     // cabut sesi di server (satu akun satu device)
@@ -248,7 +254,17 @@ function previewText(chat) {
   return kind + (m.body || m.mediaName || '');
 }
 
+// render daftar chat dikoordinasi per frame supaya tidak menumpuk
+// saat banyak event presence/pesan masuk bersamaan (scroll tetap mulus)
 function renderChatList() {
+  if (UI.chatsRaf) return;
+  UI.chatsRaf = requestAnimationFrame(() => {
+    UI.chatsRaf = 0;
+    renderChatListNow();
+  });
+}
+
+function renderChatListNow() {
   const q = $('searchInput').value.trim().toLowerCase();
   const scope = S.chats.filter((c) => (sideTab === 'groups' ? c.type === 'group' : true));
   const list = scope.filter((c) => {
@@ -326,9 +342,13 @@ async function openChat(chatId) {
   if (!S.messages[chatId]) {
     const data = await api(`/api/chats/${chatId}/messages?limit=100`);
     S.messages[chatId] = data.messages;
+    S.more[chatId] = !!data.hasMore;
   }
+  UI.hasMore = S.more[chatId] !== false;
+  UI.loadingOlder = false;
   renderMessages();
   markRead(chatId);
+  ncMarkChatRead(chatId);
   $('messageInput').focus();
 }
 
@@ -336,12 +356,6 @@ function updateChatStatus() {
   const chat = currentChat();
   if (!chat) return;
   const peer = chat.peer;
-  // bot tidak bisa dipanggil: tombol panggilan disembunyikan di header chat
-  const botPeer = !!(peer && peer.isBot);
-  for (const id of ['btnCallVoice', 'btnCallVideo']) {
-    const el = $(id);
-    if (el) el.style.display = botPeer ? 'none' : '';
-  }
   const t = S.typing[chat.id];
   if (t && Object.keys(t).length) {
     $('chatStatus').textContent = 'sedang mengetik...';
@@ -518,15 +532,21 @@ async function copyToClipboard(text) {
 }
 
 /* ================= messages render ================= */
-function renderMessages() {
-  const chat = currentChat();
-  if (!chat) return;
-  const msgs = S.messages[chat.id] || [];
-  const box = $('messages');
-  if (!msgs.length) {
-    box.innerHTML = `<div class="empty-state">Belum ada pesan. Sapa ${esc(chatTitle(chat))} sekarang 👋</div>`;
-    return;
-  }
+/* Render inkrementen: hanya node yang berubah yang disentuh sehingga
+   scroll ke atas/bawah tetap lancar tanpa jeda (tanpa rebuild penuh). */
+function cssSel(v) {
+  return String(v).replace(/["\\]/g, '\\$&');
+}
+
+function msgNode(id) {
+  return $('messages').querySelector(`[data-msg="${cssSel(id)}"]`);
+}
+
+function typingHtml() {
+  return '<div class="typing-indicator" id="typingIndicator"><span></span><span></span><span></span></div>';
+}
+
+function messagesInnerHtml(msgs, chat) {
   let html = '';
   let lastDay = '';
   for (const m of msgs) {
@@ -534,14 +554,120 @@ function renderMessages() {
     if (day !== lastDay) { html += `<div class="day-divider">${esc(day)}</div>`; lastDay = day; }
     html += messageHtml(m, chat);
   }
-  const typingNow = S.typing[chat.id] && Object.keys(S.typing[chat.id]).length;
-  if (typingNow) html += `<div class="typing-indicator" id="typingIndicator"><span></span><span></span><span></span></div>`;
-  box.innerHTML = html;
-  box.scrollTop = box.scrollHeight;
-  bindMessageActions();
+  if (S.typing[chat.id] && Object.keys(S.typing[chat.id]).length) html += typingHtml();
+  return html;
 }
 
-function messageHtml(m, chat) {
+function renderMessages() {
+  const chat = currentChat();
+  if (!chat) return;
+  const box = $('messages');
+  const msgs = S.messages[chat.id] || [];
+  const switching = UI.chatId !== chat.id;
+  const prevTop = box.scrollTop;
+  const prevHeight = box.scrollHeight;
+  if (!msgs.length) {
+    box.innerHTML = `<div class="empty-state">Belum ada pesan. Sapa ${esc(chatTitle(chat))} sekarang 👋</div>`;
+    UI.chatId = chat.id;
+    UI.nearBottom = true;
+    UI.newWhileUp = 0;
+    syncScrollFab();
+    return;
+  }
+  box.innerHTML = messagesInnerHtml(msgs, chat);
+  UI.chatId = chat.id;
+  if (switching) {
+    UI.nearBottom = true;
+    UI.newWhileUp = 0;
+    box.scrollTop = box.scrollHeight;
+  } else {
+    // pertahankan posisi baca (juga mengunci saat riwayat lama ditambahkan di atas)
+    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+  }
+  syncScrollFab();
+}
+
+// tambahkan tepat satu pesan ke panel tanpa merender ulang seluruh daftar
+function appendMessage(m, { animate = true } = {}) {
+  const chat = currentChat();
+  const box = $('messages');
+  if (!chat || !box || UI.chatId !== chat.id || m.chatId !== chat.id) return false;
+  if (msgNode(m.id)) return patchMessage(m);
+  const empty = box.querySelector('.empty-state');
+  if (empty) empty.remove();
+  let html = '';
+  const lastDivider = box.querySelector('.day-divider:last-of-type');
+  const day = fmtDay(m.createdAt);
+  if (!lastDivider || lastDivider.textContent !== day) html += `<div class="day-divider">${esc(day)}</div>`;
+  html += messageHtml(m, chat, { enter: animate });
+  const wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  const frag = document.createDocumentFragment();
+  while (wrap.firstElementChild) frag.appendChild(wrap.firstElementChild);
+  box.insertBefore(frag, $('typingIndicator'));
+  return true;
+}
+
+// perbarui satu node pesan (centang, hapus, sekali lihat) tanpa rebuild penuh
+function patchMessage(m) {
+  const chat = currentChat();
+  const node = msgNode(m.id);
+  if (!chat || !node) return false;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = messageHtml(m, chat);
+  const fresh = wrap.firstElementChild;
+  if (!fresh) return false;
+  node.replaceWith(fresh);
+  return true;
+}
+
+// gabungkan pesan (balasan server / pesan optimis) ke panel aktif
+function upsertMessage(m) {
+  if (UI.chatId !== m.chatId) return false;
+  if (msgNode(m.id)) return patchMessage(m);
+  return appendMessage(m);
+}
+
+function removeMessageNode(id) {
+  const node = msgNode(id);
+  if (!node) return;
+  const prev = node.previousElementSibling;
+  node.remove();
+  // buang pemisah hari yang kini menggantung
+  if (prev && prev.classList.contains('day-divider')) {
+    const next = prev.nextElementSibling;
+    if (!next || next.classList.contains('day-divider')) prev.remove();
+  }
+  const box = $('messages');
+  const chat = currentChat();
+  if (box && chat && UI.chatId === chat.id && !box.querySelector('.msg')) {
+    renderMessages(); // kembalikan layar kosong
+  }
+}
+
+function removeLocalMessage(chatId, localId) {
+  const arr = S.messages[chatId];
+  if (arr) {
+    const i = arr.findIndex((x) => x.id === localId);
+    if (i >= 0) arr.splice(i, 1);
+  }
+  removeMessageNode(localId);
+}
+
+// buang bubble optimis milik pengirim ketika pesan asli dari server tiba
+function dropMatchingLocal(m) {
+  const arr = S.messages[m.chatId] || [];
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const x = arr[i];
+    if (x.id.startsWith('local-') && x.type === m.type && (x.body || '') === (m.body || '')) {
+      arr.splice(i, 1);
+      removeMessageNode(x.id);
+      return;
+    }
+  }
+}
+
+function messageHtml(m, chat, opts = {}) {
   const out = m.senderId === S.me.id;
   const sender = out
     ? S.me
@@ -579,7 +705,7 @@ function messageHtml(m, chat) {
   }
   const hasBlock = !!m.body && m.body.includes('```');
   return `
-  <div class="msg ${out ? 'out' : 'in'}${hasBlock ? ' has-block' : ''}" data-msg="${m.id}">
+  <div class="msg ${out ? 'out' : 'in'}${hasBlock ? ' has-block' : ''}${opts.enter ? ' enter' : ''}" data-msg="${m.id}">
     ${!out && chat.type === 'group' ? `<div class="msg-sender">${esc(sender.name || '')}</div>` : ''}
     ${inner}
     ${progress}
@@ -591,37 +717,134 @@ function messageHtml(m, chat) {
   </div>`;
 }
 
+/* ---------- aksi pesan: satu listener delegasi (ringan & cepat) ---------- */
 function bindMessageActions() {
-  document.querySelectorAll('[data-copy]').forEach((b) => {
-    if (b._bound) return;
-    b._bound = true;
-    b.addEventListener('click', async () => {
-      const wrap = b.closest('.code-block, .numcard');
-      const codeEl = wrap && wrap.querySelector('code');
-      if (!codeEl) return;
-      const ok = await copyToClipboard(codeEl.innerText);
-      if (!ok) { toast('Gagal menyalin — coba klik kanan lalu Salin'); return; }
-      b.classList.add('copied');
-      const label = b.querySelector('.cb-copy-text');
-      if (label) label.textContent = 'Copied';
-      toast('Disalin ke papan klip');
-      setTimeout(() => {
-        b.classList.remove('copied');
-        if (label) label.textContent = 'Copy';
-      }, 1600);
+  $('messages').addEventListener('click', onMessagesClick);
+}
+
+async function onMessagesClick(e) {
+  const copyBtn = e.target.closest('[data-copy]');
+  if (copyBtn) {
+    const wrap = copyBtn.closest('.code-block, .numcard');
+    const codeEl = wrap && wrap.querySelector('code');
+    if (!codeEl) return;
+    const ok = await copyToClipboard(codeEl.innerText);
+    if (!ok) { toast('Gagal menyalin — coba klik kanan lalu Salin'); return; }
+    copyBtn.classList.add('copied');
+    const label = copyBtn.querySelector('.cb-copy-text');
+    if (label) label.textContent = 'Copied';
+    toast('Disalin ke papan klip');
+    setTimeout(() => {
+      copyBtn.classList.remove('copied');
+      if (label) label.textContent = 'Copy';
+    }, 1600);
+    return;
+  }
+  const delBtn = e.target.closest('[data-del]');
+  if (delBtn) {
+    try { await api(`/api/messages/${delBtn.dataset.del}`, { method: 'DELETE' }); }
+    catch (err) { toast(err.message); }
+    return;
+  }
+  const voBtn = e.target.closest('[data-vo]');
+  if (voBtn) { openViewOnce(voBtn.dataset.vo); return; }
+  const playBtn = e.target.closest('.ap-play');
+  if (playBtn) toggleAudioPlayer(playBtn.closest('.audio-player'));
+}
+
+/* ---------- scroll: lancar, tanpa lompat ---------- */
+function scrollToBottom(smooth) {
+  const box = $('messages');
+  if (!box) return;
+  if (smooth) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+  else box.scrollTop = box.scrollHeight;
+}
+
+function updateNearBottom() {
+  const box = $('messages');
+  if (!box) return;
+  const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+  UI.nearBottom = gap < 140;
+  if (UI.nearBottom) UI.newWhileUp = 0;
+  syncScrollFab();
+}
+
+function syncScrollFab() {
+  const btn = $('btnScrollDown');
+  if (!btn) return;
+  btn.classList.toggle('hidden', UI.nearBottom && !UI.newWhileUp);
+  const b = $('sdBadge');
+  if (b) {
+    b.classList.toggle('hidden', !UI.newWhileUp);
+    b.textContent = UI.newWhileUp > 99 ? '99+' : String(UI.newWhileUp);
+  }
+}
+
+function showOlderLoading(on) {
+  const el = $('olderLoading');
+  if (el) el.classList.toggle('hidden', !on);
+}
+
+// muat riwayat lebih lama saat mendekati bagian atas (infinite scroll)
+async function loadOlderMessages() {
+  const chat = currentChat();
+  if (!chat || UI.loadingOlder || !UI.hasMore) return;
+  const msgs = S.messages[chat.id] || [];
+  const first = msgs[0];
+  if (!first) { UI.hasMore = false; return; }
+  UI.loadingOlder = true;
+  showOlderLoading(true);
+  try {
+    const data = await api(`/api/chats/${chat.id}/messages?limit=50&before=${first.createdAt}`);
+    const older = (data.messages || []).filter((m) => !msgs.some((x) => x.id === m.id));
+    S.more[chat.id] = !!data.hasMore && older.length > 0;
+    UI.hasMore = S.more[chat.id];
+    if (older.length && UI.chatId === chat.id) {
+      S.messages[chat.id] = older.concat(msgs);
+      renderMessages(); // posisi baca dikunci otomatis oleh renderMessages
+    }
+  } catch { /* biarkan; bisa dicoba lagi */ }
+  finally {
+    UI.loadingOlder = false;
+    showOlderLoading(false);
+  }
+}
+
+// indikator "sedang mengetik" ditambah/dihapus tanpa merender ulang daftar
+function syncTypingIndicator() {
+  const chat = currentChat();
+  const box = $('messages');
+  if (!chat || !box || UI.chatId !== chat.id) return;
+  const on = !!(S.typing[chat.id] && Object.keys(S.typing[chat.id]).length);
+  let el = $('typingIndicator');
+  if (on && !el) {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = typingHtml();
+    el = wrap.firstElementChild;
+    box.appendChild(el);
+    if (UI.nearBottom) scrollToBottom(false);
+  } else if (!on && el) {
+    el.remove();
+  }
+}
+
+function bindMessagesScroll() {
+  const box = $('messages');
+  box.addEventListener('scroll', () => {
+    if (UI.raf) return;
+    UI.raf = requestAnimationFrame(() => {
+      UI.raf = 0;
+      updateNearBottom();
+      if (box.scrollTop < 60) void loadOlderMessages();
     });
+  }, { passive: true });
+
+  $('btnScrollDown').addEventListener('click', () => {
+    UI.newWhileUp = 0;
+    UI.nearBottom = true;
+    scrollToBottom(true);
+    syncScrollFab();
   });
-  document.querySelectorAll('[data-del]').forEach((b) => {
-    b.addEventListener('click', async () => {
-      try {
-        await api(`/api/messages/${b.dataset.del}`, { method: 'DELETE' });
-      } catch (err) { toast(err.message); }
-    });
-  });
-  document.querySelectorAll('[data-vo]').forEach((b) => {
-    b.addEventListener('click', () => openViewOnce(b.dataset.vo));
-  });
-  bindAudioPlayers();
 }
 
 /* ---------- pemutar pesan suara ---------- */
@@ -656,34 +879,29 @@ function stopAudio() {
   apWrap = null;
 }
 
-function bindAudioPlayers() {
-  document.querySelectorAll('.audio-player').forEach((wrap) => {
-    if (wrap._bound) return;
-    wrap._bound = true;
-    const btn = wrap.querySelector('.ap-play');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-      if (apWrap === wrap) { stopAudio(); return; }
-      stopAudio();
-      const audio = new Audio(wrap.dataset.src);
-      apAudio = audio;
-      apWrap = wrap;
-      wrap.classList.add('playing');
-      btn.innerHTML = '<svg viewBox="0 0 24 24" class="ico"><use href="#ic-pause" /></svg>';
-      audio.addEventListener('loadedmetadata', () => {
-        wrap._dur = audio.duration;
-        if (isFinite(audio.duration)) wrap.querySelector('.ap-time').textContent = fmtDur(audio.duration);
-      });
-      audio.addEventListener('timeupdate', () => {
-        const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-        const fill = wrap.querySelector('.ap-track i');
-        if (fill) fill.style.width = `${pct}%`;
-        wrap.querySelector('.ap-time').textContent = fmtDur(audio.currentTime);
-      });
-      audio.addEventListener('ended', stopAudio);
-      audio.play().catch(() => { stopAudio(); toast('Gagal memutar pesan suara'); });
-    });
+function toggleAudioPlayer(wrap) {
+  if (!wrap) return;
+  if (apWrap === wrap) { stopAudio(); return; }
+  stopAudio();
+  const btn = wrap.querySelector('.ap-play');
+  if (!btn) return;
+  const audio = new Audio(wrap.dataset.src);
+  apAudio = audio;
+  apWrap = wrap;
+  wrap.classList.add('playing');
+  btn.innerHTML = '<svg viewBox="0 0 24 24" class="ico"><use href="#ic-pause" /></svg>';
+  audio.addEventListener('loadedmetadata', () => {
+    wrap._dur = audio.duration;
+    if (isFinite(audio.duration)) wrap.querySelector('.ap-time').textContent = fmtDur(audio.duration);
   });
+  audio.addEventListener('timeupdate', () => {
+    const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+    const fill = wrap.querySelector('.ap-track i');
+    if (fill) fill.style.width = `${pct}%`;
+    wrap.querySelector('.ap-time').textContent = fmtDur(audio.currentTime);
+  });
+  audio.addEventListener('ended', stopAudio);
+  audio.play().catch(() => { stopAudio(); toast('Gagal memutar pesan suara'); });
 }
 
 /* ---------- foto sekali lihat ---------- */
@@ -696,11 +914,11 @@ function openViewOnce(messageId) {
   img.onload = () => {
     // server menandai "sudah dibuka" saat berkas pertama kali diminta
     m.opened = true;
-    renderMessages();
+    patchMessage(m);
   };
   img.onerror = () => {
     m.opened = true;
-    renderMessages();
+    patchMessage(m);
     toast('Foto sekali lihat sudah dibuka');
   };
   img.src = m.mediaUrl;
@@ -747,7 +965,13 @@ function connectSocket() {
   socket.on('message:new', (m) => {
     if (!S.messages[m.chatId]) S.messages[m.chatId] = [];
     const arr = S.messages[m.chatId];
-    if (!arr.some((x) => x.id === m.id)) arr.push(m);
+    const known = arr.some((x) => x.id === m.id);
+    if (!known) {
+      dropMatchingLocal(m); // buang bubble optimis milik pengirim
+      arr.push(m);
+    } else {
+      arr[arr.findIndex((x) => x.id === m.id)] = m;
+    }
 
     const chat = S.chats.find((c) => c.id === m.chatId);
     if (chat) {
@@ -757,7 +981,14 @@ function connectSocket() {
     }
     renderChatList();
     if (S.activeChatId === m.chatId) {
-      renderMessages();
+      appendMessage(m); // hanya node baru yang ditambahkan — scroll tidak lompat
+      if (m.senderId === S.me.id || UI.nearBottom) {
+        UI.newWhileUp = 0;
+        scrollToBottom(false); // instan: terasa cepat tanpa jeda
+      } else {
+        UI.newWhileUp++;
+      }
+      syncScrollFab();
       markRead(m.chatId);
       if (m.senderId !== S.me.id) notify(m);
     } else if (m.senderId !== S.me.id) {
@@ -769,14 +1000,14 @@ function connectSocket() {
     const arr = S.messages[chatId];
     if (!arr) return;
     const m = arr.find((x) => x.id === messageId);
-    if (m) { m.status = status; renderMessages(); renderChatList(); }
+    if (m) { m.status = status; patchMessage(m); renderChatList(); }
   });
 
   socket.on('message:deleted', (m) => {
     const arr = S.messages[m.chatId];
     if (!arr) return;
     const i = arr.findIndex((x) => x.id === m.id);
-    if (i >= 0) { arr[i] = m; renderMessages(); }
+    if (i >= 0) { arr[i] = m; patchMessage(m); }
     const chat = S.chats.find((c) => c.id === m.chatId);
     if (chat && chat.lastMessage?.id === m.id) { chat.lastMessage = m; renderChatList(); }
   });
@@ -785,18 +1016,36 @@ function connectSocket() {
     const arr = S.messages[chatId];
     if (!arr) return;
     const m = arr.find((x) => x.id === messageId);
-    if (m) { m.opened = true; renderMessages(); }
+    if (m) { m.opened = true; patchMessage(m); }
   });
 
-  socket.on('status:new', () => {
+  socket.on('status:new', ({ userId } = {}) => {
     if (sideTab === 'status') loadStatus().catch(() => {});
+    if (userId && userId !== S.me?.id) {
+      const chat = S.chats.find((c) => c.type !== 'group' && c.peer?.id === userId);
+      ncAdd({
+        kind: 'status',
+        title: 'Status baru',
+        body: `${chat ? chatTitle(chat) : 'Kontak Anda'} membagikan status baru`,
+        chatId: chat ? chat.id : null,
+        at: Date.now(),
+      });
+    }
   });
 
   // premium / peran admin berubah (diberikan lewat panel admin)
   socket.on('profile:updated', async () => {
     try {
+      const wasVerified = !!(S.me && S.me.verified);
+      const wasPremium = !!(S.me && S.me.premiumUntil > Date.now());
       const data = await api('/api/auth/me');
       S.me = data.user;
+      const isPremium = !!(S.me.premiumUntil > Date.now());
+      if (!wasVerified && S.me.verified) {
+        ncAdd({ kind: 'system', title: 'Akun terverifikasi ✓', body: 'Centang biru resmi kini aktif di profil Anda.', at: Date.now() });
+      } else if (!wasPremium && isPremium) {
+        ncAdd({ kind: 'system', title: 'Paket premium aktif', body: 'Masa aktif premium Anda telah dimulai. Selamat menikmati!', at: Date.now() });
+      }
       renderMe();
       if (!$('profileDrawer').classList.contains('hidden')) openProfile();
       if (!$('menuDrawer').classList.contains('hidden')) {
@@ -809,12 +1058,12 @@ function connectSocket() {
     if (!S.typing[chatId]) S.typing[chatId] = {};
     if (typing) {
       clearTimeout(S.typing[chatId][userId]);
-      S.typing[chatId][userId] = setTimeout(() => { delete S.typing[chatId][userId]; updateChatStatus(); renderMessages(); }, 3000);
+      S.typing[chatId][userId] = setTimeout(() => { delete S.typing[chatId][userId]; updateChatStatus(); syncTypingIndicator(); }, 3000);
     } else {
       clearTimeout(S.typing[chatId][userId]);
       delete S.typing[chatId][userId];
     }
-    if (S.activeChatId === chatId) { updateChatStatus(); renderMessages(); }
+    if (S.activeChatId === chatId) { updateChatStatus(); syncTypingIndicator(); }
   });
 
   socket.on('presence', ({ userId, online, lastSeen }) => {
@@ -833,11 +1082,6 @@ function connectSocket() {
       if (prevActive) updateChatStatus();
     }).catch(() => {});
   });
-
-  // calls
-  socket.on('call:incoming', onCallIncoming);
-  socket.on('call:signal', onCallSignal);
-  socket.on('call:ended', onCallEnded);
 }
 
 /* ================= notifikasi (melayang + sistem + push offline) ================= */
@@ -891,12 +1135,14 @@ function notify(m) {
   if (!m || !S.me || m.senderId === S.me.id) return;
   const payload = buildNotifPayload(m);
   const visible = document.visibilityState === 'visible';
+  const reading = visible && S.activeChatId === m.chatId && document.hasFocus();
+  // riwayat pusat notifikasi selalu dicatat; yang sedang dibaca langsung ditandai
+  ncAdd({ kind: 'message', title: payload.title, body: payload.body, chatId: payload.chatId, messageId: payload.messageId, icon: payload.icon, at: m.createdAt || Date.now(), read: reading });
   if (!visible) {
     if (NOTIF.sound) notifSound();
     void showSystemNotif(payload);
     return;
   }
-  const reading = S.activeChatId === m.chatId && document.hasFocus();
   if (reading) { if (NOTIF.sound) beep('notif'); return; }
   showNotifCard(payload);
 }
@@ -905,6 +1151,7 @@ function notify(m) {
 function notifyFromPush(data) {
   if (!data || !data.chatId) return;
   if (data.messageId && seenRecently(data.messageId)) return;
+  ncAdd({ kind: 'message', title: data.title, body: data.body, chatId: data.chatId, messageId: data.messageId, icon: data.icon, at: Date.now() });
   const visible = document.visibilityState === 'visible';
   const reading = S.activeChatId === data.chatId && document.hasFocus();
   if (visible) {
@@ -1090,6 +1337,147 @@ function beep(kind) {
   } catch { /* audio not available */ }
 }
 
+/* ================= pusat notifikasi (riwayat in-app) ================= */
+const NC = { key: 'wa_notif_center_v1', items: [], max: 60 };
+
+function ncLoad() {
+  try {
+    const raw = localStorage.getItem(NC.key);
+    NC.items = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(NC.items)) NC.items = [];
+  } catch { NC.items = []; }
+}
+
+function ncSave() {
+  try { localStorage.setItem(NC.key, JSON.stringify(NC.items.slice(0, NC.max))); }
+  catch { /* storage penuh / diblokir */ }
+}
+
+function ncUnread() {
+  return NC.items.filter((i) => !i.read).length;
+}
+
+function ncAdd(item) {
+  if (!item) return;
+  const entry = {
+    id: 'n-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    kind: item.kind || 'message',
+    title: String(item.title || 'Notifikasi').slice(0, 90),
+    body: String(item.body || '').slice(0, 200),
+    chatId: item.chatId || null,
+    messageId: item.messageId || null,
+    icon: item.icon || null,
+    at: item.at || Date.now(),
+    read: !!item.read,
+  };
+  if (entry.messageId && NC.items.some((i) => i.messageId === entry.messageId)) return;
+  NC.items.unshift(entry);
+  if (NC.items.length > NC.max) NC.items.length = NC.max;
+  ncSave();
+  ncRenderBell();
+  if (!$('notifDrawer').classList.contains('hidden')) ncRenderList();
+  ringBell();
+}
+
+function ringBell() {
+  const b = $('btnNotifCenter');
+  if (!b) return;
+  b.classList.remove('ring');
+  void b.offsetWidth; // paksa-ulang animasi lonceng
+  b.classList.add('ring');
+}
+
+function ncRenderBell() {
+  const el = $('bellBadge');
+  if (!el) return;
+  const n = ncUnread();
+  el.classList.toggle('hidden', !n);
+  el.textContent = n > 99 ? '99+' : String(n);
+}
+
+function ncItemHtml(i) {
+  const face = i.icon
+    ? `<img src="${esc(i.icon)}" alt="">`
+    : `<span>${esc(i.kind === 'status' ? '◉' : i.kind === 'system' ? '★' : (i.title || '?').charAt(0).toUpperCase())}</span>`;
+  return `
+  <button type="button" class="nc-item${i.read ? '' : ' unread'}" data-nc="${esc(i.id)}">
+    <span class="nc-ico avatar">${face}</span>
+    <span class="nc-txt"><strong>${esc(i.title)}</strong><small>${esc(i.body || '')}</small></span>
+    <time>${esc(fmtListTime(i.at))}</time>
+  </button>`;
+}
+
+function ncRenderList() {
+  const body = $('notifCenterBody');
+  if (!body) return;
+  if (!NC.items.length) {
+    body.innerHTML = '<div class="empty-state">Belum ada notifikasi.</div>';
+    return;
+  }
+  let html = '';
+  let lastDay = '';
+  for (const i of NC.items) {
+    const day = fmtDay(i.at);
+    if (day !== lastDay) { html += `<div class="day-divider">${esc(day)}</div>`; lastDay = day; }
+    html += ncItemHtml(i);
+  }
+  body.innerHTML = html;
+}
+
+function ncOpen() {
+  openDrawer('notifDrawer');
+  ncRenderList();
+  ncMarkAllRead();
+}
+
+function ncMarkAllRead() {
+  let changed = false;
+  for (const i of NC.items) if (!i.read) { i.read = true; changed = true; }
+  if (changed) { ncSave(); ncRenderBell(); ncRenderList(); }
+}
+
+// buka chat -> notifikasi milik chat itu langsung dianggap sudah dibaca
+function ncMarkChatRead(chatId) {
+  if (!chatId) return;
+  let changed = false;
+  for (const i of NC.items) if (!i.read && i.chatId === chatId) { i.read = true; changed = true; }
+  if (changed) {
+    ncSave();
+    ncRenderBell();
+    if (!$('notifDrawer').classList.contains('hidden')) ncRenderList();
+  }
+}
+
+function ncClear() {
+  NC.items = [];
+  ncSave();
+  ncRenderBell();
+  ncRenderList();
+  toast('Semua notifikasi dihapus');
+}
+
+function ncClick(id) {
+  const item = NC.items.find((i) => i.id === id);
+  if (!item) return;
+  item.read = true;
+  ncSave();
+  ncRenderBell();
+  closeDrawers();
+  if (item.chatId && S.activeChatId !== item.chatId) openChat(item.chatId);
+}
+
+$('btnNotifCenter').addEventListener('click', ncOpen);
+$('btnCloseNotif').addEventListener('click', closeDrawers);
+$('btnClearNotif').addEventListener('click', ncClear);
+$('btnMarkAllNotif').addEventListener('click', ncMarkAllRead);
+$('notifCenterBody').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-nc]');
+  if (el) ncClick(el.dataset.nc);
+});
+
+ncLoad();
+ncRenderBell();
+
 /* ================= send ================= */
 $('btnSend').addEventListener('click', sendMessage);
 $('messageInput').addEventListener('keydown', (e) => {
@@ -1147,23 +1535,17 @@ function sendViaSocket(payload, localId) {
   S.socket.emit('message:send', payload, (res) => {
     if (!res?.ok) {
       toast(res?.error || 'Gagal mengirim pesan');
-      if (localId && S.messages[payload.chatId]) {
-        const arr = S.messages[payload.chatId];
-        const i = arr.findIndex((x) => x.id === localId);
-        if (i >= 0) arr.splice(i, 1);
-        renderMessages();
-      }
+      if (localId && S.messages[payload.chatId]) removeLocalMessage(payload.chatId, localId);
       return;
     }
     const arr = S.messages[payload.chatId] || (S.messages[payload.chatId] = []);
-    if (localId) {
-      const i = arr.findIndex((x) => x.id === localId);
-      if (i >= 0) arr.splice(i, 1);
+    if (localId) removeLocalMessage(payload.chatId, localId);
+    if (res.message && !arr.some((x) => x.id === res.message.id)) arr.push(res.message);
+    if (res.message && payload.chatId === S.activeChatId) {
+      upsertMessage(res.message); // perbarui panel secara selektif
+      if (UI.nearBottom) scrollToBottom(false);
     }
-    if (res.message && !arr.some((x) => x.id === res.message.id)) {
-      arr.push(res.message);
-    }
-    renderMessages();
+    renderChatList();
   });
 }
 
@@ -1228,12 +1610,15 @@ async function uploadAndSend(file, text, chatId, opts = {}) {
   };
   if (!S.messages[chatId]) S.messages[chatId] = [];
   S.messages[chatId].push(tmp);
-  renderMessages();
+  if (S.activeChatId === chatId) {
+    appendMessage(tmp); // bubble optimis muncul seketika
+    scrollToBottom(false);
+  }
 
   try {
     const meta = await uploadFile(file, (p) => {
       tmp._progress = Math.round(p * 100);
-      const bar = document.querySelector(`[data-msg="${localId}"]`);
+      const bar = S.activeChatId === chatId ? msgNode(localId) : null;
       if (bar) {
         const fill = bar.querySelector('.uploading-bar i');
         const label = bar.querySelector('.uploading-label');
@@ -1253,10 +1638,7 @@ async function uploadAndSend(file, text, chatId, opts = {}) {
     beep('out');
   } catch (err) {
     toast(err.message);
-    const arr = S.messages[chatId];
-    const i = arr.findIndex((x) => x.id === localId);
-    if (i >= 0) arr.splice(i, 1);
-    renderMessages();
+    removeLocalMessage(chatId, localId);
   } finally {
     updateComposerButtons();
   }
@@ -1328,7 +1710,7 @@ function clearAttachPreview() {
 
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
-  'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer'];
+  'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer'];
 
 function openDrawer(id, withScrim = true) {
   DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
@@ -1436,7 +1818,7 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'admin') openAdminPanel();
     else if (action === 'about') {
       closeDrawers();
-      toast('Whatsap Indo v1.0.0 — chat real-time, media 2GB, panggilan WebRTC • MIT • © mazval-developer-java', 4200);
+      toast('Whatsap Indo v1.0.0 — chat real-time, media 2GB, notifikasi sistem • MIT • © mazval-developer-java', 4200);
     } else if (action === 'logout') {
       closeDrawers();
       logout();
@@ -1959,16 +2341,9 @@ async function openContactInfo() {
       </div>
       <div class="contact-actions">
         <button class="btn-ghost" id="ciChat"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-chat" /></svg> Pesan</button>
-        ${u.isBot ? '' : `
-        <button class="btn-ghost" id="ciVoice"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-phone" /></svg> Suara</button>
-        <button class="btn-ghost" id="ciVideo"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-video" /></svg> Video</button>`}
       </div>`;
     setAvatar($('contactAvatar'), peer);
     $('ciChat').addEventListener('click', () => { closeDrawers(); $('messageInput').focus(); });
-    if (!u.isBot) {
-      $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
-      $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
-    }
     if (canEditBot) bindBotProfileEdit(u, peer);
   } catch (err) {
     body.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
@@ -2483,392 +2858,6 @@ async function loadHomeBg() {
     applyHomeBg(data.homeBg);
   } catch { /* latar bawaan */ }
 }
-
-/* ================= WebRTC calls ================= */
-const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
-const RING_TIMEOUT_MS = 60000;    // maksimal menunggu jawaban
-const CONNECT_TIMEOUT_MS = 20000; // maksimal menunggu koneksi WebRTC terbentuk
-const DROP_GRACE_MS = 8000;       // toleransi 'disconnected' sebelum menutup panggilan
-
-function newCallId() { return 'call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
-
-function blankCall(fields) {
-  return {
-    startedAt: null, timer: null, ringTimer: null, connectTimer: null, dropTimer: null,
-    pendingSignals: [], pc: null, localStream: null, peerReady: null,
-    ...fields,
-  };
-}
-
-$('btnCallVoice').addEventListener('click', () => startCall('audio'));
-$('btnCallVideo').addEventListener('click', () => startCall('video'));
-
-function startCall(kind) {
-  const chat = currentChat();
-  if (!chat || !chat.peer) { toast('Pilih chat terlebih dahulu'); return; }
-  if (chat.peer.isBot) { toast('Bot tidak bisa dipanggil'); return; }
-  if (S.call) { toast('Sedang dalam panggilan lain'); return; }
-  if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
-
-  const call = blankCall({
-    callId: newCallId(), peer: chat.peer, kind,
-    incoming: false, state: 'calling', mic: true, cam: kind === 'video',
-  });
-  S.call = call;
-  openCallUI(call);
-  setCallState('Menghubungkan...');
-
-  S.socket.emit('call:invite', { to: chat.peer.id, callId: call.callId, kind }, (res) => {
-    if (S.call !== call) return;
-    if (!res?.ok) {
-      toast(res?.error || 'Tidak dapat menghubungi pengguna');
-      closeCall();
-      return;
-    }
-    call.state = 'ringing';
-    setCallState('Berdering...');
-    armRingTimeout(call);
-    // aktifkan mic/kamera lebih awal supaya pratinjau tampil saat berdering
-    ensurePeer().catch(() => {});
-  });
-}
-
-function armRingTimeout(call) {
-  clearTimeout(call.ringTimer);
-  call.ringTimer = setTimeout(() => {
-    if (S.call !== call) return;
-    S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId, reason: 'timeout' });
-    toast('Panggilan tidak dijawab');
-    closeCall();
-  }, RING_TIMEOUT_MS);
-}
-
-function armConnectTimeout(call) {
-  clearTimeout(call.connectTimer);
-  call.connectTimer = setTimeout(() => {
-    if (S.call !== call || call.startedAt) return;
-    setCallState('Koneksi gagal');
-    S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
-    toast('Koneksi panggilan gagal');
-    closeCall();
-  }, CONNECT_TIMEOUT_MS);
-}
-
-function onCallIncoming({ callId, kind, from }) {
-  if (!callId || !from || !from.id) return;
-  if (S.call) { // sudah sibuk -> tolak otomatis
-    S.socket?.emit('call:reject', { to: from.id, callId });
-    return;
-  }
-  const cleanKind = kind === 'video' ? 'video' : 'audio';
-  S.call = blankCall({
-    callId, peer: from, kind: cleanKind,
-    incoming: true, state: 'incoming', mic: true, cam: cleanKind === 'video',
-  });
-  $('inCallerName').innerHTML = esc(from.name) + badge(from.verified);
-  $('inCallKind').textContent = cleanKind === 'video' ? 'Panggilan video masuk...' : 'Panggilan suara masuk...';
-  setAvatar($('inCallerAvatar'), from);
-  $('incomingCall').classList.remove('hidden');
-  beep('notif');
-}
-
-$('btnRejectCall').addEventListener('click', () => {
-  const call = S.call;
-  if (!call) return;
-  S.socket?.emit('call:reject', { to: call.peer.id, callId: call.callId });
-  closeCall();
-});
-$('btnAcceptCall').addEventListener('click', async () => {
-  const call = S.call;
-  if (!call || !call.incoming) return;
-  if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
-
-  $('incomingCall').classList.add('hidden');
-  call.incoming = false;
-  call.state = 'connecting';
-  openCallUI(call);
-  setCallState('Menghubungkan...');
-  S.socket.emit('call:accept', { callId: call.callId });
-
-  try {
-    await ensurePeer();
-    const offer = await call.pc.createOffer();
-    await call.pc.setLocalDescription(offer);
-    S.socket.emit('call:signal', {
-      to: call.peer.id, callId: call.callId,
-      signal: { type: 'offer', offer: call.pc.localDescription },
-    });
-    setCallState('Menunggu koneksi...');
-    armConnectTimeout(call);
-  } catch (err) {
-    console.warn(err);
-    if (S.call === call) { // abortCall sudah menangani kasus izin media ditolak
-      toast('Gagal memulai panggilan');
-      S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
-      closeCall();
-    }
-    return;
-  }
-  drainSignals();
-});
-
-$('btnHangup').addEventListener('click', () => {
-  const call = S.call;
-  if (!call) return;
-  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
-  closeCall();
-});
-
-function onCallSignal({ callId, signal }) {
-  if (!S.call || S.call.callId !== callId) return;
-  if (!signal || typeof signal !== 'object') return;
-  S.call.pendingSignals.push(signal);
-  drainSignals();
-}
-
-/* Diproses satu per satu (rantai promise) agar offer/answer/ICE tidak
-   saling menabrak ketika getUserMedia masih berjalan. */
-let drainChain = Promise.resolve();
-
-function drainSignals() {
-  drainChain = drainChain.then(runDrain).catch((err) => console.warn('signal drain', err));
-}
-
-async function runDrain() {
-  const call = S.call;
-  if (!call || !call.pendingSignals.length) return;
-  // sinyal untuk panggilan masuk ditampung sampai ditekan "Jawab"
-  if (call.incoming && !$('incomingCall').classList.contains('hidden')) return;
-  await ensurePeer();
-  while (S.call === call && call.pendingSignals.length) {
-    await handleSignal(call.pendingSignals.shift());
-  }
-}
-
-function ensurePeer() {
-  const call = S.call;
-  if (!call) return Promise.reject(new Error('Panggilan sudah berakhir'));
-  if (!call.peerReady) call.peerReady = createPeer(call);
-  return call.peerReady;
-}
-
-async function createPeer(call) {
-  const pc = new RTCPeerConnection(ICE);
-  call.pc = pc;
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    const err = new Error('Akses kamera/mikrofon butuh HTTPS atau localhost');
-    abortCall(call, err.message);
-    throw err;
-  }
-
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: call.kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
-    });
-  } catch (err) {
-    abortCall(call, 'Akses kamera/mikrofon ditolak: ' + (err.message || 'izin ditolak'));
-    throw err;
-  }
-
-  if (S.call !== call) { // panggilan sudah ditutup selama meminta izin
-    stream.getTracks().forEach((t) => t.stop());
-    throw new Error('Panggilan sudah berakhir');
-  }
-
-  call.localStream = stream;
-  stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-  $('localVideo').srcObject = stream;
-  $('localVideo').style.display = call.kind === 'video' ? 'block' : 'none';
-  $('btnToggleMic').disabled = false;
-  $('btnToggleCam').disabled = call.kind !== 'video';
-
-  pc.ontrack = (e) => {
-    if (S.call !== call || !e.streams || !e.streams[0]) return;
-    if (!$('remoteVideo').srcObject) $('remoteVideo').srcObject = e.streams[0];
-    $('remoteVideo').style.display = 'block';
-    // panggilan suara: avatar tetap tampil; video: avatar hilang saat video tiba
-    if (e.track && e.track.kind === 'video') $('callAvatarFallback').style.display = 'none';
-    setCallState('Tersambung');
-    if (!call.startedAt) startCallTimer();
-  };
-
-  pc.onicecandidate = (e) => {
-    if (e.candidate && S.call === call) {
-      S.socket?.emit('call:signal', {
-        to: call.peer.id, callId: call.callId,
-        signal: { type: 'candidate', candidate: e.candidate },
-      });
-    }
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (S.call !== call) return;
-    const st = pc.connectionState;
-    if (st === 'connected') {
-      clearTimeout(call.dropTimer);
-      setCallState('Tersambung');
-      if (!call.startedAt) startCallTimer();
-    } else if (st === 'failed') {
-      setCallState('Koneksi gagal');
-      finishCall(call, 'Koneksi panggilan gagal');
-    } else if (st === 'disconnected') {
-      setCallState('Koneksi terputus...');
-      clearTimeout(call.dropTimer);
-      call.dropTimer = setTimeout(() => {
-        if (S.call === call && pc.connectionState !== 'connected') finishCall(call, 'Panggilan terputus');
-      }, DROP_GRACE_MS);
-    }
-  };
-
-  return pc;
-}
-
-function abortCall(call, message) {
-  if (S.call !== call) return;
-  toast(message);
-  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
-  closeCall();
-}
-
-function finishCall(call, message) {
-  if (S.call !== call) return;
-  toast(message);
-  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
-  closeCall();
-}
-
-async function handleSignal(signal) {
-  const call = S.call;
-  if (!call || !call.pc) return;
-  try {
-    if (signal.type === 'offer') {
-      await call.pc.setRemoteDescription(new RTCSessionDescription(signal.offer));
-      await flushCandidates(call);
-      const answer = await call.pc.createAnswer();
-      await call.pc.setLocalDescription(answer);
-      S.socket?.emit('call:signal', {
-        to: call.peer.id, callId: call.callId,
-        signal: { type: 'answer', answer: call.pc.localDescription },
-      });
-      setCallState('Menunggu koneksi...');
-      armConnectTimeout(call);
-    } else if (signal.type === 'answer') {
-      await call.pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      await flushCandidates(call);
-      setCallState('Menunggu koneksi...');
-      armConnectTimeout(call);
-    } else if (signal.type === 'candidate') {
-      if (!call.pc.remoteDescription) {
-        (call.bufferedCandidates = call.bufferedCandidates || []).push(signal.candidate);
-      } else {
-        await call.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
-      }
-    }
-  } catch (err) { console.warn('signal error', err); }
-}
-
-async function flushCandidates(call) {
-  const list = call.bufferedCandidates || [];
-  call.bufferedCandidates = [];
-  for (const c of list) {
-    try { await call.pc.addIceCandidate(new RTCIceCandidate(c)); } catch (err) { console.warn(err); }
-  }
-}
-
-function onCallEnded({ callId, reason }) {
-  if (!S.call || S.call.callId !== callId) return;
-  // diterima/ditolak di tab lain: cukup tutup layar dering, jangan ganggu panggilan aktif
-  if (reason === 'accepted' || reason === 'cancelled') {
-    if (S.call.incoming) closeCall();
-    return;
-  }
-  if (reason === 'rejected') toast('Panggilan ditolak');
-  else if (reason === 'timeout') toast('Panggilan tidak dijawab');
-  else toast('Panggilan diakhiri');
-  closeCall();
-}
-
-function openCallUI(call) {
-  $('callPeerName').innerHTML = esc(call.peer.name) + badge(call.peer.verified);
-  setAvatar($('callPeerAvatar'), call.peer);
-  $('remoteVideo').srcObject = null;
-  $('localVideo').srcObject = null;
-  $('remoteVideo').style.display = 'none';
-  $('localVideo').style.display = 'none';
-  $('callAvatarFallback').style.display = 'flex';
-  $('btnToggleCam').style.display = call.kind === 'video' ? 'inline-flex' : 'none';
-  $('btnToggleMic').classList.remove('off');
-  $('btnToggleCam').classList.remove('off');
-  $('btnToggleMic').disabled = true;
-  $('btnToggleCam').disabled = true;
-  $('callTimer').textContent = '00:00';
-  $('activeCall').classList.remove('hidden');
-}
-
-function setCallState(text) {
-  const el = $('callStateText');
-  if (el) el.textContent = text;
-}
-
-function startCallTimer() {
-  const call = S.call;
-  if (!call || call.startedAt) return;
-  call.startedAt = Date.now();
-  clearInterval(call.timer);
-  call.timer = setInterval(() => {
-    if (!S.call || S.call !== call) { clearInterval(call.timer); return; }
-    const s = Math.floor((Date.now() - call.startedAt) / 1000);
-    $('callTimer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  }, 1000);
-}
-
-function closeCall() {
-  const call = S.call;
-  if (!call) return;
-  clearInterval(call.timer);
-  clearTimeout(call.ringTimer);
-  clearTimeout(call.connectTimer);
-  clearTimeout(call.dropTimer);
-  if (call.localStream) call.localStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
-  if (call.pc) {
-    try {
-      call.pc.ontrack = null;
-      call.pc.onicecandidate = null;
-      call.pc.onconnectionstatechange = null;
-      call.pc.close();
-    } catch { /* noop */ }
-  }
-  $('activeCall').classList.add('hidden');
-  $('incomingCall').classList.add('hidden');
-  $('remoteVideo').srcObject = null;
-  $('localVideo').srcObject = null;
-  $('remoteVideo').style.display = 'none';
-  $('localVideo').style.display = 'none';
-  $('callAvatarFallback').style.display = 'flex';
-  S.call = null;
-}
-
-$('btnToggleMic').addEventListener('click', () => {
-  const call = S.call;
-  if (!call?.localStream) { toast('Mikrofon belum siap'); return; }
-  const track = call.localStream.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled;
-  call.mic = track.enabled;
-  $('btnToggleMic').classList.toggle('off', !track.enabled);
-});
-$('btnToggleCam').addEventListener('click', () => {
-  const call = S.call;
-  if (!call?.localStream) { toast('Kamera belum siap'); return; }
-  const track = call.localStream.getVideoTracks()[0];
-  if (!track) { toast('Kamera tidak tersedia'); return; }
-  track.enabled = !track.enabled;
-  call.cam = track.enabled;
-  $('btnToggleCam').classList.toggle('off', !track.enabled);
-});
 
 /* ================= misc ui ================= */
 $('btnBack').addEventListener('click', () => {
@@ -3525,6 +3514,8 @@ $('btnRecSend').addEventListener('click', () => stopRecording(true));
 
 /* ================= init ================= */
 (async function init() {
+  bindMessageActions(); // satu listener delegasi untuk semua tombol pesan
+  bindMessagesScroll();  // scroll + tombol "ke pesan terbaru"
   void loadHomeBg();
   void registerSW();
   const deepChat = new URLSearchParams(location.search).get('chat');

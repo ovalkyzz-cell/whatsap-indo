@@ -10,7 +10,6 @@ const db = require('./db');
 const auth = require('./auth');
 const helpers = require('./helpers');
 const presence = require('./presence');
-const calls = require('./calls');
 const bus = require('./bus');
 const settings = require('./settings');
 const bots = require('./bots');
@@ -143,10 +142,6 @@ async function emitToUserExcept(userId, exceptSocketId, event, payload) {
 
 async function emitToUsers(userIds, event, payload) {
   await dispatch(userIds.map((userId) => ({ userId, event, payload })));
-}
-
-function publicCaller(row, viewerId) {
-  return helpers.serializeUser(row, viewerId, { premium: false });
 }
 
 function requireAdmin(req, res, next) {
@@ -1298,19 +1293,6 @@ async function broadcastPresence(userId) {
   await emitToUser(userId, 'presence', { userId, online, lastSeen: (row && row.last_seen) || Date.now() });
 }
 
-async function cleanupCalls(userId) {
-  const mine = await calls.listForUser(userId);
-  for (const call of mine) {
-    const other = call.caller_id === userId ? call.callee_id : call.caller_id;
-    if (call.state === 'ringing') {
-      const removed = await calls.remove(call.id);
-      if (removed) await emitToUser(other, 'call:ended', { callId: call.id, reason: 'ended' });
-    } else if (!(await presence.isOnline(call.caller_id)) && !(await presence.isOnline(call.callee_id))) {
-      await calls.remove(call.id);
-    }
-  }
-}
-
 async function handleDisconnect(user, socketId) {
   try {
     await presence.remove(user.id, socketId);
@@ -1321,7 +1303,6 @@ async function handleDisconnect(user, socketId) {
         await adminEvent('offline', { userId: user.id, name: user.name, email: user.email, lastSeen: Date.now() });
       }
     }
-    await cleanupCalls(user.id);
   } catch (err) {
     console.error('disconnect:', err.message);
   }
@@ -1414,106 +1395,7 @@ io.on('connection', (socket) => {
       .catch((err) => console.error('chat:read:', err.message));
   });
 
-  // ---------- WebRTC signaling ----------
-  socket.on('call:invite', ({ to, callId, kind } = {}, ack) => {
-    const reply = (payload) => { try { ack?.(payload); } catch { /* ack sudah ditutup */ } };
-    void (async () => {
-      try {
-        const targetId = String(to || '');
-        const id = String(callId || '');
-        if (!id) return reply({ ok: false, error: 'Permintaan panggilan tidak valid' });
-        if (!targetId || targetId === user.id) return reply({ ok: false, error: 'Tidak dapat menelepon pengguna ini' });
-        const target = await db.get('SELECT id, is_bot FROM users WHERE id = ?', targetId);
-        if (!target) return reply({ ok: false, error: 'Pengguna tidak ditemukan' });
-        if (bots.isBot(target)) return reply({ ok: false, error: 'Bot tidak dapat dipanggil' });
-
-        await calls.create({ id, callerId: user.id, calleeId: targetId, kind });
-        const delivered = await emitToUser(targetId, 'call:incoming', {
-          callId: id,
-          kind: kind === 'video' ? 'video' : 'audio',
-          from: publicCaller(user, targetId),
-        });
-        if (!delivered) {
-          await calls.remove(id);
-          return reply({ ok: false, error: 'Pengguna sedang offline' });
-        }
-        reply({ ok: true, delivered: true });
-      } catch (err) {
-        console.error('call:invite:', err.message);
-        reply({ ok: false, error: 'Gagal memulai panggilan' });
-      }
-    })();
-  });
-
-  socket.on('call:accept', ({ callId } = {}) => {
-    void (async () => {
-      try {
-        const id = String(callId || '');
-        const call = await calls.get(id);
-        if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
-        await calls.setState(id, 'accepted');
-        await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'accepted' });
-      } catch (err) {
-        console.error('call:accept:', err.message);
-      }
-    })();
-  });
-
-  socket.on('call:signal', ({ to, callId, signal } = {}) => {
-    void (async () => {
-      try {
-        const targetId = String(to || '');
-        const id = String(callId || '');
-        if (!id || !targetId || targetId === user.id) return;
-        const call = await calls.get(id);
-        if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
-        if (!signal || typeof signal !== 'object') return;
-        if (!['offer', 'answer', 'candidate'].includes(signal.type)) return;
-        if (!(await db.get('SELECT id FROM users WHERE id = ?', targetId))) return;
-        if (signal.type === 'answer') await calls.setState(id, 'active');
-        await emitToUser(targetId, 'call:signal', {
-          callId: id,
-          from: publicCaller(user, targetId),
-          signal,
-        });
-      } catch (err) {
-        console.error('call:signal:', err.message);
-      }
-    })();
-  });
-
-  socket.on('call:reject', ({ to, callId } = {}) => {
-    void (async () => {
-      try {
-        const id = String(callId || '');
-        const targetId = String(to || '');
-        await calls.remove(id);
-        if (targetId && targetId !== user.id) {
-          await emitToUser(targetId, 'call:ended', { callId: id, reason: 'rejected' });
-        }
-        await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'cancelled' });
-      } catch (err) {
-        console.error('call:reject:', err.message);
-      }
-    })();
-  });
-
-  socket.on('call:hangup', ({ to, callId, reason } = {}) => {
-    void (async () => {
-      try {
-        const id = String(callId || '');
-        const targetId = String(to || '');
-        await calls.remove(id);
-        const mapped = reason === 'timeout' ? 'timeout' : 'ended';
-        if (targetId && targetId !== user.id) {
-          await emitToUser(targetId, 'call:ended', { callId: id, reason: mapped });
-        }
-        await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'ended' });
-      } catch (err) {
-        console.error('call:hangup:', err.message);
-      }
-    })();
-  });
+  // Fitur panggilan (suara & video WebRTC) sudah dihapus dari aplikasi ini.
 
   socket.on('disconnect', () => {
     void handleDisconnect(user, socket.id);

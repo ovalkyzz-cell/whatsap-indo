@@ -1,7 +1,7 @@
 {
   "name": "whatsap-indo",
   "version": "1.0.0",
-  "description": "Whatsap Indo - clone WhatsApp real-time chat dengan autentikasi email, kirim pesan, foto, video, file hingga 2GB, dan panggilan video",
+  "description": "Whatsap Indo - clone WhatsApp real-time chat dengan autentikasi email, kirim pesan, foto, video, file hingga 2GB, dan pusat notifikasi",
   "main": "server/index.js",
   "type": "commonjs",
   "scripts": {
@@ -15,7 +15,7 @@
     "chat",
     "realtime",
     "socket.io",
-    "webrtc"
+    "notifications"
   ],
   "license": "MIT",
   "engines": {
@@ -29,6 +29,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.4.0",
     "pg": "^8.23.0",
+    "sharp": "^0.35.5",
     "socket.io": "^4.8.1",
     "web-push": "^3.6.7"
   },

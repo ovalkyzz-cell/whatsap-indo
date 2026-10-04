@@ -226,86 +226,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const rm2 = await api(`/api/chats/${chatId}/messages`, { token: tokB });
   ok(rm2.data.messages.find((m) => m.id === msg1.id)?.deleted, 'message marked deleted for receiver');
 
-  console.log('\n[11] Call signaling (suara & video WebRTC)');
-  const sockB2 = io(BASE, { auth: { token: tokB } });
-  await new Promise((r) => sockB2.on('connect', r));
+  console.log('\n[11] Fitur panggilan (suara & video) dihapus total');
+  const pathMod = require('path');
+  ok(!fs.existsSync(pathMod.join(__dirname, '..', 'server', 'calls.js')), 'server/calls.js sudah dihapus');
+  const idxSrc = fs.readFileSync(pathMod.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  ok(!idxSrc.includes("require('./calls')") && !idxSrc.includes("'call:") && !idxSrc.includes('"call:'),
+    'server/index.js tidak lagi mendaftarkan handler call:*');
+  ok(!html.includes('btnCallVoice') && !html.includes('btnCallVideo')
+    && !html.includes('id="incomingCall"') && !html.includes('id="activeCall"'),
+    'tombol & modal panggilan hilang dari index.html');
+  ok(!jsText.includes('startCall') && !jsText.includes('RTCPeerConnection')
+    && !jsText.includes("socket.on('call:") && !jsText.includes('call:invite'),
+    'app.js tidak punya logika panggilan WebRTC');
+  const cssText = await css.text();
+  ok(!cssText.includes('.call-modal') && !cssText.includes('.call-btn'),
+    'style.css tidak punya gaya panel panggilan');
 
-  const callId = `call-${stamp}`;
-  const incB = waitEvent(sockB, 'call:incoming');
-  const incB2 = waitEvent(sockB2, 'call:incoming');
-  let inviteAck = null;
-  sockA2.emit('call:invite', { to: userB.id, callId, kind: 'video' }, (res) => { inviteAck = res; });
-  const incoming = await incB;
-  await sleep(100); // tunggu ack sampai (dikirim server setelah event)
-  ok(inviteAck?.ok === true, 'invite acknowledged');
-  ok(incoming.callId === callId && incoming.kind === 'video', 'callee receives video call invite');
-  ok(incoming.from?.id === userA.id && incoming.from?.verified === false, 'caller identity + verified flag delivered');
-  await incB2;
-  ok(true, 'second tab of callee rings too (multi-device)');
-
-  const acceptedEv = waitEvent(sockB2, 'call:ended');
-  sockB.emit('call:accept', { callId });
-  const accepted = await acceptedEv;
-  ok(accepted.reason === 'accepted' && accepted.callId === callId, 'other tab stops ringing after accept');
-
-  const offerEv = waitEvent(sockA2, 'call:signal');
-  sockB.emit('call:signal', { to: userA.id, callId, signal: { type: 'offer', offer: { type: 'offer', sdp: 'v=0\r\nfake-offer' } } });
-  const offer = await offerEv;
-  ok(offer.signal.type === 'offer' && offer.callId === callId, 'caller receives SDP offer');
-
-  const answerEv = waitEvent(sockB, 'call:signal');
-  sockA2.emit('call:signal', { to: userB.id, callId, signal: { type: 'answer', answer: { type: 'answer', sdp: 'v=0\r\nfake-answer' } } });
-  const answer = await answerEv;
-  ok(answer.signal.type === 'answer', 'callee receives SDP answer');
-
-  const candEv = waitEvent(sockA2, 'call:signal');
-  sockB.emit('call:signal', { to: userA.id, callId, signal: { type: 'candidate', candidate: { candidate: 'candidate:1 1 udp 1 1.2.3.4 1234 typ host', sdpMid: '0' } } });
-  const cand = await candEv;
-  ok(cand.signal.type === 'candidate', 'ICE candidate relayed');
-
-  // signal untuk panggilan tak dikenal / bukan peserta -> dibuang, server tetap hidup
-  sockA2.emit('call:signal', { to: userB.id, callId: 'call-tidak-terdaftar', signal: { type: 'offer', offer: {} } });
-  const stale = await expectNoEvent(sockA2, 'call:signal');
-  ok(!stale.got, 'signal for unknown call is dropped');
-
-  // self-call ditolak
-  let selfAck = null;
-  sockA2.emit('call:invite', { to: userA.id, callId: `${callId}-self`, kind: 'audio' }, (r) => { selfAck = r; });
-  await sleep(150);
-  ok(selfAck && selfAck.ok === false, 'self-call rejected');
-
-  // user terdaftar tapi offline -> invite gagal
-  const rC = await signup({
-    email: `calo${stamp}@test.id`,
-    name: 'Calo',
-    password: 'secret123',
-  });
-  ok(rC.status === 201 && rC.data.token, 'akun Calo siap (offline)');
-  let offlineAck = null;
-  sockA2.emit('call:invite', { to: rC.data.user.id, callId: `${callId}-off`, kind: 'audio' }, (r) => { offlineAck = r; });
-  await sleep(150);
-  ok(offlineAck && offlineAck.ok === false && /offline/i.test(offlineAck.error || ''), 'invite to offline user rejected');
-
-  // tolak -> penelepon diberi tahu
-  const rejectedEv = waitEvent(sockA2, 'call:ended');
-  const cancelledEv = waitEvent(sockB2, 'call:ended');
-  sockB.emit('call:reject', { to: userA.id, callId });
-  const rejected = await rejectedEv;
-  const cancelled = await cancelledEv;
-  ok(rejected.reason === 'rejected', 'caller told call was rejected');
-  ok(cancelled.reason === 'cancelled', 'callee other tab stopped ringing');
-
-  // penelepon keluar saat berdering -> penerima ditutup
-  const sockC = io(BASE, { auth: { token: rC.data.token } });
-  await new Promise((r) => sockC.on('connect', r));
-  const ringEv = waitEvent(sockB, 'call:incoming');
-  const endedEv = waitEvent(sockB, 'call:ended');
-  sockC.emit('call:invite', { to: userB.id, callId: `${callId}-drop`, kind: 'audio' });
-  await ringEv;
-  sockC.disconnect();
-  const endedByLeave = await endedEv;
-  ok(endedByLeave.callId === `${callId}-drop`, 'ringing call ends when caller disconnects');
-  sockB2.close();
+  // runtime: event call:* diabaikan server (tidak ada ack, tidak ada event balik)
+  let ghostAck = false;
+  sockA2.emit('call:invite', { to: userB.id, callId: `call-${stamp}-ghost`, kind: 'audio' }, () => { ghostAck = true; });
+  const noIncoming = await expectNoEvent(sockB, 'call:incoming', 450);
+  await sleep(50);
+  ok(!ghostAck, 'server tidak menjawab call:invite (handler sudah dilepas)');
+  ok(!noIncoming.got, 'tidak ada event call:incoming dipancarkan server');
 
   console.log('\n[12] Upload safety (mencegah XSS file buatan pengguna)');
   const fdHtml = new FormData();
@@ -1183,10 +1126,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let callBotAck = null;
   feedSock.emit('call:invite', { to: 'bot-ai', callId: `call-bot-${stamp}`, kind: 'audio' }, (r) => { callBotAck = r; });
   await new Promise((r) => setTimeout(r, 500));
-  ok(callBotAck && callBotAck.ok === false && /Bot tidak dapat dipanggil/.test(callBotAck.error || ''),
-    `server menolak panggilan ke bot (dapat: ${callBotAck ? callBotAck.error : 'tanpa balasan'})`);
-  ok(jsText.includes('Bot tidak bisa dipanggil') && jsText.includes('botPeer'),
-    'frontend menyembunyikan tombol & menjaga startCall untuk bot');
+  ok(!callBotAck, 'server tidak menjawab panggilan ke bot (seluruh handler call dilepas)');
+  ok(!jsText.includes('botPeer') && !jsText.includes('startCall') && !jsText.includes('Bot tidak bisa dipanggil'),
+    'frontend tidak lagi punya logika panggilan bot');
 
   console.log('\n[28] 15 bot baru: kodesnap, npm zip, katalog model & bot generik');
 

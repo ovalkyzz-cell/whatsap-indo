@@ -2078,6 +2078,23 @@ function specMenu(spec) {
   return lines.join('\n');
 }
 
+/* Cadangan lokal untuk perintah gambar: bila API eksternal tidak tersedia
+   (MAZVAL_API_KEY kosong / layanan turun / respons tak bermedial), gambar
+   dibuat langsung di server sehingga pengguna tetap menerima gambar sungguhan. */
+async function localImageFallback(cmd, params) {
+  if (!cmd || !cmd.local) return null;
+  const text = params && params.text;
+  if (!text || !String(text).trim()) return null;
+  try {
+    const { generateLocalImage } = require('./bratimg');
+    const media = await generateLocalImage(cmd.local, text);
+    if (!media) return null;
+    return { text: `✅ ${cmd.label || 'Gambar'}`, media };
+  } catch {
+    return null;
+  }
+}
+
 async function genericReply(spec, raw) {
   const text = String(raw || '').trim();
   const word = firstWord(text);
@@ -2093,17 +2110,30 @@ async function genericReply(spec, raw) {
   try {
     body = await callApi(cmd.path, params, { timeout: cmd.timeout });
   } catch (e) {
+    const local = await localImageFallback(cmd, params);
+    if (local) return local;
     return errBlock(cmd.label || spec.name, e.message);
   }
   if (body && (body.success === false || body.status === false)) {
+    const local = await localImageFallback(cmd, params);
+    if (local) return local;
     return errBlock(cmd.label || spec.name, body.error || body.message || 'Data tidak ditemukan.');
   }
   let data = unwrapBody(body);
-  if (data === null) return errBlock(cmd.label || spec.name, 'Layanan tidak mengembalikan data.');
+  if (data === null) {
+    const local = await localImageFallback(cmd, params);
+    if (local) return local;
+    return errBlock(cmd.label || spec.name, 'Layanan tidak mengembalikan data.');
+  }
   if (typeof data !== 'object') data = { hasil: data };
   const media = mediaFromNode(data, 0) || mediaFromNode(body, 0);
   const out = { text: genericLines(cmd.label || spec.name, data) };
   if (media) out.media = media;
+  else {
+    // API hidup tapi tidak mengembalikan gambar -> tetap buat gambar lokal
+    const local = await localImageFallback(cmd, params);
+    if (local) return local;
+  }
   return out;
 }
 
@@ -2431,11 +2461,11 @@ const GENERIC_SPECS = [
     about: 'Gambar teks Brat, Brat HD & meme custom. Contoh: brat halo guys.',
     commands: [
       { words: ['brat'], usage: 'brat <teks>', example: 'brat halo guys',
-        desc: 'Gambar teks Brat', params: { text: 'rest' }, path: '/api/image/brat', label: 'Gambar Brat' },
+        desc: 'Gambar teks Brat', params: { text: 'rest' }, path: '/api/image/brat', label: 'Gambar Brat', local: 'brat' },
       { words: ['brathd'], usage: 'brathd <teks>', example: 'brathd halo dunia',
-        desc: 'Gambar teks Brat HD', params: { text: 'rest' }, path: '/api/image/brathd', label: 'Gambar Brat HD' },
+        desc: 'Gambar teks Brat HD', params: { text: 'rest' }, path: '/api/image/brathd', label: 'Gambar Brat HD', local: 'brathd' },
       { words: ['smeme'], usage: 'smeme <teks>', example: 'smeme halo dunia',
-        desc: 'Meme custom (memegen)', params: { text: 'rest' }, path: '/api/image/smeme', label: 'Meme Custom' },
+        desc: 'Meme custom (memegen)', params: { text: 'rest' }, path: '/api/image/smeme', label: 'Meme Custom', local: 'smeme' },
     ],
   },
   {
