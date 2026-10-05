@@ -17,7 +17,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Preview unduh | Bot Downloader **wajib menampilkan hasil videonya**: rangkaian resolver otomatis (api-mazval → tikwm → fxtwitter → instance cobalt → Piped) mengambil file medianya, divalidasi via probe Range, lalu **diunduh ke server** dan tampil sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback terakhir: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
-| Bot premium | **45 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 36 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game) |
+| Bot premium | **65 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 56 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
@@ -37,7 +37,7 @@ npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
 npm test           # test end-to-end (server harus berjalan)
-npm run test:bots  # unit test balasan 45 bot (API dimock, tanpa jaringan)
+npm run test:bots  # unit test balasan 65 bot (API dimock, tanpa jaringan)
 ```
 
 Variabel lingkungan opsional:
@@ -65,7 +65,7 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
-  bots.js      # 45 bot admin (9 inti + 36 generik) + perintah + API api-mazval
+  bots.js      # 65 bot admin (9 inti + 56 generik) + perintah + API api-mazval
                # + rangkaian resolver Downloader (tikwm, fxtwitter, cobalt, Piped)
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
@@ -78,9 +78,10 @@ public/
 test/
   e2e.js       # e2e: auth, realtime, receipts, upload, delete, fitur panggilan dihapus,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time, 45 bot (admin & premium), edit nama bot
-               # & 15 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan)
-  bot-reply.js # 53 assert unit test balasan 45 bot + rantai resolver Downloader
+               # blokir akun, monitor admin real-time, 65 bot (admin & premium), edit nama bot
+               # & 20 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan,
+               # 18 bot AI, Wilayah Indonesia & Simbol Provinsi)
+  bot-reply.js # 73 assert unit test balasan 65 bot + rantai resolver Downloader
                # (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
@@ -171,15 +172,19 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
-### Bot (9 bot inti + 36 bot generik = 45 bot) — khusus admin & premium
+### Bot (9 bot inti + 56 bot generik = 65 bot) — khusus admin & premium
 
-Empat puluh lima bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
+Enam puluh lima bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
 `verified = 1`, status `active` — tampil di pencarian **hanya untuk admin dan pengguna
 premium** (`premium_until` masih aktif; diberikan lewat `POST /api/admin/premium`) dan
-selalu membawa **badge centang biru**. Sembilan bot inti ditulis manual; 36 bot generik
+selalu membawa **badge centang biru**. Sembilan bot inti ditulis manual; 56 bot generik
 digenerate
 dari spesifikasi `GENERIC_SPECS` — menu, pemetaan argumen, format baris + blok JSON, dan
 preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar tersedia.
+Spesifikasi ber-`kind: 'ai'` (18 bot AI baru) memakai jalur balasan AI yang sama dengan
+bot *AI*: jawaban model dirapikan, blok kode dijaga seimbang, percobaan ulang + model
+cadangan dalam satu anggaran waktu — jadi pertanyaan tetap terjawab walau satu model
+sedang sibuk.
 
 | Bot | ID | Perintah |
 |---|---|---|
@@ -228,6 +233,26 @@ preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar ter
 | **Cari Gambar** | `bot-gambar` | `gambar <kata>` → hasil gambar (`/api/s/bimg`) |
 | **Cari Pinterest** | `bot-pin` | `pin <kata>` (`/api/s/pinterest`) |
 | **Cari Game** | `bot-game` | `game <kata>` → game Android/PC (`/api/s/mcpedl`) |
+| **Bard Google** | `bot-bard` | `bard <pertanyaan>` → jawaban Bard Google (`/api/ai/bard-google`) |
+| **Copilot** | `bot-copilot` | `copilot <pertanyaan>` (`/api/ai/copilot`) |
+| **Claude Opus** | `bot-opus` | `opus <pertanyaan>` (`/api/ai/claude-opus`) |
+| **GPT-OSS 120B** | `bot-gptoss` | `oss <pertanyaan>` (`/api/ai/gptoss120b`) |
+| **GPT Klasik** | `bot-gpt-klasik` | `gpt <pertanyaan>` (`/api/ai/gpt`) |
+| **GLM Flash** | `bot-glm` | `glm <pertanyaan>` (`/api/ai/glm47flash`) |
+| **Phi-2** | `bot-phi` | `phi <pertanyaan>` (`/api/ai/phi2`) |
+| **Deep AI** | `bot-deepai` | `deep <pertanyaan>` (`/api/ai/deep-ai`) |
+| **Public AI** | `bot-publicai` | `public <pertanyaan>` (`/api/ai/publicai`) |
+| **Epsilon AI** | `bot-epsilon` | `epsilon <pertanyaan>` (`/api/ai/epsilon-ai`) |
+| **PowerBrain** | `bot-powerbrain` | `powerbrain <pertanyaan>` (`/api/ai/powerbrain-ai`) |
+| **Jeeves AI** | `bot-jeeves` | `jeeves <permintaan>` (`/api/ai/jeeves-ai`) |
+| **AI Realtime** | `bot-realtime` | `realtime <pertanyaan>`, `prompt <topik>` (`/api/ai/ai-realtime`, `/api/ai/ai-prompt`) |
+| **AI Studi** | `bot-studi` | `grammar <kalimat>`, `quillbot <kalimat>`, `qwq <soal>`, `apertus <pertanyaan>` |
+| **AI Gambar** | `bot-aigambar` | `gambar/flux/banana/text2img <deskripsi>` → **langsung jadi pesan gambar** |
+| **AI Seni** | `bot-aiseni` | `anime/real/chibi/bardimg <deskripsi>` → gambar gaya seni AI |
+| **AI Agama** | `bot-aiagama` | `islam <pertanyaan>`, `bible <pertanyaan>`, `gita <pertanyaan>` |
+| **AI Eksplorasi** | `bot-eksplorasi` | `dolphin`, `blackbox`, `felo`, `feloai` + pertanyaan (model cadangan otomatis) |
+| **Wilayah Indonesia** | `bot-wilayah` | `provinsi`, `kabupaten <id prov>`, `kecamatan <id kab>`, `desa <id kec>` (`/api/info/wilayah`) |
+| **Simbol Provinsi** | `bot-simbol` | `simbol [id provinsi]` (`/api/info/symbols`) |
 
 Setiap bot generik menjawab `menu` dengan kotak nama + daftar perintah + contoh; input
 tanpa perintah atau argumen kurang dibalas **blok error rapi** (`❌` + alasan + contoh);

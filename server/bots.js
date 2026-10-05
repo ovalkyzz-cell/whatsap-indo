@@ -2137,13 +2137,87 @@ async function genericReply(spec, raw) {
   return out;
 }
 
+/* Spesifikasi ber-kind "ai" memakai jalur balasan yang sama dengan bot AI
+   inti: jawaban model ditampilkan rapi (bukan JSON mentah), blok kode
+   diseimbangkan, header model + footer, lengkap dengan percobaan ulang dan
+   model cadangan dalam satu anggaran waktu. */
+const AI_MEDIA_RE = /https?:\/\/\S+/;
+
+async function aiSpecReply(spec, raw) {
+  const text = String(raw || '').trim();
+  const key = firstWord(text).replace(/[?:!,.]+$/, '');
+  if (!key || ['menu', 'help', 'bantuan', '?'].includes(key)) return specMenu(spec);
+
+  // kata pertama yang bukan perintah dianggap bagian dari pertanyaan,
+  // jadi pengguna boleh langsung menulis pertanyaan tanpa awalan perintah
+  const matched = spec.commands.find((c) => c.words.includes(key));
+  const cmd = matched || spec.commands[0];
+  const question = (matched ? rest(text) : text).trim();
+  if (!question) return errBlock(cmd.usage, `Contoh: ${cmd.example || cmd.usage}`);
+
+  const prompt = question + CODING_HINT + (spec.hint ? `\n${spec.hint}` : '');
+  const chain = [cmd, ...spec.commands.filter((c) => c.path !== cmd.path)];
+  const startedAt = Date.now();
+  const errors = [];
+  let answer = null;
+  let used = cmd;
+
+  for (const candidate of chain) {
+    const tries = candidate.path === cmd.path ? 3 : 1;
+    for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
+      const remaining = AI_BUDGET - (Date.now() - startedAt);
+      if (remaining < 25000) break;
+      if (attempt) await aiDelay(10000);
+      try {
+        answer = await aiAsk(candidate, prompt, Math.min(AI_TIMEOUT, remaining));
+        used = candidate;
+      } catch (err) {
+        errors.push(`${candidate.label}: ${String((err && err.message) || err).slice(0, 160)}`);
+      }
+    }
+    if (answer) break;
+    await aiDelay(8000);
+  }
+
+  if (!answer) {
+    return [
+      '⚠️ Jawaban AI belum bisa diberikan sekarang',
+      '',
+      'Model sedang sibuk sesaat. Kirim ulang pertanyaanmu beberapa saat lagi.',
+      errors.length ? `\nCatatan: ${errors[errors.length - 1]}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  if (cmd.media) {
+    const url = (String(answer).match(AI_MEDIA_RE) || [])[0];
+    if (url && isSafeMediaUrl(url)) {
+      return {
+        text: [`🎨 ${used.label}`, HR, sanitize(answer, 4000), HR, 'Balas "menu" untuk perintah lain.'].join('\n'),
+        media: { type: 'image', url, name: 'hasil-ai.jpg', mime: 'image/jpeg' },
+      };
+    }
+  }
+
+  const header = used.path === cmd.path
+    ? `🤖 ${cmd.label}`
+    : `🤖 ${cmd.label} (cadangan: ${used.label})`;
+
+  return [
+    header,
+    HR,
+    balanceFences(sanitize(answer, 7200)),
+    HR,
+    'Balas "menu" untuk memilih perintah lain.',
+  ].join('\n');
+}
+
 function makeBotFromSpec(spec) {
   return {
     id: spec.id,
     email: spec.email,
     name: spec.name,
     about: spec.about,
-    reply: (text) => genericReply(spec, text),
+    reply: (text) => (spec.kind === 'ai' ? aiSpecReply(spec, text) : genericReply(spec, text)),
   };
 }
 
@@ -2214,7 +2288,7 @@ async function reply(bot, text) {
   return def.reply(text);
 }
 
-/* ---------- 36 bot generik: total45 bot ----------
+/* ---------- 56 bot generik: total 65 bot (9 inti + 56 generik) ----------
    Hanya endpoint api-mazval yang sudah teruji dipakai di sini (lihat tiap
    spesifikasi). Balasan, menu, dan format seluruhnya digenerate dari spesifikasi. */
 
@@ -2596,6 +2670,253 @@ const GENERIC_SPECS = [
     commands: [
       { words: ['game'], usage: 'game <judul>', example: 'game minecraft',
         desc: 'Cari game (MCPEDL)', params: { q: 'rest' }, path: '/api/s/mcpedl', label: 'Game' },
+    ],
+  },
+  /* ---------- 20 bot baru: 18 bot AI + 2 bot data wilayah ----------
+     Seluruh endpoint diambil dari katalog api-mazval dan sudah diverifikasi
+     satu per satu terhadap API produksi. Bot AI memakai jalur balasan AI
+     (percobaan ulang + model cadangan dalam satu anggaran waktu), jadi
+     pertanyaan tetap terjawab walau satu model sedang sibuk. */
+  {
+    kind: 'ai',
+    id: 'bot-bard', email: 'bard@bot.whatsap-indo', name: 'Bard Google',
+    tagline: 'Asisten AI Google Bard',
+    about: 'Tanya apa saja langsung ke Bard Google. Contoh: apa itu fotosintesis?',
+    commands: [
+      { words: ['bard', 'google'], usage: 'bard <pertanyaan>', example: 'bard apa itu fotosintesis',
+        desc: 'Tanya ke Bard Google', path: '/api/ai/bard-google', label: 'Bard Google' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-copilot', email: 'copilot@bot.whatsap-indo', name: 'Copilot',
+    tagline: 'Asisten AI Copilot',
+    about: 'Copilot menjawab pertanyaan & membantu menyusun teks. Contoh: copilot buat puisi pendek.',
+    commands: [
+      { words: ['copilot', 'bing'], usage: 'copilot <pertanyaan>', example: 'copilot buat puisi tentang hujan',
+        desc: 'Tanya ke Copilot', path: '/api/ai/copilot', label: 'Copilot' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-opus', email: 'opus@bot.whatsap-indo', name: 'Claude Opus',
+    tagline: 'Model Claude Opus',
+    about: 'Claude Opus untuk analisis panjang & penulisan rapi. Contoh: opus ringkas artikel ini.',
+    commands: [
+      { words: ['opus', 'claude-opus'], usage: 'opus <pertanyaan>', example: 'opus jelaskan inflasi sederhana',
+        desc: 'Tanya ke Claude Opus', path: '/api/ai/claude-opus', label: 'Claude Opus' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-gptoss', email: 'gptoss@bot.whatsap-indo', name: 'GPT-OSS 120B',
+    tagline: 'Model GPT-OSS 120B',
+    about: 'Model terbuka GPT-OSS 120B. Contoh: oss buatkan resep nasi goreng.',
+    commands: [
+      { words: ['oss', 'gptoss'], usage: 'oss <pertanyaan>', example: 'oss buatkan resep nasi goreng',
+        desc: 'Tanya ke GPT-OSS 120B', path: '/api/ai/gptoss120b', label: 'GPT-OSS 120B' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-gpt-klasik', email: 'gptklasik@bot.whatsap-indo', name: 'GPT Klasik',
+    tagline: 'Model GPT generasi lama',
+    about: 'GPT klasik yang ringan & cepat. Contoh: gpt tulis caption liburan.',
+    commands: [
+      { words: ['gpt', 'klasik'], usage: 'gpt <pertanyaan>', example: 'gpt tulis caption liburan ke pantai',
+        desc: 'Tanya ke GPT klasik', path: '/api/ai/gpt', label: 'GPT Klasik' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-glm', email: 'glmflash@bot.whatsap-indo', name: 'GLM Flash',
+    tagline: 'Model GLM 4.7 Flash',
+    about: 'GLM Flash cepat untuk tugas harian. Contoh: glm susun daftar belanja.',
+    commands: [
+      { words: ['glm', 'flash'], usage: 'glm <pertanyaan>', example: 'glm susun daftar belanja mingguan',
+        desc: 'Tanya ke GLM 4.7 Flash', path: '/api/ai/glm47flash', label: 'GLM 4.7 Flash' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-phi', email: 'phi2@bot.whatsap-indo', name: 'Phi-2',
+    tagline: 'Model ringan Phi-2',
+    about: 'Phi-2 ringan untuk jawaban singkat. Contoh: phi apa itu algoritma?',
+    commands: [
+      { words: ['phi', 'phi2'], usage: 'phi <pertanyaan>', example: 'phi apa itu algoritma',
+        desc: 'Tanya ke Phi-2', path: '/api/ai/phi2', label: 'Phi-2' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-deepai', email: 'deepai@bot.whatsap-indo', name: 'Deep AI',
+    tagline: 'Asisten Deep AI',
+    about: 'Deep AI untuk eksplorasi ide. Contoh: deep ide bisnis anak muda.',
+    commands: [
+      { words: ['deep', 'deepai'], usage: 'deep <pertanyaan>', example: 'deep ide bisnis anak muda',
+        desc: 'Tanya ke Deep AI', path: '/api/ai/deep-ai', label: 'Deep AI' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-publicai', email: 'publicai@bot.whatsap-indo', name: 'Public AI',
+    tagline: 'Asisten Public AI',
+    about: 'Public AI untuk pertanyaan umum. Contoh: public kenapa langit biru.',
+    commands: [
+      { words: ['public', 'publicai'], usage: 'public <pertanyaan>', example: 'public kenapa langit biru',
+        desc: 'Tanya ke Public AI', path: '/api/ai/publicai', label: 'Public AI' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-epsilon', email: 'epsilon@bot.whatsap-indo', name: 'Epsilon AI',
+    tagline: 'Asisten Epsilon AI',
+    about: 'Epsilon AI untuk brainstorming. Contoh: epsilon nama produk kopi.',
+    commands: [
+      { words: ['epsilon'], usage: 'epsilon <pertanyaan>', example: 'epsilon kasih 5 nama produk kopi',
+        desc: 'Tanya ke Epsilon AI', path: '/api/ai/epsilon-ai', label: 'Epsilon AI' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-powerbrain', email: 'powerbrain@bot.whatsap-indo', name: 'PowerBrain',
+    tagline: 'Asisten PowerBrain AI',
+    about: 'PowerBrain untuk penjelasan konsep sulit. Contoh: powerbrain jelaskan fotosintesis.',
+    commands: [
+      { words: ['powerbrain', 'otak'], usage: 'powerbrain <pertanyaan>', example: 'powerbrain jelaskan fotosintesis',
+        desc: 'Tanya ke PowerBrain AI', path: '/api/ai/powerbrain-ai', label: 'PowerBrain AI' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-jeeves', email: 'jeeves@bot.whatsap-indo', name: 'Jeeves AI',
+    tagline: 'Asisten pribadi Jeeves',
+    about: 'Jeeves merapikan & menjawab apa saja. Contoh: jeeves perbaiki kalimat ini.',
+    commands: [
+      { words: ['jeeves', 'asisten'], usage: 'jeeves <permintaan>', example: 'jeeves perbaiki kalimat: saya sudah makan',
+        desc: 'Tanya ke Jeeves AI', path: '/api/ai/jeeves-ai', label: 'Jeeves AI' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-realtime', email: 'realtime@bot.whatsap-indo', name: 'AI Realtime',
+    tagline: 'Jawaban cepat & perintah prompt',
+    about: 'Dua mode: jawaban realtime & generator prompt. Contoh: realtime kabar jakarta besok.',
+    commands: [
+      { words: ['realtime', 'cek'], usage: 'realtime <pertanyaan>', example: 'realtime cara cepat belajar coding',
+        desc: 'Jawaban realtime', path: '/api/ai/ai-realtime', label: 'AI Realtime' },
+      { words: ['prompt', 'ide'], usage: 'prompt <topik>', example: 'prompt membuat gambar kucing astronaut',
+        desc: 'Susun prompt untuk AI gambar', path: '/api/ai/ai-prompt', label: 'Prompt Lab' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-studi', email: 'studi@bot.whatsap-indo', name: 'AI Studi',
+    tagline: 'Tata bahasa, parafrase & model penalaran',
+    about: 'Bantu belajar: koreksi grammar, parafrase & penalaran. Contoh: grammar i is go to school.',
+    hint: 'Jawab ringkas, langsung ke inti, dalam Bahasa Indonesia yang rapi.',
+    commands: [
+      { words: ['grammar', 'tata'], usage: 'grammar <kalimat>', example: 'grammar i is go to school',
+        desc: 'Koreksi tata bahasa Inggris', path: '/api/ai/grammar', label: 'Grammar Checker' },
+      { words: ['quillbot', 'parafrase'], usage: 'quillbot <kalimat>', example: 'quillbot tugas sekolah segera selesai',
+        desc: 'Parafrase kalimat', path: '/api/ai/quillbot', label: 'QuillBot' },
+      { words: ['qwq', 'nalar'], usage: 'qwq <soal>', example: 'qwq hitung 15% dari 2400',
+        desc: 'Penalaran langkah demi langkah', path: '/api/ai/qwq32b', label: 'QwQ 32B' },
+      { words: ['apertus'], usage: 'apertus <pertanyaan>', example: 'apertus apa itu proton',
+        desc: 'Model Apertus', path: '/api/ai/apertus', label: 'Apertus' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-aigambar', email: 'aigambar@bot.whatsap-indo', name: 'AI Gambar',
+    tagline: 'Generator gambar dari teks',
+    about: 'Buat gambar dari teks. Contoh: gambar kucing astronot di bulan.',
+    hint: 'Kalau diminta membuat/mendeskripsikan gambar, tuliskan prompt gambarnya saja secara ringkas.',
+    commands: [
+      { words: ['gambar', 'image'], usage: 'gambar <deskripsi>', example: 'gambar kucing astronot di bulan',
+        desc: 'Buat gambar dari teks', path: '/api/ai/image', label: 'AI Image', media: true },
+      { words: ['flux'], usage: 'flux <deskripsi>', example: 'flux pemandangan gunung saat matahari terbit',
+        desc: 'Generator gambar Flux', path: '/api/ai/fluxai', label: 'Flux AI', media: true },
+      { words: ['banana', 'nano'], usage: 'banana <deskripsi>', example: 'banana robot lucu berwarna kuning',
+        desc: 'Generator Nano Banana', path: '/api/ai/nano-banana', label: 'Nano Banana', media: true },
+      { words: ['text2img', 'teks2img'], usage: 'text2img <deskripsi>', example: 'text2img logo kedai kopi minimalis',
+        desc: 'Text to image pro', path: '/api/ai/ai-text2img-pro', label: 'Text2Img Pro', media: true },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-aiseni', email: 'aiseni@bot.whatsap-indo', name: 'AI Seni',
+    tagline: 'Anime, chibi & gaya seni AI',
+    about: 'Ubah ide jadi karya seni AI. Contoh: anime gadis berambut biru.',
+    hint: 'Fokus pada deskripsi visual yang jelas: subjek, gaya, warna, dan latar.',
+    commands: [
+      { words: ['anime'], usage: 'anime <deskripsi>', example: 'anime gadis berambut biru sedang membaca',
+        desc: 'Gambar bergaya anime', path: '/api/ai/anime-art', label: 'Anime Art', media: true },
+      { words: ['real'], usage: 'real <deskripsi>', example: 'real foto kucing hitam studio',
+        desc: 'Anime jadi realistis', path: '/api/ai/anime-to-real', label: 'Anime to Real', media: true },
+      { words: ['chibi'], usage: 'chibi <deskripsi>', example: 'chibi kucing menggemaskan',
+        desc: 'Stiker chibi', path: '/api/ai/chibi-sticker', label: 'Chibi Sticker', media: true },
+      { words: ['bardimg'], usage: 'bardimg <deskripsi>', example: 'bardimg laut tenang saat senja',
+        desc: 'Bard mode gambar', path: '/api/ai/bard-img', label: 'Bard Image', media: true },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-aiagama', email: 'aiagama@bot.whatsap-indo', name: 'AI Agama',
+    tagline: 'Pertanyaan seputar agama',
+    about: 'Islam, Alkitab & kitab suci. Contoh: islam hukum sedekah.',
+    hint: 'Jawab dengan santun, sebutkan sumber ajaran bila memungkinkan, dan hindari menghakimi.',
+    commands: [
+      { words: ['islam'], usage: 'islam <pertanyaan>', example: 'islam hukum sedekah dalam islam',
+        desc: 'Tanya seputar Islam', path: '/api/ai/islam-ai', label: 'Islam AI' },
+      { words: ['bible', 'alkitab'], usage: 'bible <pertanyaan>', example: 'bible apa itu kasih',
+        desc: 'Tanya seputar Alkitab', path: '/api/ai/bibleai', label: 'Bible AI' },
+      { words: ['gita'], usage: 'gita <pertanyaan>', example: 'gita apa itu dharma',
+        desc: 'Tanya seputar Bhagavad Gita', path: '/api/ai/gita', label: 'Gita AI' },
+    ],
+  },
+  {
+    kind: 'ai',
+    id: 'bot-eksplorasi', email: 'eksplorasi@bot.whatsap-indo', name: 'AI Eksplorasi',
+    tagline: 'Bebas tanya ke banyak model',
+    about: 'Coba beberapa model sekaligus. Contoh: dolphin jelaskan black hole.',
+    hint: 'Jawab ringkas dan terstruktur memakai poin bila penjelasan panjang.',
+    commands: [
+      { words: ['dolphin'], usage: 'dolphin <pertanyaan>', example: 'dolphin jelaskan black hole',
+        desc: 'Model Dolphin AI', path: '/api/ai/dolphin-ai', label: 'Dolphin AI' },
+      { words: ['blackbox'], usage: 'blackbox <pertanyaan>', example: 'blackbox buat fungsi sorting di js',
+        desc: 'Model Blackbox', path: '/api/ai/blackbox', label: 'Blackbox AI' },
+      { words: ['felo'], usage: 'felo <pertanyaan>', example: 'felo apa itu riset pemasaran',
+        desc: 'Model Felo', path: '/api/ai/felo', label: 'Felo AI' },
+      { words: ['feloai'], usage: 'feloai <pertanyaan>', example: 'feloai bandingkan sqlite dan postgres',
+        desc: 'Model Felo AI', path: '/api/ai/feloai', label: 'FeloAI' },
+    ],
+  },
+  {
+    id: 'bot-wilayah', email: 'wilayah@bot.whatsap-indo', name: 'Wilayah Indonesia',
+    tagline: 'Provinsi, kabupaten, kecamatan & desa',
+    about: 'Data wilayah Indonesia lengkap. Contoh: provinsi, kabupaten 31, kecamatan 3101.',
+    commands: [
+      { words: ['provinsi'], usage: 'provinsi', example: 'provinsi',
+        desc: 'Daftar 34 provinsi', params: { type: 'provinces' }, path: '/api/info/wilayah', label: 'Provinsi' },
+      { words: ['kabupaten', 'kota'], usage: 'kabupaten <id provinsi>', example: 'kabupaten 31',
+        desc: 'Kabupaten/kota dalam provinsi', params: { type: 'provinces', id: 'rest', sub: 'regencies' },
+        path: '/api/info/wilayah', label: 'Kabupaten / Kota' },
+      { words: ['kecamatan'], usage: 'kecamatan <id kabupaten>', example: 'kecamatan 3171',
+        desc: 'Kecamatan dalam kabupaten', params: { type: 'regencies', id: 'rest', sub: 'districts' },
+        path: '/api/info/wilayah', label: 'Kecamatan' },
+      { words: ['desa', 'kelurahan'], usage: 'desa <id kecamatan>', example: 'desa 3171011',
+        desc: 'Desa/kelurahan dalam kecamatan', params: { type: 'districts', id: 'rest', sub: 'villages' },
+        path: '/api/info/wilayah', label: 'Desa / Kelurahan' },
+    ],
+  },
+  {
+    id: 'bot-simbol', email: 'simbol@bot.whatsap-indo', name: 'Simbol Provinsi',
+    tagline: 'Lambang & simbol tiap provinsi',
+    about: 'Daftar simbol provinsi Indonesia. Contoh: simbol, simbol 3.',
+    commands: [
+      { words: ['simbol', 'lambang'], usage: 'simbol [id provinsi]', example: 'simbol 3',
+        desc: 'Simbol provinsi', params: { id: 'rest?' }, path: '/api/info/symbols', label: 'Simbol Provinsi' },
     ],
   },
 ];

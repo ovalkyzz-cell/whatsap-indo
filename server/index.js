@@ -295,7 +295,7 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   const like = `%${q}%`;
   const rows = await db.all(
     `SELECT * FROM users WHERE id <> ? AND (LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))
-     ORDER BY LOWER(name) LIMIT 60`,
+     ORDER BY LOWER(name) LIMIT 200`,
     req.user.id,
     like,
     like
@@ -965,11 +965,11 @@ app.get('/api/admin/users', auth.requireAuth, requireAdmin, ah(async (req, res) 
   const rows = q
     ? await db.all(
         `SELECT * FROM users WHERE LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?)
-         ORDER BY LOWER(name) LIMIT 50`,
+         ORDER BY LOWER(name) LIMIT 200`,
         like,
         like
       )
-    : await db.all('SELECT * FROM users ORDER BY LOWER(name) LIMIT 50');
+    : await db.all('SELECT * FROM users ORDER BY LOWER(name) LIMIT 200');
   const online = await presence.onlineSet(rows.map((r) => r.id));
   res.json({ users: rows.map((r) => adminUser(r, online.has(r.id))), stats: await adminStats() });
 }));

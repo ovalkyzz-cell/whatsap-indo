@@ -1052,7 +1052,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     body: { about: 'Generator NFToken Alight Motion. Ketik "menu".' },
   });
 
-  console.log('\n[27] Total 45 bot: seed, menu, media, rename & tanpa panggilan');
+  console.log('\n[27] Total 65 bot: seed, menu, media, rename & tanpa panggilan');
 
   // socket uji bisa terputus di tengah run panjang (sesi baru / ping) — sambung ulang
   let feedSock = botSock;
@@ -1063,7 +1063,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(feedSock.connected === true, 'socket admin uji terhubung saat [27]');
   const cariBot = await admApi('/api/users/search?q=bot.whatsap-indo');
   const daftarBot = (cariBot.data.users || []).filter((u) => u.isBot);
-  ok(daftarBot.length === 45, `terdeteksi 45 bot admin (dapat ${daftarBot.length})`);
+  ok(daftarBot.length === 65, `terdeteksi 65 bot admin (dapat ${daftarBot.length})`);
   ok(daftarBot.every((u) => u.verified === true), 'seluruh bot terverifikasi');
 
   const chatByBot = {};
@@ -1074,7 +1074,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else chatByBot[u.id] = buka.data.chat.id;
   }
   ok(gagalBuka.length === 0,
-    `chat dengan semua 45 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
+    `chat dengan semua 65 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
   ok(!!chatByBot['bot-brat'] && !!chatByBot['bot-pos'], 'chat bot-brat & bot-pos siap dipakai uji balasan');
 
   const menuWait = waitEvent(feedSock, 'message:new', 12000).catch(() => null);
@@ -1177,6 +1177,42 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const tw2Msg = await tw2Wait;
   ok(tw2Msg && tw2Msg.senderId === 'bot-stalker-x' && /Profil Twitter/.test(tw2Msg.body || ''),
     `bot Stalk Twitter menjawab profil (dapat: ${tw2Msg ? 'balasan' : 'timeout'})`);
+
+  console.log('\n[29] 20 bot baru: AI, Wilayah Indonesia & Simbol Provinsi');
+
+  const bardMenuWait = waitEvent(feedSock, 'message:new', 12000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-bard'], type: 'text', body: 'menu' });
+  const bardMenuMsg = await bardMenuWait;
+  ok(bardMenuMsg && bardMenuMsg.senderId === 'bot-bard' && /BARD GOOGLE/.test(bardMenuMsg.body || '')
+    && /bard <pertanyaan>/.test(bardMenuMsg.body || ''),
+    `bot Bard Google membalas menu profesional (dapat: ${bardMenuMsg ? 'balasan' : 'timeout'})`);
+
+  const bardWait = waitEvent(feedSock, 'message:new', 130000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-bard'], type: 'text', body: 'bard halo dari uji' });
+  const bardMsg = await bardWait;
+  ok(bardMsg && bardMsg.senderId === 'bot-bard' && String(bardMsg.body || '').startsWith('🤖'),
+    `bot AI Bard menjawab pertanyaan nyata tanpa error (dapat: ${bardMsg ? String(bardMsg.body).slice(0, 30) : 'timeout'})`);
+
+  const wlWait = waitEvent(feedSock, 'message:new', 30000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-wilayah'], type: 'text', body: 'provinsi' });
+  const wlMsg = await wlWait;
+  ok(wlMsg && wlMsg.senderId === 'bot-wilayah' && /✅ Provinsi/.test(wlMsg.body || '')
+    && wlMsg.body.includes('```json'),
+    `bot Wilayah Indonesia menjawab daftar provinsi (dapat: ${wlMsg ? 'balasan' : 'timeout'})`);
+
+  const symWait = waitEvent(feedSock, 'message:new', 30000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-simbol'], type: 'text', body: 'simbol' });
+  const symMsg = await symWait;
+  ok(symMsg && symMsg.senderId === 'bot-simbol' && /Simbol Provinsi/.test(symMsg.body || '')
+    && symMsg.body.includes('```json'),
+    `bot Simbol Provinsi menjawab daftar simbol (dapat: ${symMsg ? 'balasan' : 'timeout'})`);
+
+  const wlKabWait = waitEvent(feedSock, 'message:new', 30000).catch(() => null);
+  await emitAck(feedSock, 'message:send', { chatId: chatByBot['bot-wilayah'], type: 'text', body: 'kabupaten 31' });
+  const wlKabMsg = await wlKabWait;
+  ok(wlKabMsg && wlKabMsg.senderId === 'bot-wilayah' && /Kabupaten \/ Kota/.test(wlKabMsg.body || '')
+    && wlKabMsg.body.includes('```json'),
+    `bot Wilayah Indonesia menjawab kabupaten dalam provinsi (dapat: ${wlKabMsg ? 'balasan' : 'timeout'})`);
 
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);

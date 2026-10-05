@@ -1,5 +1,5 @@
 'use strict';
-/* Unit test balasan bot inti, 3 bot kustom baru & 45 bot total dengan API mock (tanpa jaringan).
+/* Unit test balasan bot inti, 3 bot kustom baru & 65 bot total dengan API mock (tanpa jaringan).
    Jalankan: npm run test:bots  */
 process.env.MAZVAL_API_KEY = 'test-key';
 const path = require('path').join(__dirname, '..', 'server', 'bots.js');
@@ -35,7 +35,7 @@ const fakeResponses = {
   '/api/tempmail/domains': { status: 'success', data: { domains: ['bhap.me', 'xelio.sbs'] } },
   '/api/tempmail/inbox': { status: 'success', data: { email: 'uji123@bhap.me', total_messages: 1,
     messages: [{ from: 'no-reply@x.com', subject: 'Kode OTP kamu', date: 'just now', link: 'l1' }], otp: '493821', verification_link: null, body: null } },
-  // bot generik (45 bot total) — dipetakan langsung ke endpoint api-mazval
+  // bot generik (65 bot total) — dipetakan langsung ke endpoint api-mazval
   '/api/info/cuaca': { success: true, endpoint: '/api/info/cuaca',
     data: { kota: 'Jakarta', suhu_c: '27', kelembaban: 73, deskripsi: 'Cerah' } },
   '/api/tools/currency': { status: true, result: { from: 'USD', to: 'IDR', amount: 100, rate: 16000, result: 1600000, date: '2026-10-01' } },
@@ -56,7 +56,54 @@ const fakeResponses = {
   '/api/tools/ip-lookup': { success: true, data: { ip: '1.1.1.1', country: 'Australia', isp: 'Cloudflare' } },
   '/api/tools/ocr': { success: true, data: { url: 'https://placehold.co/600x200.png?text=Halo+Dunia', text: 'Halo Dunia', confidence: 0.98 } },
   '/api/s/8font': { status: true, result: { fonts: [{ style: 'bold', text: '𝐥𝐨𝐯𝐞' }] } },
+  // 2 bot data baru: wilayah Indonesia & simbol provinsi
+  '/api/info/wilayah': { success: true, endpoint: '/api/info/wilayah', type: 'provinces',
+    data: [{ id: '31', name: 'DKI JAKARTA' }, { id: '32', name: 'JAWA BARAT' },
+      { id: '3101', province_id: '31', name: 'KABUPATEN KEPULAUAN SERIBU' },
+      { id: '3171011', regency_id: '3171', name: 'MENTENG' }] },
+  '/api/info/symbols': { success: true, endpoint: '/api/info/symbols',
+    data: [{ title: 'Aceh', url: '/provinces/1/24' }, { title: 'Sumatera Utara', url: '/provinces/2/24' },
+      { title: 'Jawa Barat', url: '/provinces/3/24' }] },
 };
+
+// 18 bot AI baru (65 bot total): seluruh endpoint diverifikasi terhadap API produksi.
+// /api/ai/dolphin-ai sengaja TIDAK dimock -> menguji jalur model cadangan.
+const newAiMocks = {
+  '/api/ai/bard-google': 'Jawaban Bard.',
+  '/api/ai/copilot': 'Jawaban Copilot.',
+  '/api/ai/claude-opus': 'Jawaban Claude Opus.',
+  '/api/ai/gptoss120b': 'Jawaban GPT-OSS.',
+  '/api/ai/gpt': 'Jawaban GPT klasik.',
+  '/api/ai/glm47flash': 'Jawaban GLM.',
+  '/api/ai/phi2': 'Jawaban Phi-2.',
+  '/api/ai/deep-ai': 'Jawaban Deep AI.',
+  '/api/ai/publicai': 'Jawaban Public AI.',
+  '/api/ai/epsilon-ai': 'Jawaban Epsilon.',
+  '/api/ai/powerbrain-ai': 'Jawaban PowerBrain.',
+  '/api/ai/jeeves-ai': 'Jawaban Jeeves.',
+  '/api/ai/ai-realtime': 'Jawaban realtime.',
+  '/api/ai/ai-prompt': 'Prompt: kucing astronot di bulan, gaya ilustrasi.',
+  '/api/ai/grammar': 'I go to school.',
+  '/api/ai/quillbot': 'Tugas sekolah cepat selesai.',
+  '/api/ai/qwq32b': 'Langkah 1: 2400 x 15% = 360.',
+  '/api/ai/apertus': 'Jawaban Apertus.',
+  '/api/ai/blackbox': 'Jawaban Blackbox.',
+  '/api/ai/felo': 'Jawaban Felo.',
+  '/api/ai/feloai': 'Jawaban FeloAI.',
+  '/api/ai/islam-ai': 'Jawaban Islam AI.',
+  '/api/ai/bibleai': 'Jawaban Bible AI.',
+  '/api/ai/gita': 'Jawaban Gita AI.',
+  // endpoint gambar: jawaban model memuat tautan gambar -> dikirim sebagai pesan gambar
+  '/api/ai/image': 'Siap. https://cdn.example/gambar-baru.jpg',
+  '/api/ai/fluxai': 'Siap. https://cdn.example/hasil-flux.jpg',
+  '/api/ai/nano-banana': 'Siap. https://cdn.example/hasil-banana.jpg',
+  '/api/ai/ai-text2img-pro': 'Siap. https://cdn.example/hasil-text2img.jpg',
+  '/api/ai/anime-art': 'Siap. https://cdn.example/hasil-anime.jpg',
+  '/api/ai/anime-to-real': 'Siap. https://cdn.example/hasil-real.jpg',
+  '/api/ai/chibi-sticker': 'Siap. https://cdn.example/hasil-chibi.jpg',
+  '/api/ai/bard-img': 'Siap. https://cdn.example/hasil-bardimg.jpg',
+};
+for (const [p, r] of Object.entries(newAiMocks)) fakeResponses[p] = { result: r };
 
 // endpoint biner (kode PNG codesnap & arsip zip npm2zip) menyiabkan buffer sungguhan
 const PNG_MAGIC = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fake-png-body')]);
@@ -325,8 +372,8 @@ const bots = require(path);
   ok(ds.includes('```js\nconst a = 1;\n```') && ds.includes('Balas "menu" untuk memilih model lain.'),
     'AI: blok kode tak seimbang ditutup sebelum footer');
 
-  // ---- bot generik: total 45 bot ----
-  ok(bots.BOTS.length === 45, `total bot terdaftar ${bots.BOTS.length} (harus 45)`);
+  // ---- bot generik: total 65 bot (9 inti + 56 generik) ----
+  ok(bots.BOTS.length === 65, `total bot terdaftar ${bots.BOTS.length} (harus 65)`);
 
   const gm = await bots.reply({ id: 'bot-cuaca' }, 'menu');
   ok(gm.includes('CUACA') && gm.includes('cuaca <kota>') && gm.includes('Contoh:'),
@@ -452,6 +499,96 @@ const bots = require(path);
   const fontMenu = await bots.reply({ id: 'bot-font' }, 'menu');
   ok(/FONT KEREN/i.test(fontMenu) && /font <gaya>/.test(fontMenu),
     'Bot baru: menu Font Keren rapi');
+
+  // ---- 20 bot baru: 18 bot AI + 2 bot data wilayah ----
+  const bardMenu = await bots.reply({ id: 'bot-bard' }, 'menu');
+  ok(bardMenu.includes('BARD GOOGLE') && bardMenu.includes('bard <pertanyaan>')
+    && bardMenu.includes('Contoh:'), 'Bot AI baru: menu Bard Google rapi');
+
+  const bardAsk = await bots.reply({ id: 'bot-bard' }, 'bard apa itu fotosintesis');
+  ok(typeof bardAsk === 'string' && bardAsk.includes('🤖 Bard Google') && bardAsk.includes('Jawaban Bard.')
+    && bardAsk.includes('Balas "menu" untuk memilih perintah lain.')
+    && lastCall().path === '/api/ai/bard-google'
+    && lastCall().params.prompt.startsWith('apa itu fotosintesis'),
+    'Bot AI baru: awalan perintah dibuang, pertanyaan utuh dikirim ke Bard');
+
+  // tanpa awalan perintah -> teks utuh tetap dijawab bot AI tersebut
+  const bardPlain = await bots.reply({ id: 'bot-bard' }, 'halo apa kabar');
+  ok(bardPlain.includes('Jawaban Bard.') && lastCall().path === '/api/ai/bard-google'
+    && lastCall().params.prompt.startsWith('halo apa kabar'),
+    'Bot AI baru: tanpa awalan perintah, seluruh teks jadi pertanyaan');
+
+  const gptKlasik = await bots.reply({ id: 'bot-gpt-klasik' }, 'gpt buat caption');
+  ok(gptKlasik.includes('🤖 GPT Klasik') && lastCall().path === '/api/ai/gpt'
+    && lastCall().params.prompt.startsWith('buat caption'),
+    'Bot AI baru: GPT Klasik memakai endpoint /api/ai/gpt sendiri');
+
+  const studi = await bots.reply({ id: 'bot-studi' }, 'grammar i is go to school');
+  ok(studi.includes('🤖 Grammar Checker') && studi.includes('I go to school.')
+    && lastCall().path === '/api/ai/grammar',
+    'Bot AI baru: AI Studi memilih model sesuai perintah (grammar)');
+
+  // model utama tidak tersedia -> wajib jatuh ke model cadangan dalam bot yang sama
+  const cadangan = await bots.reply({ id: 'bot-eksplorasi' }, 'dolphin berapa 1 + 1');
+  ok(typeof cadangan === 'string' && /cadangan: Blackbox AI/.test(cadangan)
+    && cadangan.includes('Jawaban Blackbox.'),
+    'Bot AI baru: model cadangan dijalankan bila model utama gagal');
+
+  // endpoint gambar -> jawaban model berupa tautan dikirim sebagai pesan gambar
+  const aiGambar = await bots.reply({ id: 'bot-aigambar' }, 'gambar kucing astronot');
+  ok(aiGambar && typeof aiGambar === 'object' && aiGambar.media && aiGambar.media.type === 'image'
+    && aiGambar.media.url === 'https://cdn.example/gambar-baru.jpg'
+    && lastCall().path === '/api/ai/image'
+    && lastCall().params.prompt.startsWith('kucing astronot'),
+    'Bot AI baru: AI Gambar mengirim gambar hasil model');
+
+  const agama = await bots.reply({ id: 'bot-aiagama' }, 'islam hukum sedekah');
+  ok(typeof agama === 'string' && agama.includes('🤖 Islam AI') && agama.includes('Jawaban Islam AI.')
+    && lastCall().path === '/api/ai/islam-ai' && lastCall().params.prompt.startsWith('hukum sedekah'),
+    'Bot AI baru: AI Agama memakai endpoint islam-ai & membuang awalan perintah');
+
+  // ---- bot data baru: Wilayah Indonesia & Simbol Provinsi ----
+  const wlMenu = await bots.reply({ id: 'bot-wilayah' }, 'menu');
+  ok(wlMenu.includes('WILAYAH INDONESIA') && wlMenu.includes('kabupaten <id provinsi>')
+    && wlMenu.includes('desa <id kecamatan>'), 'Bot baru: menu Wilayah Indonesia lengkap');
+
+  const wlProv = await bots.reply({ id: 'bot-wilayah' }, 'provinsi');
+  ok(wlProv && typeof wlProv === 'object' && lastCall().path === '/api/info/wilayah'
+    && lastCall().params.type === 'provinces' && !lastCall().params.id && !lastCall().params.sub,
+    'Bot baru: "provinsi" memanggil wilayah?type=provinces');
+  ok(wlProv.text.includes('✅ Provinsi') && wlProv.text.includes('DKI JAKARTA')
+    && wlProv.text.includes('Data (4)') && wlProv.text.includes('```json'),
+    'Bot baru: daftar provinsi tampil ringkas + blok JSON');
+
+  const wlKab = await bots.reply({ id: 'bot-wilayah' }, 'kabupaten 31');
+  ok(lastCall().params.type === 'provinces' && lastCall().params.id === '31'
+    && lastCall().params.sub === 'regencies' && wlKab.text.includes('Kabupaten / Kota'),
+    'Bot baru: "kabupaten 31" memetakan id provinsi + sub regencies');
+
+  const wlKec = await bots.reply({ id: 'bot-wilayah' }, 'kecamatan 3171');
+  ok(lastCall().params.type === 'regencies' && lastCall().params.id === '3171'
+    && lastCall().params.sub === 'districts' && wlKec.text.includes('Kecamatan'),
+    'Bot baru: "kecamatan 3171" memetakan id kabupaten + sub districts');
+
+  const wlDesa = await bots.reply({ id: 'bot-wilayah' }, 'desa 3171011');
+  ok(lastCall().params.type === 'districts' && lastCall().params.id === '3171011'
+    && lastCall().params.sub === 'villages' && wlDesa.text.includes('Desa / Kelurahan'),
+    'Bot baru: "desa 3171011" memetakan id kecamatan + sub villages');
+
+  const wlKurang = await bots.reply({ id: 'bot-wilayah' }, 'kabupaten');
+  ok(typeof wlKurang === 'string' && /kabupaten <id provinsi>/.test(wlKurang)
+    && /Contoh: kabupaten 31/.test(wlKurang),
+    'Bot baru: wilayah menolak perintah tanpa id tanpa memanggil API');
+
+  const symList = await bots.reply({ id: 'bot-simbol' }, 'simbol');
+  ok(symList && typeof symList === 'object' && lastCall().path === '/api/info/symbols'
+    && !lastCall().params.id && symList.text.includes('Simbol Provinsi')
+    && symList.text.includes('Aceh') && symList.text.includes('```json'),
+    'Bot baru: "simbol" menampilkan daftar simbol provinsi');
+
+  const symId = await bots.reply({ id: 'bot-simbol' }, 'simbol 3');
+  ok(lastCall().params.id === '3' && symId.text.includes('Simbol Provinsi'),
+    'Bot baru: "simbol 3" mengirim id provinsi ke API');
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
