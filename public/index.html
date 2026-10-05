@@ -529,6 +529,11 @@
           <span class="mi-text"><strong>Privasi</strong><small>Email, bio, status, laporan dibaca</small></span>
           <span class="mi-arrow">›</span>
         </button>
+        <button class="menu-item" data-menu="bots" id="menuBots">
+          <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-crown" /></svg></span>
+          <span class="mi-text"><strong>Daftar Bot</strong><small>Seluruh bot premium dalam satu daftar</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
         <button class="menu-item" data-menu="admin" id="menuAdmin">
           <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-grid" /></svg></span>
           <span class="mi-text"><strong>Panel Admin</strong><small>Premium, paket &amp; background beranda</small></span>
@@ -550,6 +555,16 @@
         Whatsap Indo • Chat real-time, media 2GB, notifikasi sistem
         <span class="menu-copy">© mazval-developer-java</span>
       </footer>
+    </div>
+
+    <!-- ============ DAFTAR BOT (Khusus Premium) ============ -->
+    <div class="drawer drawer-right hidden" id="botCatDrawer">
+      <div class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseBotCat" title="Kembali">‹</button>
+        <strong>Daftar Bot</strong>
+        <span class="bc-count" id="bcCount"></span>
+      </div>
+      <div class="bc-body" id="bcBody"></div>
     </div>
 
     <!-- ============ PUSAT NOTIFIKASI ============ -->

@@ -290,6 +290,29 @@ function canUseBots(user) {
   return auth.isAdmin(user) || auth.isPremium(user);
 }
 
+app.get('/api/bots', auth.requireAuth, ah(async (req, res) => {
+  const groups = bots.catalog();
+  const total = groups.reduce((sum, group) => sum + group.bots.length, 0);
+  if (!canUseBots(req.user)) {
+    return res.status(403).json({
+      error: 'Daftar bot khusus pengguna premium.',
+      locked: true,
+      total,
+      plans: await settings.getPlans(),
+    });
+  }
+
+  const ids = groups.flatMap((group) => group.bots.map((bot) => bot.id));
+  const rows = ids.length
+    ? await db.all(`SELECT id, avatar FROM users WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids)
+    : [];
+  const avatars = new Map(rows.map((row) => [row.id, row.avatar]));
+  for (const group of groups) {
+    for (const bot of group.bots) bot.avatar = avatars.get(bot.id) || null;
+  }
+  res.json({ groups, total, premiumOnly: true });
+}));
+
 app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   const q = String(req.query.q || '').trim();
   const like = `%${q}%`;

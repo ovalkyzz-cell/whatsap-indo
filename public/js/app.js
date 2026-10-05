@@ -96,7 +96,10 @@ async function api(path, opts = {}) {
       // akun diblokir / ditolak / belum disetujui: hentikan sesi berjalan
       logout(false, (data && data.error) || 'Akun tidak dapat digunakan.');
     }
-    throw new Error((data && data.error) || `Error ${res.status}`);
+    const err = new Error((data && data.error) || `Error ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -1710,7 +1713,7 @@ function clearAttachPreview() {
 
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
-  'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer'];
+  'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer', 'botCatDrawer'];
 
 function openDrawer(id, withScrim = true) {
   DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
@@ -1815,6 +1818,7 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'homebg') openHomeBg();
     else if (action === 'theme') toggleTheme();
     else if (action === 'privacy') openPrivacy();
+    else if (action === 'bots') openBotCatalog();
     else if (action === 'admin') openAdminPanel();
     else if (action === 'about') {
       closeDrawers();
@@ -1825,6 +1829,85 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     }
   });
 });
+
+/* ================= daftar bot (khusus premium) ================= */
+$('btnCloseBotCat').addEventListener('click', closeDrawers);
+
+async function openBotCatalog() {
+  openDrawer('botCatDrawer');
+  $('bcCount').textContent = '';
+  const body = $('bcBody');
+  body.innerHTML = '<div class="bc-loading">Memuat daftar bot…</div>';
+  try {
+    renderBotCatalog(await api('/api/bots'));
+  } catch (err) {
+    if (err.status === 403 && err.data && err.data.locked) renderBotLocked(err.data);
+    else renderBotError(err.message);
+  }
+}
+
+function renderBotError(message) {
+  $('bcBody').innerHTML = `
+    <div class="bc-locked">
+      <div class="bc-lock-ico"><svg viewBox="0 0 24 24"><use href="#ic-info" /></svg></div>
+      <h3>Daftar bot belum bisa dimuat</h3>
+      <p>${esc(message || 'Terjadi gangguan sesaat, silakan coba lagi.')}.</p>
+      <button class="btn-ghost" id="bcRetry" type="button">Coba lagi</button>
+    </div>`;
+  $('bcRetry').addEventListener('click', openBotCatalog);
+}
+
+function renderBotCatalog(data) {
+  const groups = data.groups || [];
+  const total = Number(data.total) || groups.reduce((sum, g) => sum + g.bots.length, 0);
+  $('bcCount').textContent = `${total} bot`;
+  const body = $('bcBody');
+  body.innerHTML = groups.map((g) => `
+    <section class="bc-group">
+      <div class="bc-group-head">
+        <h4>${esc(g.label)}</h4>
+        <span class="bc-group-count">${g.bots.length}</span>
+      </div>
+      <p class="bc-group-desc">${esc(g.desc || '')}</p>
+      <div class="bc-list">
+        ${g.bots.map((b) => `
+          <button class="bc-card" type="button" data-bot="${esc(b.id)}">
+            <span class="avatar bc-avatar"></span>
+            <span class="bc-info">
+              <span class="bc-name">${esc(b.name)}${badge(true)}</span>
+              <span class="bc-about">${esc(b.about || b.tagline || '')}</span>
+            </span>
+            <span class="bc-go" aria-hidden="true">›</span>
+          </button>`).join('')}
+      </div>
+    </section>`).join('');
+  body.querySelectorAll('[data-bot]').forEach((el) => {
+    const bot = groups.flatMap((g) => g.bots).find((b) => b.id === el.dataset.bot);
+    const av = el.querySelector('.bc-avatar');
+    if (av) setAvatar(av, bot || {});
+    el.addEventListener('click', () => startDirect(el.dataset.bot));
+  });
+  body.scrollTop = 0;
+}
+
+function renderBotLocked(data) {
+  const plans = Array.isArray(data.plans) ? data.plans : [];
+  const total = Number(data.total) || 0;
+  $('bcCount').textContent = 'Premium';
+  $('bcBody').innerHTML = `
+    <div class="bc-locked">
+      <div class="bc-lock-ico"><svg viewBox="0 0 24 24"><use href="#ic-crown" /></svg></div>
+      <h3>Daftar Bot Khusus Premium</h3>
+      <p>${total ? `${total} bot` : 'Seluruh bot'} siap dipakai — AI multi-model, pencarian, media, info, hiburan, sampai alat produktivitas. Semuanya hanya untuk admin &amp; pengguna premium.</p>
+      ${plans.length ? `
+      <div class="bc-plans">
+        ${plans.map((p) => `<span class="bc-plan">${esc(p.label)}<small>${Number(p.days) || 0} hari</small></span>`).join('')}
+      </div>` : ''}
+      <p class="bc-hint">Premium diaktifkan oleh admin Whatsap Indo. Begitu aktif, menu Daftar Bot langsung terbuka.</p>
+      <button class="btn-ghost" id="bcClose" type="button">Mengerti</button>
+    </div>`;
+  $('bcClose').addEventListener('click', closeDrawers);
+}
 
 /* ================= latar belakang chat ================= */
 let pendingWpType = 'image';

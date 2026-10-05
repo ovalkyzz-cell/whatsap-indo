@@ -1214,6 +1214,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     && wlKabMsg.body.includes('```json'),
     `bot Wilayah Indonesia menjawab kabupaten dalam provinsi (dapat: ${wlKabMsg ? 'balasan' : 'timeout'})`);
 
+  console.log('\n[30] Daftar bot khusus premium (menu Daftar Bot)');
+  const katalogBiasa = await api('/api/bots', { token: tokBiasa });
+  ok(katalogBiasa.status === 403 && katalogBiasa.data.locked === true
+    && katalogBiasa.data.total === 65 && Array.isArray(katalogBiasa.data.plans)
+    && katalogBiasa.data.plans.length >= 3,
+    'user non-premium ditolak: panel terkunci + daftar paket premium');
+
+  // premium akun uji sudah dicabut di [24], dikembalikan untuk menguji daftar bot
+  const grantKatalog = await admApi('/api/admin/premium', {
+    method: 'POST',
+    body: { email: premEmail, plan: planPrem ? planPrem.id : '' },
+  });
+  ok(grantKatalog.status === 200 && grantKatalog.data.user.premiumActive === true,
+    'premium akun uji dikembalikan untuk pengujian daftar bot');
+
+  const katalogPrem = await api('/api/bots', { token: tokPrem });
+  const grupPrem = katalogPrem.data.groups || [];
+  const idPrem = grupPrem.flatMap((g) => g.bots.map((b) => b.id));
+  ok(katalogPrem.status === 200 && katalogPrem.data.total === 65 && idPrem.length === 65,
+    'user premium menerima daftar lengkap 65 bot');
+  ok(new Set(idPrem).size === idPrem.length && grupPrem.every((g) => g.label && g.desc && g.bots.length),
+    'daftar terkelompok per kategori tanpa duplikat');
+  ok(grupPrem.every((g) => g.bots.every((b) => b.id && b.name && b.about))
+    && katalogPrem.data.premiumOnly === true,
+    'tiap bot punya nama & deskripsi, daftar ditandai premium-only');
+
+  const katalogAdm = await admApi('/api/bots');
+  ok(katalogAdm.status === 200 && (katalogAdm.data.groups || []).length === grupPrem.length,
+    'admin melihat daftar bot yang sama');
+
+  const chatDariKatalog = await api('/api/chats/direct', {
+    method: 'POST',
+    token: tokPrem,
+    body: { peerId: 'bot-glm' },
+  });
+  ok(chatDariKatalog.status === 201 && !!chatDariKatalog.data.chat.id,
+    'premium bisa membuka chat bot langsung dari daftar');
+
+  const revokeKatalog = await admApi('/api/admin/premium/revoke', {
+    method: 'POST',
+    body: { email: premEmail },
+  });
+  ok(revokeKatalog.status === 200 && revokeKatalog.data.user.premiumActive === false,
+    'premium akun uji dicabut kembali setelah pengujian');
+
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('TEST ERROR:', e); process.exit(1); });

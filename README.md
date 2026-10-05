@@ -19,6 +19,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
 | Bot premium | **65 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 56 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
+| Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **65 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
 | Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
@@ -185,6 +186,15 @@ Spesifikasi ber-`kind: 'ai'` (18 bot AI baru) memakai jalur balasan AI yang sama
 bot *AI*: jawaban model dirapikan, blok kode dijaga seimbang, percobaan ulang + model
 cadangan dalam satu anggaran waktu — jadi pertanyaan tetap terjawab walau satu model
 sedang sibuk.
+
+**Daftar Bot (menu premium).** `GET /api/bots` menyusun katalog dari `catalog()`
+(`server/bots.js`): delapan kategori — AI & Asisten, Gambar & Karya Visual, Agama &
+Spiritual, Info & Data, Pencarian & Stalking, Media & Hiburan, Produktivitas & Developer,
+Khusus Kebutuhan Admin — berisi `id`, `name`, `tagline`, `about`, `sample` & `avatar`
+terbaru tiap bot. Endpoint ini hanya untuk **admin & premium**; user lain menerima
+`403 { locked: true, total, plans }` sehingga antarmuka bisa menampilkan panel
+“Daftar Bot Khusus Premium” lengkap dengan daftar paket. Seluruh bot wajib muncul tepat
+satu kali di katalog (diverifikasi pada `npm run test:bots`).
 
 | Bot | ID | Perintah |
 |---|---|---|

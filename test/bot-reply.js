@@ -590,6 +590,22 @@ const bots = require(path);
   ok(lastCall().params.id === '3' && symId.text.includes('Simbol Provinsi'),
     'Bot baru: "simbol 3" mengirim id provinsi ke API');
 
+  // katalog daftar bot (menu "Daftar Bot", khusus admin & premium)
+  const groups = bots.catalog();
+  const katalogIds = groups.flatMap((g) => g.bots.map((b) => b.id));
+  ok(Array.isArray(groups) && groups.length >= 6, `katalog punya ${groups.length} kategori`);
+  ok(katalogIds.length === bots.BOTS.length,
+    `katalog memuat seluruh bot (${katalogIds.length}/${bots.BOTS.length})`);
+  ok(new Set(katalogIds).size === katalogIds.length, 'katalog tanpa bot ganda antar kategori');
+  ok(bots.BOTS.every((b) => katalogIds.includes(b.id)), 'setiap bot punya kategori di katalog');
+  ok(groups.every((g) => g.id && g.label && g.desc && g.bots.length),
+    'tiap kategori berlabel, berdeskripsi & berisi bot');
+  ok(groups.every((g) => g.bots.every((b) => b.id && b.name && b.about && b.tagline)),
+    'tiap entri bot punya id, nama, tagline & deskripsi');
+  ok(katalogIds.includes('bot-glm') && katalogIds.includes('bot-wilayah')
+    && katalogIds.includes('bot-verif-am'),
+    'bot AI, bot data & bot admin ikut katalog');
+
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('ERR', e); process.exit(1); });

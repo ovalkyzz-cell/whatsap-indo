@@ -2944,6 +2944,95 @@ for (const bot of GENERIC_BOTS) {
   DEFAULT_NAMES.add(bot.name);
 }
 
+/* ---------- katalog daftar bot (menu "Daftar Bot", khusus premium) ----------
+   Kategori ditulis tangan agar urutan dan istilahnya rapi untuk pengguna.
+   Setiap bot wajib muncul tepat satu kali: diverifikasi di test/bot-reply.js
+   sehingga bot baru tidak pernah luput dari daftar. */
+const CATALOG_GROUPS = [
+  {
+    id: 'ai',
+    label: 'AI & Asisten',
+    desc: 'Asisten cerdas multi-model untuk tanya jawab, menulis & belajar.',
+    bots: [
+      'bot-ai', 'bot-bard', 'bot-copilot', 'bot-opus', 'bot-gptoss', 'bot-gpt-klasik',
+      'bot-glm', 'bot-phi', 'bot-deepai', 'bot-publicai', 'bot-epsilon', 'bot-powerbrain',
+      'bot-jeeves', 'bot-realtime', 'bot-studi', 'bot-eksplorasi', 'bot-model-ai',
+    ],
+  },
+  {
+    id: 'visual',
+    label: 'Gambar & Karya Visual',
+    desc: 'Buat dan cari gambar, stiker, serta karya visual dari teks.',
+    bots: ['bot-aigambar', 'bot-aiseni', 'bot-brat', 'bot-stiker', 'bot-gambar', 'bot-waifu'],
+  },
+  {
+    id: 'agama',
+    label: 'Agama & Spiritual',
+    desc: 'Al-Quran, jadwal sholat, tafsir, dan kajian keagamaan.',
+    bots: ['bot-aiagama', 'bot-quran', 'bot-sholat', 'bot-mimpi'],
+  },
+  {
+    id: 'info',
+    label: 'Info & Data',
+    desc: 'Cuaca, gempa, kurs, kode pos, wilayah, dan data praktis sehari-hari.',
+    bots: [
+      'bot-cuaca', 'bot-gempa', 'bot-kurs', 'bot-nomor', 'bot-bola', 'bot-ip',
+      'bot-pos', 'bot-wilayah', 'bot-simbol',
+    ],
+  },
+  {
+    id: 'search',
+    label: 'Pencarian & Stalking',
+    desc: 'Cari di web, media, repository, sampai profil media sosial.',
+    bots: [
+      'bot-web', 'bot-media', 'bot-pin', 'bot-anime', 'bot-game', 'bot-repo',
+      'bot-npm', 'bot-cari-lahelu', 'bot-stalk', 'bot-stalker-x', 'bot-channel', 'bot-github',
+    ],
+  },
+  {
+    id: 'fun',
+    label: 'Media & Hiburan',
+    desc: 'Unduh video, meme, quotes, teka-teki, font & sound efek.',
+    bots: ['bot-down', 'bot-meme', 'bot-quotes', 'bot-tebak', 'bot-suara', 'bot-font'],
+  },
+  {
+    id: 'work',
+    label: 'Produktivitas & Developer',
+    desc: 'Terjemah, QR, OCR, screenshot, email sementara & alat pengembang.',
+    bots: [
+      'bot-tools', 'bot-terjemah', 'bot-qr', 'bot-ss', 'bot-ocr', 'bot-kodesnap',
+      'bot-npm-zip', 'bot-domain', 'bot-email',
+    ],
+  },
+  {
+    id: 'admin',
+    label: 'Khusus Kebutuhan Admin',
+    desc: 'Bot pendukung verifikasi, aset, dan kebutuhan tim pengelola.',
+    bots: ['bot-verif-am', 'bot-nftoken'],
+  },
+];
+
+function catalog() {
+  const specs = new Map(GENERIC_SPECS.map((spec) => [spec.id, spec]));
+  for (const bot of BOTS) if (!specs.has(bot.id)) specs.set(bot.id, bot);
+
+  return CATALOG_GROUPS.map((group) => ({
+    id: group.id,
+    label: group.label,
+    desc: group.desc,
+    bots: group.bots
+      .map((id) => specs.get(id))
+      .filter(Boolean)
+      .map((spec) => ({
+        id: spec.id,
+        name: spec.name,
+        tagline: String(spec.tagline || spec.about || '').trim(),
+        about: String(spec.about || '').trim(),
+        sample: String((spec.commands && spec.commands[0] && spec.commands[0].example) || '').trim(),
+      })),
+  })).filter((group) => group.bots.length);
+}
+
 module.exports = {
   BOTS,
   isBot,
@@ -2951,4 +3040,5 @@ module.exports = {
   get,
   peerInChat,
   reply,
+  catalog,
 };

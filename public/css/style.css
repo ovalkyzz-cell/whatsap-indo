@@ -606,6 +606,60 @@ input, textarea { font: inherit; }
 }
 @keyframes slideInRightMobile { from { transform: translateY(26px); opacity: .4; } to { transform: none; opacity: 1; } }
 
+/* ================= daftar bot (khusus premium) ================= */
+.bc-count {
+  margin-left: auto; font-size: 12px; font-weight: 700; color: var(--wa-accent-text);
+  background: rgba(0, 168, 132, .12); padding: 3px 10px; border-radius: 999px;
+}
+.bc-body {
+  flex: 1; overflow-y: auto; padding: 16px 16px 28px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+.bc-loading { padding: 48px 16px; text-align: center; color: var(--wa-text-2); font-size: 14px; }
+.bc-group-head { display: flex; align-items: center; gap: 8px; }
+.bc-group-head h4 { margin: 0; font-size: 15px; color: var(--wa-text); }
+.bc-group-count {
+  font-size: 11px; font-weight: 700; color: var(--wa-text-2);
+  background: var(--wa-hover); border: 1px solid var(--wa-border);
+  padding: 1px 8px; border-radius: 999px;
+}
+.bc-group-desc { margin: 4px 0 10px; font-size: 12.5px; color: var(--wa-text-2); line-height: 1.5; }
+.bc-list { display: flex; flex-direction: column; gap: 8px; }
+.bc-card {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--wa-border); border-radius: 14px;
+  background: var(--wa-panel); color: inherit; font: inherit; cursor: pointer;
+}
+.bc-card:hover { background: var(--wa-hover); border-color: var(--wa-border-strong); }
+.bc-card:focus-visible { outline: 2px solid var(--wa-teal); outline-offset: 2px; }
+.bc-avatar { width: 42px; height: 42px; font-size: 16px; }
+.bc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.bc-name { display: flex; align-items: center; gap: 6px; font-size: 14.5px; font-weight: 600; color: var(--wa-text); }
+.bc-about {
+  font-size: 12.5px; color: var(--wa-text-2); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bc-go { color: var(--wa-text-2); font-size: 20px; line-height: 1; }
+.bc-locked {
+  padding: 34px 18px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.bc-lock-ico {
+  width: 74px; height: 74px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 168, 132, .12); color: var(--wa-accent-text);
+}
+.bc-lock-ico svg { width: 34px; height: 34px; }
+.bc-locked h3 { margin: 4px 0 0; font-size: 17px; color: var(--wa-text); }
+.bc-locked p { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--wa-text-2); }
+.bc-plans { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 2px; }
+.bc-plan {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 14px;
+  border: 1px solid var(--wa-border); border-radius: 12px; background: var(--wa-panel);
+  font-size: 13px; font-weight: 600; color: var(--wa-text);
+}
+.bc-plan small { font-size: 11px; font-weight: 500; color: var(--wa-text-2); }
+.bc-hint { font-size: 12.5px; }
+
 /* ================= mode gelap ================= */
 html[data-theme="dark"] {
   color-scheme: dark;
