@@ -2223,45 +2223,61 @@ function makeBotFromSpec(spec) {
 
 /* ---------- manajemen akun bot ---------- */
 
+// tiap baris bot dicoba ulang: koneksi database di serverless bisa gagal
+// sesaat saat cold start ("Authentication timed out"), dan bila dilewat
+// diam-diam bot baru tidak akan pernah muncul di produksi
+const SEED_RETRY = 3;
+
+async function seedOne(bot, now) {
+  const existing = await db.get('SELECT id, name, about FROM users WHERE id = ? OR email = ?', bot.id, bot.email);
+  if (existing) {
+    if (String(existing.id) === bot.id) {
+      // nama/bio khusus admin dipertahankan; hanya baris dengan nama bawaan
+      // (atau kosong) yang disegarkan ke default terbaru
+      const custom = existing.name && !DEFAULT_NAMES.has(String(existing.name));
+      await db.run(
+        `UPDATE users SET is_bot = 1, verified = 1, account_status = 'active', banned = 0
+         WHERE id = ?`,
+        bot.id
+      );
+      if (!custom) {
+        await db.run(
+          'UPDATE users SET name = ?, about = ? WHERE id = ?',
+          bot.name,
+          bot.about,
+          bot.id
+        );
+      }
+    }
+    return;
+  }
+  const hash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 8);
+  await db.run(
+    `INSERT INTO users (id, email, name, password_hash, about, verified, is_bot, account_status, created_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, 1, 1, 'active', ?, 0)`,
+    bot.id,
+    bot.email,
+    bot.name,
+    hash,
+    bot.about,
+    now
+  );
+}
+
 async function seed() {
   const now = Date.now();
   for (const bot of BOTS) {
-    try {
-      const existing = await db.get('SELECT id, name, about FROM users WHERE id = ? OR email = ?', bot.id, bot.email);
-      if (existing) {
-        if (String(existing.id) === bot.id) {
-          // nama/bio khusus admin dipertahankan; hanya baris dengan nama bawaan
-          // (atau kosong) yang disegarkan ke default terbaru
-          const custom = existing.name && !DEFAULT_NAMES.has(String(existing.name));
-          await db.run(
-            `UPDATE users SET is_bot = 1, verified = 1, account_status = 'active', banned = 0
-             WHERE id = ?`,
-            bot.id
-          );
-          if (!custom) {
-            await db.run(
-              'UPDATE users SET name = ?, about = ? WHERE id = ?',
-              bot.name,
-              bot.about,
-              bot.id
-            );
-          }
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await seedOne(bot, now);
+        break;
+      } catch (err) {
+        if (attempt >= SEED_RETRY) {
+          console.error('bot seed', bot.id + ':', err.message);
+          break;
         }
-        continue;
+        await aiDelay(1000 * attempt);
       }
-      const hash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 8);
-      await db.run(
-        `INSERT INTO users (id, email, name, password_hash, about, verified, is_bot, account_status, created_at, last_seen)
-         VALUES (?, ?, ?, ?, ?, 1, 1, 'active', ?, 0)`,
-        bot.id,
-        bot.email,
-        bot.name,
-        hash,
-        bot.about,
-        now
-      );
-    } catch (err) {
-      console.error('bot seed', bot.id + ':', err.message);
     }
   }
 }
