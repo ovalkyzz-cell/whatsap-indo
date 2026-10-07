@@ -162,18 +162,29 @@ function angkaFence(value) {
 async function callApi(path, params, opts) {
   if (!API_KEY) throw new Error('Konfigurasi API bot belum lengkap (MAZVAL_API_KEY belum diatur).');
   const url = new URL(BASE + path);
-  for (const [key, value] of Object.entries(params || {})) {
-    if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
-  }
   url.searchParams.set('apikey', API_KEY);
+
+  // Dua mode: GET (parameter di query string, kebanyakan endpoint) dan POST
+  // (parameter di body JSON, dipakai endpoint seperti /api/tools/nik yang
+  // menerima { nik } di body). Key tetap dikirim lewat query string.
+  const method = opts && opts.method === 'POST' ? 'POST' : 'GET';
+  const init = {
+    method,
+    headers: { Accept: 'application/json', 'User-Agent': 'WhatsapIndo-Bot/1.0' },
+    signal: AbortSignal.timeout((opts && opts.timeout) || API_TIMEOUT),
+  };
+  if (method === 'POST') {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(params || {});
+  } else {
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+    }
+  }
 
   let res;
   try {
-    res = await fetch(url.toString(), {
-      method: 'GET',
-      headers: { Accept: 'application/json', 'User-Agent': 'WhatsapIndo-Bot/1.0' },
-      signal: AbortSignal.timeout((opts && opts.timeout) || API_TIMEOUT),
-    });
+    res = await fetch(url.toString(), init);
   } catch (e) {
     throw new Error('Layanan api-mazval tidak dapat dihubungi. Coba lagi sebentar lagi.');
   }
@@ -2012,14 +2023,41 @@ function buildParams(cmd, args) {
   const spec = cmd.params;
   if (!spec) return {};
   if (typeof spec === 'object' && !Array.isArray(spec)) {
-    const out = {};
-    for (const [key, role] of Object.entries(spec)) {
+    const entries = Object.entries(spec);
+    const out = { ...(cmd.defaults || {}) };
+    const tokens = args ? String(args).trim().split(/\s+/).filter(Boolean) : [];
+    let start = 0;
+
+    // peran khusus: 'first'  = token pertama, 'second' = token kedua,
+    // 'lastnum' = token terakhir bila berupa angka, 'rest' = sisa token
+    for (const [key, role] of entries) {
+      if (role === 'first') {
+        if (!tokens.length) return null;
+        out[key] = normalizeArg(key, tokens[0]);
+        start = 1;
+      } else if (role === 'second') {
+        if (tokens.length < start + 1) return null;
+        out[key] = normalizeArg(key, tokens[start]);
+        start += 1;
+      }
+    }
+
+    let end = tokens.length;
+    for (const [key, role] of entries) {
+      if (role === 'lastnum' && end > start && /^\d{1,3}$/.test(tokens[end - 1])) {
+        out[key] = tokens[end - 1];
+        end -= 1;
+      }
+    }
+
+    const restValue = tokens.slice(start, end).join(' ');
+    for (const [key, role] of entries) {
       if (role === 'rest') {
-        if (!args) return null;
-        out[key] = normalizeArg(key, args);
+        if (!restValue) return null;
+        out[key] = normalizeArg(key, restValue);
       } else if (role === 'rest?') {
-        if (args) out[key] = normalizeArg(key, args);
-      } else {
+        if (restValue) out[key] = normalizeArg(key, restValue);
+      } else if (!['first', 'second', 'lastnum'].includes(role)) {
         out[key] = role;
       }
     }
@@ -2108,7 +2146,7 @@ async function genericReply(spec, raw) {
   if (params === null) return errBlock(cmd.usage, `Contoh: ${cmd.example || cmd.usage}`);
   let body;
   try {
-    body = await callApi(cmd.path, params, { timeout: cmd.timeout });
+    body = await callApi(cmd.path, params, { timeout: cmd.timeout, method: cmd.method });
   } catch (e) {
     const local = await localImageFallback(cmd, params);
     if (local) return local;
@@ -2935,6 +2973,74 @@ const GENERIC_SPECS = [
         desc: 'Simbol provinsi', params: { id: 'rest?' }, path: '/api/info/symbols', label: 'Simbol Provinsi' },
     ],
   },
+  {
+    id: 'bot-nik', email: 'nik@bot.whatsap-indo', name: 'Parse NIK',
+    tagline: 'Baca data dari NIK KTP',
+    about: 'Baca isi NIK KTP 16 digit: provinsi, kabupaten, kecamatan, tanggal lahir, usia & jenis kelamin. Contoh: nik 3175061509900001.',
+    commands: [
+      { words: ['nik', 'parsenik'], usage: 'nik <16 digit>', example: 'nik 3175061509900001',
+        desc: 'Parse NIK KTP', params: { nik: 'rest' }, path: '/api/tools/nik', label: 'Parse NIK',
+        method: 'POST', timeout: 30000 },
+    ],
+  },
+  {
+    id: 'bot-tracking', email: 'tracking@bot.whatsap-indo', name: 'Tracking Paket',
+    tagline: 'Lacak paket semua kurir',
+    about: 'Lacak nomor resi JNE, J&T, SiCepat, POS, TIKI, AnterAja, Lion, Wahana & Ninja. Contoh: resi JNE00123456789 atau jnt JT00123456789.',
+    hint: 'Bila resi tidak ditemukan, sarankan pengguna memastikan nomor & kurir benar.',
+    commands: [
+      { words: ['resi', 'tracking', 'lacak', 'cekresi'], usage: 'resi <nomor resi>', example: 'resi JNE00123456789',
+        desc: 'Lacak resi (kurir JNE)', params: { tracking: 'rest', courier: 'jne' },
+        path: '/api/tools/tracking', label: 'Tracking Paket', timeout: 60000 },
+      { words: ['jne'], usage: 'jne <nomor resi>', example: 'jne JNE00123456789',
+        desc: 'Lacak resi JNE', params: { tracking: 'rest', courier: 'jne' },
+        path: '/api/tools/tracking', label: 'Tracking JNE', timeout: 60000 },
+      { words: ['jnt', 'jt'], usage: 'jnt <nomor resi>', example: 'jnt JT00123456789',
+        desc: 'Lacak resi J&T', params: { tracking: 'rest', courier: 'jnt' },
+        path: '/api/tools/tracking', label: 'Tracking J&T', timeout: 60000 },
+      { words: ['sicepat', 'scp'], usage: 'sicepat <nomor resi>', example: 'sicepat 001234567890',
+        desc: 'Lacak resi SiCepat', params: { tracking: 'rest', courier: 'sicepat' },
+        path: '/api/tools/tracking', label: 'Tracking SiCepat', timeout: 60000 },
+      { words: ['pos'], usage: 'pos <nomor resi>', example: 'pos 1234567890123',
+        desc: 'Lacak resi Pos Indonesia', params: { tracking: 'rest', courier: 'pos' },
+        path: '/api/tools/tracking', label: 'Tracking POS', timeout: 60000 },
+      { words: ['tiki'], usage: 'tiki <nomor resi>', example: 'tiki 001234567890',
+        desc: 'Lacak resi TIKI', params: { tracking: 'rest', courier: 'tiki' },
+        path: '/api/tools/tracking', label: 'Tracking TIKI', timeout: 60000 },
+      { words: ['anteraja'], usage: 'anteraja <nomor resi>', example: 'anteraja AD0012345678',
+        desc: 'Lacak resi AnterAja', params: { tracking: 'rest', courier: 'anteraja' },
+        path: '/api/tools/tracking', label: 'Tracking AnterAja', timeout: 60000 },
+      { words: ['lion'], usage: 'lion <nomor resi>', example: 'lion 881234567890',
+        desc: 'Lacak resi Lion Parcel', params: { tracking: 'rest', courier: 'lion' },
+        path: '/api/tools/tracking', label: 'Tracking Lion', timeout: 60000 },
+      { words: ['wahana'], usage: 'wahana <nomor resi>', example: 'wahana 001234567890',
+        desc: 'Lacak resi Wahana', params: { tracking: 'rest', courier: 'wahana' },
+        path: '/api/tools/tracking', label: 'Tracking Wahana', timeout: 60000 },
+      { words: ['ninja'], usage: 'ninja <nomor resi>', example: 'ninja NIN001234567',
+        desc: 'Lacak resi Ninja Xpress', params: { tracking: 'rest', courier: 'ninja' },
+        path: '/api/tools/tracking', label: 'Tracking Ninja', timeout: 60000 },
+    ],
+  },
+  {
+    id: 'bot-ngl', email: 'ngl@bot.whatsap-indo', name: 'NGL',
+    tagline: 'Kirim pesan anonim ke NGL',
+    about: 'Kirim satu pesan anonim ke link NGL milikmu. Contoh: ngl https://ngl.link/username halo sayang.',
+    commands: [
+      { words: ['ngl', 'kirimanonim'], usage: 'ngl <link NGL> <pesan>', example: 'ngl https://ngl.link/username halo sayang',
+        desc: 'Kirim pesan anonim', params: { link: 'first', text: 'rest' },
+        path: '/api/tools/ngl', label: 'NGL Terkirim', timeout: 30000 },
+    ],
+  },
+  {
+    id: 'bot-ngl-spam', email: 'nglspam@bot.whatsap-indo', name: 'NGL Spam',
+    tagline: 'Kirim pesan NGL berulang',
+    about: 'Kirim pesan anonim berulang ke link NGL (maksimal 10 kali). Contoh: spam https://ngl.link/username halo 5.',
+    commands: [
+      { words: ['spam', 'spamngl', 'nglspam'], usage: 'spam <link> <pesan> [jumlah]', example: 'spam https://ngl.link/username halo 5',
+        desc: 'Kirim pesan NGL berulang', params: { link: 'first', pesan: 'rest', jumlah: 'lastnum' },
+        defaults: { jumlah: '5' }, path: '/api/tools/ngl-spam', label: 'NGL Spam', timeout: 90000 },
+    ],
+  },
 ];
 
 const GENERIC_BOTS = GENERIC_SPECS.map(makeBotFromSpec);
@@ -2974,10 +3080,10 @@ const CATALOG_GROUPS = [
   {
     id: 'info',
     label: 'Info & Data',
-    desc: 'Cuaca, gempa, kurs, kode pos, wilayah, dan data praktis sehari-hari.',
+    desc: 'Cuaca, gempa, kurs, kode pos, wilayah, NIK KTP, dan data praktis sehari-hari.',
     bots: [
       'bot-cuaca', 'bot-gempa', 'bot-kurs', 'bot-nomor', 'bot-bola', 'bot-ip',
-      'bot-pos', 'bot-wilayah', 'bot-simbol',
+      'bot-pos', 'bot-wilayah', 'bot-simbol', 'bot-nik',
     ],
   },
   {
@@ -2992,16 +3098,16 @@ const CATALOG_GROUPS = [
   {
     id: 'fun',
     label: 'Media & Hiburan',
-    desc: 'Unduh video, meme, quotes, teka-teki, font & sound efek.',
-    bots: ['bot-down', 'bot-meme', 'bot-quotes', 'bot-tebak', 'bot-suara', 'bot-font'],
+    desc: 'Unduh video, meme, quotes, teka-teki, font, sound efek & pesan anonim.',
+    bots: ['bot-down', 'bot-meme', 'bot-quotes', 'bot-tebak', 'bot-suara', 'bot-font', 'bot-ngl', 'bot-ngl-spam'],
   },
   {
     id: 'work',
     label: 'Produktivitas & Developer',
-    desc: 'Terjemah, QR, OCR, screenshot, email sementara & alat pengembang.',
+    desc: 'Terjemah, QR, OCR, screenshot, tracking paket, email sementara & alat pengembang.',
     bots: [
       'bot-tools', 'bot-terjemah', 'bot-qr', 'bot-ss', 'bot-ocr', 'bot-kodesnap',
-      'bot-npm-zip', 'bot-domain', 'bot-email',
+      'bot-npm-zip', 'bot-domain', 'bot-email', 'bot-tracking',
     ],
   },
   {

@@ -1052,7 +1052,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     body: { about: 'Generator NFToken Alight Motion. Ketik "menu".' },
   });
 
-  console.log('\n[27] Total 65 bot: seed, menu, media, rename & tanpa panggilan');
+  console.log('\n[27] Total 69 bot: seed, menu, media, rename & tanpa panggilan');
 
   // socket uji bisa terputus di tengah run panjang (sesi baru / ping) — sambung ulang
   let feedSock = botSock;
@@ -1063,7 +1063,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(feedSock.connected === true, 'socket admin uji terhubung saat [27]');
   const cariBot = await admApi('/api/users/search?q=bot.whatsap-indo');
   const daftarBot = (cariBot.data.users || []).filter((u) => u.isBot);
-  ok(daftarBot.length === 65, `terdeteksi 65 bot admin (dapat ${daftarBot.length})`);
+  ok(daftarBot.length === 69, `terdeteksi 69 bot admin (dapat ${daftarBot.length})`);
   ok(daftarBot.every((u) => u.verified === true), 'seluruh bot terverifikasi');
 
   const chatByBot = {};
@@ -1074,7 +1074,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else chatByBot[u.id] = buka.data.chat.id;
   }
   ok(gagalBuka.length === 0,
-    `chat dengan semua 65 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
+    `chat dengan semua 69 bot bisa dibuka${gagalBuka.length ? ' — gagal: ' + gagalBuka.join(', ') : ''}`);
   ok(!!chatByBot['bot-brat'] && !!chatByBot['bot-pos'], 'chat bot-brat & bot-pos siap dipakai uji balasan');
 
   const menuWait = waitEvent(feedSock, 'message:new', 12000).catch(() => null);
@@ -1217,7 +1217,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('\n[30] Daftar bot khusus premium (menu Daftar Bot)');
   const katalogBiasa = await api('/api/bots', { token: tokBiasa });
   ok(katalogBiasa.status === 403 && katalogBiasa.data.locked === true
-    && katalogBiasa.data.total === 65 && Array.isArray(katalogBiasa.data.plans)
+    && katalogBiasa.data.total === 69 && Array.isArray(katalogBiasa.data.plans)
     && katalogBiasa.data.plans.length >= 3,
     'user non-premium ditolak: panel terkunci + daftar paket premium');
 
@@ -1232,8 +1232,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const katalogPrem = await api('/api/bots', { token: tokPrem });
   const grupPrem = katalogPrem.data.groups || [];
   const idPrem = grupPrem.flatMap((g) => g.bots.map((b) => b.id));
-  ok(katalogPrem.status === 200 && katalogPrem.data.total === 65 && idPrem.length === 65,
-    'user premium menerima daftar lengkap 65 bot');
+  ok(katalogPrem.status === 200 && katalogPrem.data.total === 69 && idPrem.length === 69,
+    'user premium menerima daftar lengkap 69 bot');
   ok(new Set(idPrem).size === idPrem.length && grupPrem.every((g) => g.label && g.desc && g.bots.length),
     'daftar terkelompok per kategori tanpa duplikat');
   ok(grupPrem.every((g) => g.bots.every((b) => b.id && b.name && b.about))

@@ -1,5 +1,5 @@
 'use strict';
-/* Unit test balasan bot inti, 3 bot kustom baru & 65 bot total dengan API mock (tanpa jaringan).
+/* Unit test balasan bot inti, 3 bot kustom baru & 69 bot total dengan API mock (tanpa jaringan).
    Jalankan: npm run test:bots  */
 process.env.MAZVAL_API_KEY = 'test-key';
 const path = require('path').join(__dirname, '..', 'server', 'bots.js');
@@ -35,7 +35,7 @@ const fakeResponses = {
   '/api/tempmail/domains': { status: 'success', data: { domains: ['bhap.me', 'xelio.sbs'] } },
   '/api/tempmail/inbox': { status: 'success', data: { email: 'uji123@bhap.me', total_messages: 1,
     messages: [{ from: 'no-reply@x.com', subject: 'Kode OTP kamu', date: 'just now', link: 'l1' }], otp: '493821', verification_link: null, body: null } },
-  // bot generik (65 bot total) — dipetakan langsung ke endpoint api-mazval
+  // bot generik (69 bot total) — dipetakan langsung ke endpoint api-mazval
   '/api/info/cuaca': { success: true, endpoint: '/api/info/cuaca',
     data: { kota: 'Jakarta', suhu_c: '27', kelembaban: 73, deskripsi: 'Cerah' } },
   '/api/tools/currency': { status: true, result: { from: 'USD', to: 'IDR', amount: 100, rate: 16000, result: 1600000, date: '2026-10-01' } },
@@ -64,9 +64,23 @@ const fakeResponses = {
   '/api/info/symbols': { success: true, endpoint: '/api/info/symbols',
     data: [{ title: 'Aceh', url: '/provinces/1/24' }, { title: 'Sumatera Utara', url: '/provinces/2/24' },
       { title: 'Jawa Barat', url: '/provinces/3/24' }] },
+  // 4 bot baru: parse NIK (POST), tracking paket, NGL & NGL spam
+  '/api/tools/nik': { success: true, creator: 'mazval', endpoint: '/api/tools/nik', data: {
+    nik: '3175061509900001', is_valid: true, gender: 'MALE', birth_date: '1990-09-15', age: 36,
+    province: { id: '31', name: 'DKI JAKARTA' },
+    regency: { id: '3175', name: 'KOTA JAKARTA SELATAN' },
+    district: { id: '3175060', name: 'TEBET' } } },
+  '/api/tools/tracking': { success: true, creator: 'mazval', endpoint: '/api/tools/tracking', data: {
+    tracking_number: 'JNE00123456789', courier: 'jne', status: 'On Process',
+    tracking: { expedisi: 'JNE Express',
+      perjalanan: [{ tanggal: '2026-10-01', keterangan: 'Dalam pengiriman' }] } } },
+  '/api/tools/ngl': { success: true, creator: 'mazval', endpoint: '/api/tools/ngl', data: {
+    link: 'https://ngl.link/username', question: 'halo sayang', questionId: '1234567890', terkirim: 1 } },
+  '/api/tools/ngl-spam': { success: true, creator: 'mazval', endpoint: '/api/tools/ngl-spam', data: {
+    link: 'https://ngl.link/username', pesan: 'halo', terkirim: 5, gagal: 0 } },
 };
 
-// 18 bot AI baru (65 bot total): seluruh endpoint diverifikasi terhadap API produksi.
+// 18 bot AI baru (69 bot total): seluruh endpoint diverifikasi terhadap API produksi.
 // /api/ai/dolphin-ai sengaja TIDAK dimock -> menguji jalur model cadangan.
 const newAiMocks = {
   '/api/ai/bard-google': 'Jawaban Bard.',
@@ -183,6 +197,7 @@ global.fetch = async (url, opts = {}) => {
   global.__calls.push({
     path: u.pathname, host: u.hostname, method: opts.method || 'GET',
     params: Object.fromEntries(u.searchParams),
+    body: opts.body ? JSON.parse(opts.body) : undefined,
   });
 
   for (const h of hostHandlers) {
@@ -372,8 +387,8 @@ const bots = require(path);
   ok(ds.includes('```js\nconst a = 1;\n```') && ds.includes('Balas "menu" untuk memilih model lain.'),
     'AI: blok kode tak seimbang ditutup sebelum footer');
 
-  // ---- bot generik: total 65 bot (9 inti + 56 generik) ----
-  ok(bots.BOTS.length === 65, `total bot terdaftar ${bots.BOTS.length} (harus 65)`);
+  // ---- bot generik: total 69 bot (9 inti + 60 generik) ----
+  ok(bots.BOTS.length === 69, `total bot terdaftar ${bots.BOTS.length} (harus 69)`);
 
   const gm = await bots.reply({ id: 'bot-cuaca' }, 'menu');
   ok(gm.includes('CUACA') && gm.includes('cuaca <kota>') && gm.includes('Contoh:'),
@@ -589,6 +604,71 @@ const bots = require(path);
   const symId = await bots.reply({ id: 'bot-simbol' }, 'simbol 3');
   ok(lastCall().params.id === '3' && symId.text.includes('Simbol Provinsi'),
     'Bot baru: "simbol 3" mengirim id provinsi ke API');
+
+  // ---- 4 bot baru: parse NIK (POST), tracking paket, NGL & NGL spam ----
+  const nikMenu = await bots.reply({ id: 'bot-nik' }, 'menu');
+  ok(nikMenu.includes('PARSE NIK') && nikMenu.includes('nik <16 digit>')
+    && nikMenu.includes('nik 3175061509900001'),
+    'Bot baru: menu Parse NIK rapi (perintah + contoh)');
+
+  const nikKurang = await bots.reply({ id: 'bot-nik' }, 'nik');
+  ok(typeof nikKurang === 'string' && /nik <16 digit>/.test(nikKurang) && !/✅/.test(nikKurang),
+    'Bot baru: NIK tanpa nomor diminta contoh tanpa memanggil API');
+
+  const nik = await bots.reply({ id: 'bot-nik' }, 'nik 3175061509900001');
+  ok(lastCall().path === '/api/tools/nik' && lastCall().method === 'POST'
+    && lastCall().body && lastCall().body.nik === '3175061509900001' && !lastCall().params.nik,
+    'Bot baru: NIK dikirim lewat body POST (bukan query string)');
+  ok(nik.text.includes('Parse NIK') && nik.text.includes('Gender: MALE')
+    && nik.text.includes('Birth date: 1990-09-15') && nik.text.includes('Province name: DKI JAKARTA')
+    && nik.text.includes('```json'),
+    'Bot baru: hasil parse NIK ditampilkan ringkas + blok JSON');
+
+  const trk = await bots.reply({ id: 'bot-tracking' }, 'resi JNE00123456789');
+  ok(lastCall().path === '/api/tools/tracking' && lastCall().params.tracking === 'JNE00123456789'
+    && lastCall().params.courier === 'jne',
+    'Bot baru: "resi <nomor>" memakai kurir jne bawaan');
+  ok(trk.text.includes('Tracking Paket') && trk.text.includes('Status: On Process')
+    && trk.text.includes('Dalam pengiriman') && trk.text.includes('```json'),
+    'Bot baru: riwayat perjalanan paket tampil ringkas + JSON');
+
+  const trkJnt = await bots.reply({ id: 'bot-tracking' }, 'jnt JT00123456789');
+  ok(lastCall().params.courier === 'jnt' && lastCall().params.tracking === 'JT00123456789',
+    'Bot baru: "jnt <nomor>" memetakan kurir sesuai perintah');
+
+  const trkKurang = await bots.reply({ id: 'bot-tracking' }, 'resi');
+  ok(typeof trkKurang === 'string' && /resi <nomor resi>/.test(trkKurang),
+    'Bot baru: tracking tanpa nomor meminta contoh');
+
+  const ngl = await bots.reply({ id: 'bot-ngl' }, 'ngl https://ngl.link/username halo sayang');
+  ok(lastCall().path === '/api/tools/ngl' && lastCall().params.link === 'https://ngl.link/username'
+    && lastCall().params.text === 'halo sayang',
+    'Bot baru: NGL memisahkan link & pesan (pesan multi kata utuh)');
+  ok(ngl.text.includes('NGL Terkirim') && ngl.text.includes('QuestionId: 1234567890'),
+    'Bot baru: konfirmasi pesan NGL terkirim');
+
+  const nglBare = await bots.reply({ id: 'bot-ngl' }, 'ngl ngl.link/username halo');
+  ok(lastCall().params.link === 'https://ngl.link/username',
+    'Bot baru: link NGL tanpa https dilengkapi otomatis');
+
+  const nglTanpaPesan = await bots.reply({ id: 'bot-ngl' }, 'ngl https://ngl.link/username');
+  ok(typeof nglTanpaPesan === 'string' && /ngl <link NGL> <pesan>/.test(nglTanpaPesan),
+    'Bot baru: NGL tanpa pesan ditolak sebelum memanggil API');
+
+  const spam = await bots.reply({ id: 'bot-ngl-spam' }, 'spam https://ngl.link/username halo 7');
+  ok(lastCall().path === '/api/tools/ngl-spam' && lastCall().params.link === 'https://ngl.link/username'
+    && lastCall().params.pesan === 'halo' && lastCall().params.jumlah === '7',
+    'Bot baru: spam mengambil jumlah di ujung pesan');
+  ok(spam.text.includes('NGL Spam') && spam.text.includes('Link: https://ngl.link/username'),
+    'Bot baru: ringkasan spam NGL tampil');
+
+  const spamDefault = await bots.reply({ id: 'bot-ngl-spam' }, 'spam https://ngl.link/username halo');
+  ok(lastCall().params.pesan === 'halo' && lastCall().params.jumlah === '5',
+    'Bot baru: spam tanpa jumlah memakai bawaan 5');
+
+  const spamTanpaPesan = await bots.reply({ id: 'bot-ngl-spam' }, 'spam https://ngl.link/username');
+  ok(typeof spamTanpaPesan === 'string' && /spam <link> <pesan> \[jumlah\]/.test(spamTanpaPesan),
+    'Bot baru: spam tanpa pesan ditolak sebelum memanggil API');
 
   // katalog daftar bot (menu "Daftar Bot", khusus admin & premium)
   const groups = bots.catalog();

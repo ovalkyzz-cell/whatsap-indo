@@ -17,9 +17,9 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Preview unduh | Bot Downloader **wajib menampilkan hasil videonya**: rangkaian resolver otomatis (api-mazval → tikwm → fxtwitter → instance cobalt → Piped) mengambil file medianya, divalidasi via probe Range, lalu **diunduh ke server** dan tampil sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback terakhir: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
-| Bot premium | **65 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 56 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi) |
+| Bot premium | **69 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 60 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi, Parse NIK, Tracking Paket, NGL, NGL Spam) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
-| Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **65 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
+| Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **69 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
 | Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
@@ -38,7 +38,7 @@ npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
 npm test           # test end-to-end (server harus berjalan)
-npm run test:bots  # unit test balasan 65 bot (API dimock, tanpa jaringan)
+npm run test:bots  # unit test balasan 69 bot (API dimock, tanpa jaringan)
 ```
 
 Variabel lingkungan opsional:
@@ -66,7 +66,7 @@ server/
   auth.js      # register/login, bcrypt, JWT middleware
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
-  bots.js      # 65 bot admin (9 inti + 56 generik) + perintah + API api-mazval
+  bots.js      # 69 bot admin (9 inti + 60 generik) + perintah + API api-mazval
                # + rangkaian resolver Downloader (tikwm, fxtwitter, cobalt, Piped)
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
@@ -79,10 +79,10 @@ public/
 test/
   e2e.js       # e2e: auth, realtime, receipts, upload, delete, fitur panggilan dihapus,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time, 65 bot (admin & premium), edit nama bot
+               # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot
                # & 20 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan,
                # 18 bot AI, Wilayah Indonesia & Simbol Provinsi)
-  bot-reply.js # 73 assert unit test balasan 65 bot + rantai resolver Downloader
+  bot-reply.js # 96 assert unit test balasan 69 bot + rantai resolver Downloader
                # (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
@@ -173,12 +173,12 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 (`registered`, `approved`, `rejected`, `banned`, `unbanned`, `login`, `logout`, `online`, `offline`)
 lewat Socket.IO, sehingga panel *Monitor Real-time* terupdate tanpa muat ulang.
 
-### Bot (9 bot inti + 56 bot generik = 65 bot) — khusus admin & premium
+### Bot (9 bot inti + 60 bot generik = 69 bot) — khusus admin & premium
 
-Enam puluh lima bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
+Enam puluh sembilan bot dibuat otomatis saat boot (`server/bots.js`) sebagai akun dengan `is_bot = 1`,
 `verified = 1`, status `active` — tampil di pencarian **hanya untuk admin dan pengguna
 premium** (`premium_until` masih aktif; diberikan lewat `POST /api/admin/premium`) dan
-selalu membawa **badge centang biru**. Sembilan bot inti ditulis manual; 56 bot generik
+selalu membawa **badge centang biru**. Sembilan bot inti ditulis manual; 60 bot generik
 digenerate
 dari spesifikasi `GENERIC_SPECS` — menu, pemetaan argumen, format baris + blok JSON, dan
 preview media otomatis, semuanya menuju endpoint api-mazval yang benar-benar tersedia.
