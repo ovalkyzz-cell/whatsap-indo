@@ -63,6 +63,20 @@ Variabel lingkungan opsional:
   (default `90000`); berlaku untuk seluruh jalur: api-mazval, tikwm, fxtwitter, cobalt & Piped
 - `COBALT_API_KEY` — API key opsional bila memakai instance cobalt yang dilindungi key
 
+### Instal sebagai aplikasi (desktop & Android)
+
+Aplikasi adalah **PWA** lengkap: `public/manifest.json`, ikon di `public/icons/`
+(192, 512, maskable, apple-touch), dan `public/sw.js` yang meng-cache shell aplikasi
+(aset statis saja — `/api`, `/uploads`, dan socket.io tidak pernah di-cache) supaya
+bisa dibuka saat offline.
+
+- **Desktop (Windows/macOS/Linux):** buka di Chrome/Edge → menu ⋮ → *Install app* /
+  *Install Whatsap Indo*. Jendela mandiri tanpa address bar, ikon sendiri di taskbar/dock.
+- **Android (APK):** situs lolos kriteria instalasi Chrome → buka
+  [pwabuilder.com](https://www.pwabuilder.com) dengan URL produksi → *Package for stores*
+  → unduh APK/AAB (Android Package) untuk dipasang atau diunggah ke Play Store.
+  Alternatif: Chrome Android → menu ⋮ → *Tambahkan ke layar utama*.
+
 ## Arsitektur
 
 ```

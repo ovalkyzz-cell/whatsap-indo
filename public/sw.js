@@ -1,11 +1,73 @@
 /* Service Worker: notifikasi WhatsApp-style (online & offline) */
 'use strict';
 
-self.addEventListener('install', () => { self.skipWaiting(); });
+const CACHE = 'wa-static-v1';
+const PRECACHE = [
+  '/',
+  '/index.html',
+  '/css/style.css',
+  '/js/app.js',
+  '/manifest.json',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-512-maskable.png',
+  '/icons/favicon-32.png',
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(PRECACHE.map(async (url) => {
+      try {
+        const res = await fetch(url, { cache: 'reload' });
+        if (res && (res.ok || res.type === 'opaque')) await cache.put(url, res);
+      } catch { /* URL opsional, lanjut */ }
+    }));
+  })());
+  self.skipWaiting();
+});
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    await self.clients.claim();
+  })());
 });
+
+/* Cache hanya aset statis milik aplikasi (jaringan dulu, fallback cache saat offline).
+   /api, /uploads, dan socket.io sengaja tidak pernah di-cache supaya data tetap segar. */
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/uploads')
+    || url.pathname.startsWith('/socket.io')) return;
+
+  event.respondWith((async () => {
+    try {
+      const res = await fetch(req);
+      if (res && res.ok) {
+        const cache = await caches.open(CACHE);
+        cache.put(req, res.clone());
+      }
+      return res;
+    } catch {
+      const cached = await caches.match(req);
+      if (cached) return cached;
+      if (req.mode === 'navigate') {
+        const shell = (await caches.match('/index.html')) || (await caches.match('/'));
+        if (shell) return shell;
+      }
+      return new Response('Tidak ada koneksi internet', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    }
+  })());
+});
+
 
 function readPayload(event) {
   try {

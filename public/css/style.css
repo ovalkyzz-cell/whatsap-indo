@@ -95,7 +95,7 @@ input, textarea { font: inherit; }
 
 /* ---------- app layout ---------- */
 .app {
-  display: flex; height: 100vh; max-width: 1600px; margin: 0 auto;
+  display: flex; height: 100vh; height: 100dvh; max-width: 1600px; margin: 0 auto;
   background: var(--wa-panel); box-shadow: var(--shadow); overflow: hidden;
   position: relative;
 }
@@ -1878,3 +1878,12 @@ html[data-theme="dark"] .adm-plan-card { background: rgba(255, 255, 255, .04); }
     scroll-behavior: auto !important;
   }
 }
+
+/* ============ desktop / layar lebar (install sebagai aplikasi) ============ */
+@media (min-width: 1440px) {
+  .sidebar { width: 432px; }
+}
+:focus-visible {
+  outline: 2px solid var(--wa-teal); outline-offset: 2px;
+}
+input:focus-visible, textarea:focus-visible { outline-offset: 0; }
