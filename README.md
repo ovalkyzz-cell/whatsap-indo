@@ -23,6 +23,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 4 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup), **Mingguan Rp10.000** (limit 200/hari), **Bulanan Rp25.000** (tanpa limit), **Permanen Rp50.000** (100 tahun); admin bisa mengubah nama, durasi, harga, limit, bot eksklusif & status permanen |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
 | Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas Whatsap Indo Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
+| Hubungi CS | Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi) langsung **membuka chat** lewat `GET /api/cs` — lolos privasi email & pencarian diri sendiri; saat akun CS sendiri yang menekan, chat diri sendiri (ala *message yourself*) tetap terbuka otomatis |
 | Proteksi foto | Foto profil terlindungi: klik kanan, seret, salin, unduh & blokir gambar dimatikan; screenshot (PrintScreen / Ctrl+P / Ctrl+S) dan menu cetak menyembunyikannya |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
@@ -165,7 +166,7 @@ Email di `ADMIN_EMAILS` (dan `ovalkyzz@gmail.com`) langsung `active`.
 
 | Endpoint | Aksi |
 |---|---|
-| `GET /api/admin/monitor` | Daftar pengguna (daring, device, IP, status), pendaftaran menunggu, 40 log masuk terakhir |
+| `GET /api/admin/monitor` | Daftar pengguna (daring, device, IP, status), pendaftaran menunggu, 40 log masuk terakhir — `pending` diambil **terpisah** dari jendela `LIMIT 200` (urutan `last_login_at` yang NULL membuat pendaftar baru tersingkir saat user > 200) |
 | `POST /api/admin/users/:id/approve` | Setujui pendaftaran → akun bisa masuk |
 | `POST /api/admin/users/:id/reject` | Tolak pendaftaran (`body: { reason }`) → login `403 rejected` |
 | `POST /api/admin/users/:id/ban` | Blokir akun (`body: { reason }`) → sesi diputus, login `403 banned` |
@@ -352,6 +353,15 @@ dibuat saat pertama dibuka lewat `GET /api/referral`), link `${origin}/?ref=KODE
 - `GET /api/referral` → `{ code, link, tokens, invited, referred, welcomeTokens, inviteTokens }`;
 - kolom baru ikut migrasi `TABLE_MIGRATIONS` (`server/db.js`): `ref_code`, `referred_by`,
   `ref_rewarded`, `invite_count`, `bot_tokens`, `bot_usage_day`, `bot_usage_count`.
+
+**Kontak CS** (`GET /api/cs`, butuh login) → `{ user, self }`: admin/CS paling senior (email
+`ADMIN_EMAILS`/`VERIFIED_EMAILS`, fallback `role = 'admin'`) diserialisasi lengkap dengan status
+online. Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi)
+memakai endpoint ini alih-alih `/api/users/search`, sehingga tidak gigit ekor oleh privasi
+`priv_email` maupun pengecualian diri sendiri (`WHERE id <> ?`). `self: true` = penanya adalah
+CS itu sendiri → klien tetap `POST /api/chats/direct` dengan `peerId` sendiri: **chat diri
+sendiri** (ala *message yourself*) dibuat satu baris anggota dan tampil di daftar chat dengan
+nama sendiri, jadi tombol selalu membuka chat otomatis tanpa pesan galat.
 
 Foto profil bot — **khusus admin**:
 

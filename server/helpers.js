@@ -43,18 +43,16 @@ async function getOrCreateDirectChat(userA, userB) {
       const id = crypto.randomUUID();
       const now = Date.now();
       await db.run(`INSERT INTO chats (id, type, name, created_at) VALUES (?, 'direct', ?, ?)`, id, key, now);
-      await db.run(
-        `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)`,
-        id,
-        userA,
-        now
-      );
-      await db.run(
-        `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)`,
-        id,
-        userB,
-        now
-      );
+      // chat dengan diri sendiri hanya punya satu baris anggota (PRIMARY KEY chat_id+user_id)
+      const members = userA === userB ? [userA] : [userA, userB];
+      for (const member of members) {
+        await db.run(
+          `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)`,
+          id,
+          member,
+          now
+        );
+      }
       return db.get('SELECT * FROM chats WHERE id = ?', id);
     });
   } catch (err) {
@@ -206,7 +204,8 @@ async function loadChatBundle(rows, viewerId) {
 
   const peerRows = await db.all(
     `SELECT m.chat_id, u.* FROM chat_members m JOIN users u ON u.id = m.user_id
-     WHERE m.chat_id IN (${ids}) AND m.user_id <> ?`,
+     WHERE m.chat_id IN (${ids})
+     ORDER BY CASE WHEN m.user_id = ? THEN 1 ELSE 0 END`,
     ...chatIds,
     viewerId
   );

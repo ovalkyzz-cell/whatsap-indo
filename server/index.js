@@ -455,6 +455,30 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   });
 }));
 
+// kontak CS/admin: selalu bisa dihubungi — lolos privasi email & pencarian diri sendiri,
+// supaya tombol "Hubungi Admin / CS" selalu membuka chat otomatis
+app.get('/api/cs', auth.requireAuth, ah(async (req, res) => {
+  let row = null;
+  if (auth.ADMIN_EMAILS.length) {
+    row = await db.get(
+      `SELECT * FROM users WHERE LOWER(email) IN (${auth.ADMIN_EMAILS.map(() => '?').join(',')})
+       ORDER BY (role = 'admin') DESC, created_at ASC LIMIT 1`,
+      ...auth.ADMIN_EMAILS
+    );
+  }
+  if (!row) {
+    row = await db.get(`SELECT * FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`);
+  }
+  if (!row) return res.status(404).json({ error: 'Kontak CS belum tersedia' });
+  res.json({
+    user: helpers.serializeUser(row, req.user.id, {
+      online: await presence.isOnline(row.id),
+      premium: false,
+    }),
+    self: row.id === req.user.id,
+  });
+}));
+
 app.get('/api/users/:id', auth.requireAuth, ah(async (req, res) => {
   const row = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!row) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
@@ -1301,11 +1325,25 @@ app.get('/api/admin/monitor', auth.requireAuth, requireAdmin, ah(async (req, res
         like
       )
     : await db.all('SELECT * FROM users ORDER BY last_login_at DESC, LOWER(name) LIMIT 200');
-  const online = await presence.onlineSet(rows.map((r) => r.id));
+  // pendaftar menunggu diambil terpisah: last_login_at mereka NULL sehingga selalu
+  // tersingkir dari LIMIT 200 saat jumlah user melebihi 200
+  const pendingRows = q
+    ? await db.all(
+        `SELECT * FROM users WHERE banned = 0 AND account_status = 'pending'
+         AND (LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))
+         ORDER BY created_at DESC LIMIT 200`,
+        like,
+        like
+      )
+    : await db.all(
+        `SELECT * FROM users WHERE banned = 0 AND account_status = 'pending'
+         ORDER BY created_at DESC LIMIT 200`
+      );
+  const online = await presence.onlineSet([...rows, ...pendingRows].map((r) => r.id));
   const logs = await db.all('SELECT * FROM login_logs ORDER BY at DESC LIMIT 40');
   res.json({
     users: rows.map((r) => adminUser(r, online.has(r.id))),
-    pending: rows.filter((r) => !r.banned && r.account_status === 'pending').map((r) => adminUser(r, online.has(r.id))),
+    pending: pendingRows.map((r) => adminUser(r, online.has(r.id))),
     logs,
     stats: await adminStats(),
   });

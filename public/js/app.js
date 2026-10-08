@@ -2201,12 +2201,9 @@ $('btnCloseInvite').addEventListener('click', closeDrawers);
 /* ================= hubungi admin / CS ================= */
 async function chatWithAdmin() {
   try {
-    const data = await api(`/api/users/search?q=${encodeURIComponent(ADMIN_CS_EMAIL)}`);
-    const users = data.users || [];
-    const admin = users.find((u) => String(u.email || '').toLowerCase() === ADMIN_CS_EMAIL)
-      || users.find((u) => u.role === 'admin');
-    if (!admin) { toast(`CS belum bisa dihubungi lewat chat. Email: ${ADMIN_CS_EMAIL}`); return; }
-    await startDirect(admin.id);
+    const data = await api('/api/cs');
+    if (!data || !data.user) { toast(`Hubungi CS lewat email: ${ADMIN_CS_EMAIL}`); return; }
+    await startDirect(data.user.id);
   } catch (err) {
     toast(err.message || `Email CS: ${ADMIN_CS_EMAIL}`);
   }
