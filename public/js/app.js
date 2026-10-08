@@ -166,7 +166,10 @@ $('registerForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   try {
-    const data = await api('/api/auth/register', { method: 'POST', body: { name: f.get('name'), email: f.get('email'), password: f.get('password') } });
+    const body = { name: f.get('name'), email: f.get('email'), password: f.get('password') };
+    const ref = String(f.get('ref') || '').trim();
+    if (ref) body.ref = ref;
+    const data = await api('/api/auth/register', { method: 'POST', body });
     if (data.pending) {
       // akun baru harus disetujui admin sebelum bisa masuk
       e.target.reset();
@@ -174,8 +177,21 @@ $('registerForm').addEventListener('submit', async (e) => {
       return;
     }
     await bootSession(data);
+    if (data.refApplied) toast('Kode undangan diterapkan — selamat datang! 🎁');
   } catch (err) { showAuth(err.message); }
 });
+
+// kode undangan dari link ?ref=WA-MAZ-VAL-XXXX langsung terisi di form daftar
+(function prefillRef() {
+  try {
+    const ref = new URLSearchParams(location.search).get('ref');
+    if (ref) {
+      const input = $('refInput');
+      if (input) input.value = ref.trim().toUpperCase();
+      document.querySelector('.auth-tab[data-tab="register"]')?.click();
+    }
+  } catch { /* query tidak valid */ }
+})();
 
 async function bootSession(data) {
   S.token = data.token;
@@ -216,7 +232,7 @@ function renderMe() {
   $('btnOpenAdminPanel').classList.toggle('hidden', !isAdmin);
 }
 
-const PLAN_LABELS = { 'lima-hari': '5 Hari', mingguan: 'Mingguan', bulanan: 'Bulanan' };
+const PLAN_LABELS = { harian: 'Harian', mingguan: 'Mingguan', bulanan: 'Bulanan', permanen: 'Permanen', 'lima-hari': '5 Hari' };
 
 function planLabel(id) {
   if (!id) return null;
@@ -225,17 +241,26 @@ function planLabel(id) {
 
 function setAvatar(el, user) {
   if (!user) return;
-  if (user.avatar) {
-    el.innerHTML = `<img src="${esc(user.avatar)}" alt="">`;
-  } else {
-    el.innerHTML = `<span>${esc((user.name || '?').charAt(0).toUpperCase())}</span>`;
-  }
+  const letter = esc((user.name || '?').charAt(0).toUpperCase());
+  const paintDot = () => {
+    el.querySelectorAll('.online-dot').forEach((d) => d.remove());
+    if (user.online) {
+      const dot = document.createElement('i');
+      dot.className = 'online-dot';
+      el.appendChild(dot);
+    }
+  };
+  const paintLetter = () => { el.innerHTML = `<span>${letter}</span>`; paintDot(); };
   el.querySelectorAll('.online-dot').forEach((d) => d.remove());
-  if (user.online) {
-    const dot = document.createElement('i');
-    dot.className = 'online-dot';
-    el.appendChild(dot);
-  }
+  if (!user.avatar) { paintLetter(); return; }
+  el.innerHTML = '';
+  const img = document.createElement('img');
+  img.alt = '';
+  img.addEventListener('error', paintLetter, { once: true });
+  el.appendChild(img);
+  paintDot();
+  img.src = user.avatar;
+  if (img.complete && img.naturalWidth === 0) paintLetter();
 }
 
 /* ================= chats ================= */
@@ -1553,12 +1578,12 @@ function sendViaSocket(payload, localId) {
 }
 
 /* upload with progress (XHR for progress events) */
-function putPresigned(url, file, onProgress) {
+function putPresigned(url, file, onProgress = () => {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && typeof onProgress === 'function') onProgress(e.loaded / e.total); };
     xhr.onload = () => {
       try {
         const data = JSON.parse(xhr.responseText);
@@ -1571,7 +1596,7 @@ function putPresigned(url, file, onProgress) {
   });
 }
 
-async function uploadFile(file, onProgress) {
+async function uploadFile(file, onProgress = () => {}) {
   // di hosting file dikirim langsung ke Blob (lolos batas 4,5MB per request);
   // bila endpoint tanda tangan tidak ada (mode lokal) -> upload lewat server
   try {
@@ -1587,7 +1612,7 @@ async function uploadFile(file, onProgress) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/upload');
     xhr.setRequestHeader('Authorization', `Bearer ${S.token}`);
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && typeof onProgress === 'function') onProgress(e.loaded / e.total); };
     xhr.onload = () => {
       try {
         const data = JSON.parse(xhr.responseText);
@@ -1713,7 +1738,8 @@ function clearAttachPreview() {
 
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
-  'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer', 'botCatDrawer'];
+  'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer', 'botCatDrawer',
+  'planDrawer', 'inviteDrawer', 'aboutDrawer'];
 
 function openDrawer(id, withScrim = true) {
   DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
@@ -1814,16 +1840,16 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
   btn.addEventListener('click', () => {
     const action = btn.dataset.menu;
     if (action === 'profile') openProfile();
+    else if (action === 'plans') openPlanDrawer();
+    else if (action === 'invite') openInviteDrawer();
     else if (action === 'wallpaper') openWallpaper();
     else if (action === 'homebg') openHomeBg();
     else if (action === 'theme') toggleTheme();
     else if (action === 'privacy') openPrivacy();
     else if (action === 'bots') openBotCatalog();
     else if (action === 'admin') openAdminPanel();
-    else if (action === 'about') {
-      closeDrawers();
-      toast('Whatsap Indo v1.0.0 — chat real-time, media 2GB, notifikasi sistem • MIT • © mazval-developer-java', 4200);
-    } else if (action === 'logout') {
+    else if (action === 'about') openAboutDrawer();
+    else if (action === 'logout') {
       closeDrawers();
       logout();
     }
@@ -1901,13 +1927,436 @@ function renderBotLocked(data) {
       <p>${total ? `${total} bot` : 'Seluruh bot'} siap dipakai — AI multi-model, pencarian, media, info, hiburan, sampai alat produktivitas. Semuanya hanya untuk admin &amp; pengguna premium.</p>
       ${plans.length ? `
       <div class="bc-plans">
-        ${plans.map((p) => `<span class="bc-plan">${esc(p.label)}<small>${Number(p.days) || 0} hari</small></span>`).join('')}
+        ${plans.map((p) => `<span class="bc-plan">${esc(p.label)}<small>${p.price ? `Rp${Number(p.price).toLocaleString('id-ID')}/` : ''}${Number(p.days) || 0} hari</small></span>`).join('')}
       </div>` : ''}
-      <p class="bc-hint">Premium diaktifkan oleh admin Whatsap Indo. Begitu aktif, menu Daftar Bot langsung terbuka.</p>
+      <p class="bc-hint">Pilih paket lalu aktifkan lewat admin Whatsap Indo. Begitu aktif, menu Daftar Bot langsung terbuka.</p>
+      <button class="btn-primary" id="bcOpenPlans" type="button">Lihat Paket &amp; Harga</button>
       <button class="btn-ghost" id="bcClose" type="button">Mengerti</button>
     </div>`;
+  $('bcOpenPlans').addEventListener('click', () => openPlanDrawer());
   $('bcClose').addEventListener('click', closeDrawers);
 }
+
+/* ================= paket & harga ================= */
+const ADMIN_CS_EMAIL = 'ovalkyzz@gmail.com';
+
+function rupiah(n) {
+  return `Rp${(Number(n) || 0).toLocaleString('id-ID')}`;
+}
+
+async function openPlanDrawer() {
+  openDrawer('planDrawer');
+  const body = $('planBody');
+  body.innerHTML = '<div class="bc-loading">Memuat paket premium…</div>';
+  try {
+    renderPlans(await api('/api/plans'));
+  } catch (err) {
+    body.innerHTML = `
+      <div class="bc-locked">
+        <div class="bc-lock-ico"><svg viewBox="0 0 24 24"><use href="#ic-info" /></svg></div>
+        <h3>Paket belum bisa dimuat</h3>
+        <p>${esc(err.message)}</p>
+        <button class="btn-ghost" id="planRetry" type="button">Coba lagi</button>
+      </div>`;
+    $('planRetry').addEventListener('click', openPlanDrawer);
+  }
+}
+
+// daftar fitur sebuah paket (ok=false = batasan yang mengurangi akses)
+function planFeatures(p, botTotal, exclusiveIds) {
+  const excluded = Array.isArray(p.excluded) ? p.excluded : [];
+  const feats = [];
+  if (excluded.length) {
+    const open = Math.max(botTotal - excluded.length, 0);
+    feats.push({ ok: true, text: `${open} bot umum terbuka (AI, media, info, hiburan)` });
+    feats.push({ ok: false, text: `Tanpa bot eksklusif: ${(exclusiveIds || []).map(shortBotId).join(', ')}` });
+  } else {
+    feats.push({ ok: true, text: `Seluruh ${botTotal} bot premium terbuka` });
+  }
+  if (Number(p.dailyLimit) > 0) feats.push({ ok: true, text: `Limit ${p.dailyLimit} pesan bot / hari` });
+  else feats.push({ ok: true, text: 'Pesan bot tanpa limit harian' });
+  feats.push({ ok: true, text: p.permanen ? 'Masa aktif selamanya' : `${Number(p.days) || 0} hari masa aktif` });
+  feats.push({ ok: true, text: 'Centang biru terverifikasi' });
+  feats.push({ ok: true, text: 'Kirim foto, video & file hingga 2GB' });
+  return feats;
+}
+
+function shortBotId(id) {
+  return {
+    'bot-verif-am': 'Verif AM',
+    'bot-nik': 'Parse NIK',
+    'bot-pos': 'Kodepos',
+    'bot-wilayah': 'Wilayah',
+    'bot-nftoken': 'Nfotoken',
+  }[id] || id;
+}
+
+function renderPlans(data) {
+  const plans = data.plans || [];
+  const me = data.me || {};
+  const invite = data.invite || {};
+  const botTotal = Number(data.botTotal) || 69;
+  const exclusiveIds = data.exclusiveBotIds || [];
+  const popularId = plans.some((p) => p.id === 'bulanan')
+    ? 'bulanan'
+    : (plans[Math.min(1, plans.length - 1)] || {}).id;
+  const body = $('planBody');
+
+  const quota = me.limit > 0
+    ? `<div class="plan-quota">
+         <div class="plan-quota-top"><span>Hari ini ${Math.min(me.used, me.limit)}/${me.limit} pesan bot</span>
+           <span class="plan-token"><svg viewBox="0 0 24 24"><use href="#ic-zap" /></svg> ${Number(me.tokens) || 0} token</span></div>
+         <div class="plan-quota-bar"><i style="width:${Math.min(100, Math.round(((me.used || 0) / me.limit) * 100))}%"></i></div>
+         <small>Habis? Pakai token undangan, atau ajak teman untuk token tambahan.</small>
+       </div>`
+    : me.active
+      ? `<div class="plan-quota on"><div class="plan-quota-top"><span>Kuota bot tanpa limit</span>
+           <span class="plan-token"><svg viewBox="0 0 24 24"><use href="#ic-zap" /></svg> ${Number(me.tokens) || 0} token</span></div>
+           <div class="plan-quota-bar"><i style="width:100%"></i></div></div>`
+      : '';
+
+  body.innerHTML = `
+    <div class="plan-hero">
+      <span class="plan-hero-orb o1"></span><span class="plan-hero-orb o2"></span>
+      <span class="plan-hero-chip"><svg viewBox="0 0 24 24"><use href="#ic-star" /></svg> WHATSAP INDO PREMIUM</span>
+      <h3>Semua bot dalam satu paket</h3>
+      <p>${botTotal} bot AI, alat produktivitas, media &amp; informasi — pilih durasi sesuai kebutuhanmu.</p>
+      <div class="plan-status ${me.active ? 'on' : ''}">
+        ${me.active
+          ? `<strong>${esc(me.planLabel || 'Premium')}</strong><span>aktif s/d ${fmtDate(me.until)}</span>`
+          : `<strong>Belum punya paket</strong><span>Daftar bot masih terkunci — pilih paket di bawah</span>`}
+      </div>
+      ${quota}
+    </div>
+
+    <div class="plan-grid">
+      ${plans.map((p, i) => {
+        const isCurrent = me.active && me.planId === p.id;
+        const feats = planFeatures(p, botTotal, exclusiveIds);
+        return `
+        <article class="plan-card ${isCurrent ? 'is-current' : ''} ${p.id === popularId ? 'is-popular' : ''}" style="--i:${i}">
+          ${p.id === popularId ? '<span class="plan-tag">PALING LARIS</span>' : ''}
+          <span class="plan-shine"></span>
+          <div class="plan-head">
+            <span class="plan-ico"><svg viewBox="0 0 24 24"><use href="#ic-${p.permanen ? 'crown' : 'star'}" /></svg></span>
+            <h4>${esc(p.label)}</h4>
+            <small>${p.permanen ? 'Selamanya' : `${Number(p.days) || 0} hari`}</small>
+          </div>
+          <div class="plan-price"><span class="rp">Rp</span><b class="plan-amount" data-price="${Number(p.price) || 0}">0</b><i>/ ${p.permanen ? 'sekali bayar' : `${Number(p.days) || 0} hari`}</i></div>
+          <ul class="plan-feats">
+            ${feats.map((f) => `<li class="${f.ok ? '' : 'no'}"><svg viewBox="0 0 24 24"><use href="#ic-${f.ok ? 'check' : 'close'}" /></svg><span>${esc(f.text)}</span></li>`).join('')}
+          </ul>
+          ${isCurrent ? '<div class="plan-current"><svg viewBox="0 0 24 24"><use href="#ic-check" /></svg> Paket Anda saat ini</div>' : ''}
+          <button class="plan-cta ${isCurrent ? 'is-active' : ''}" type="button" data-plan-cta="${esc(p.id)}">
+            ${isCurrent ? 'Perpanjang / Hubungi CS' : `Pilih ${esc(p.label)}`}
+          </button>
+        </article>`;
+      }).join('')}
+    </div>
+
+    <div class="plan-actions">
+      <button class="btn-primary" id="planCs" type="button">
+        <svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-phone" /></svg> Hubungi Admin / CS
+      </button>
+      <button class="btn-ghost" id="planInvite" type="button">
+        <svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-gift" /></svg> Ajak teman — dapat ${Number(invite.inviteTokens) || 5} token
+      </button>
+    </div>
+    <p class="plan-note">Paket diaktifkan admin setelah pembayaran. <b>Harian</b> tanpa bot eksklusif &amp; berlimit harian,
+    <b>Mingguan</b> semua bot dengan limit yang diatur admin, <b>Bulanan</b> &amp; <b>Permanen</b> tanpa limit.
+    Semakin banyak teman yang join lewat kode undanganmu, semakin banyak token bot yang kamu dapat.</p>
+  `;
+
+  body.querySelectorAll('[data-plan-cta]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const plan = plans.find((p) => p.id === btn.dataset.planCta);
+      toast(`Paket ${plan ? plan.label : ''}: ${plan ? rupiah(plan.price) : ''} — hubungi admin untuk mengaktifkan`);
+      void chatWithAdmin();
+    });
+  });
+  $('#planCs').addEventListener('click', () => void chatWithAdmin());
+  $('#planInvite').addEventListener('click', () => openInviteDrawer());
+  animatePlanCards(body);
+}
+
+// harga berjalan dari 0 -> nilai final saat kartu tampil (efek premium)
+function animatePlanCards(scope) {
+  scope.querySelectorAll('.plan-amount').forEach((el, idx) => {
+    const target = Number(el.dataset.price) || 0;
+    if (!target) { el.textContent = '0'; return; }
+    const dur = 700 + idx * 120;
+    const start = performance.now() + idx * 90;
+    const step = (now) => {
+      const t = Math.min(1, Math.max(0, (now - start) / dur));
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = Math.round(target * eased).toLocaleString('id-ID');
+      if (t < 1) requestAnimationFrame(step);
+      else el.textContent = target.toLocaleString('id-ID');
+    };
+    el.textContent = '0';
+    requestAnimationFrame(step);
+  });
+}
+
+$('btnClosePlan').addEventListener('click', closeDrawers);
+
+/* ================= undang teman ================= */
+async function openInviteDrawer() {
+  openDrawer('inviteDrawer');
+  const body = $('inviteBody');
+  body.innerHTML = '<div class="bc-loading">Memuat kode undangan…</div>';
+  try {
+    renderInvite(await api('/api/referral'));
+  } catch (err) {
+    body.innerHTML = `
+      <div class="bc-locked">
+        <div class="bc-lock-ico"><svg viewBox="0 0 24 24"><use href="#ic-gift" /></svg></div>
+        <h3>Kode undangan belum bisa dimuat</h3>
+        <p>${esc(err.message)}</p>
+        <button class="btn-ghost" id="inviteRetry" type="button">Coba lagi</button>
+      </div>`;
+    $('inviteRetry').addEventListener('click', openInviteDrawer);
+  }
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { /* browser lama */ }
+    ta.remove();
+    return ok;
+  }
+}
+
+function inviteLink(code) {
+  return `${location.origin}/?ref=${code}`;
+}
+
+function renderInvite(data) {
+  const code = data.code || '—';
+  const link = inviteLink(code);
+  const body = $('inviteBody');
+  body.innerHTML = `
+    <div class="inv-hero">
+      <span class="inv-gift"><svg viewBox="0 0 24 24"><use href="#ic-gift" /></svg></span>
+      <h3>Undang teman, kumpulkan token</h3>
+      <p>Setiap teman yang join memakai kodenya memberi kamu <b>+${Number(data.inviteTokens) || 5} token</b> limit bot.
+      Temanmu juga langsung dapat <b>+${Number(data.welcomeTokens) || 5} token</b> selamat datang.</p>
+    </div>
+
+    <div class="inv-code-card">
+      <span class="inv-label">Kode undangan kamu</span>
+      <div class="inv-code">${esc(code)}</div>
+      <div class="inv-btns">
+        <button class="btn-primary" id="invCopyCode" type="button"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-copy" /></svg> Salin kode</button>
+        <button class="btn-ghost" id="invCopyLink" type="button"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-chat" /></svg> Salin link</button>
+        <button class="btn-ghost" id="invShare" type="button"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-gift" /></svg> Bagikan</button>
+      </div>
+      <div class="inv-link"><code>${esc(link)}</code></div>
+    </div>
+
+    <div class="inv-stats">
+      <div class="inv-stat" style="--i:0"><b>${Number(data.invited) || 0}</b><span>Teman bergabung</span></div>
+      <div class="inv-stat" style="--i:1"><b>${Number(data.tokens) || 0}</b><span>Token terkumpul</span></div>
+    </div>
+
+    <ol class="inv-steps">
+      <li style="--i:0"><b>1</b><span>Salin kode atau link undangan kamu</span></li>
+      <li style="--i:1"><b>2</b><span>Teman daftar &amp; menempelkan kode di form pendaftaran</span></li>
+      <li style="--i:2"><b>3</b><span>Setelah admin menyetujui, kamu &amp; temanmu dapat token bot</span></li>
+    </ol>
+
+    <p class="inv-note">${data.referred ? 'Anda terdaftar lewat undangan teman — token selamat datang sudah ditambahkan.' : 'Makin banyak teman diundang, makin banyak token untuk kuota bot harianmu.'}</p>
+  `;
+  $('#invCopyCode').addEventListener('click', async () => {
+    const ok = await copyText(code);
+    toast(ok ? 'Kode undangan disalin ✓' : 'Gagal menyalin — salin manual: ' + code);
+    if (ok) $('#invCopyCode').classList.add('done');
+  });
+  $('#invCopyLink').addEventListener('click', async () => {
+    toast((await copyText(link)) ? 'Link undangan disalin ✓' : 'Gagal menyalin link');
+  });
+  $('#invShare').addEventListener('click', async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Gabung Whatsap Indo', text: `Daftar pakai kode undangan saya: ${code}`, url: link });
+        return;
+      } catch { /* dibatalkan / tidak didukung -> salin */ }
+    }
+    toast((await copyText(link)) ? 'Link undangan disalin ✓' : 'Gagal menyalin link');
+  });
+}
+
+$('btnCloseInvite').addEventListener('click', closeDrawers);
+
+/* ================= hubungi admin / CS ================= */
+async function chatWithAdmin() {
+  try {
+    const data = await api(`/api/users/search?q=${encodeURIComponent(ADMIN_CS_EMAIL)}`);
+    const users = data.users || [];
+    const admin = users.find((u) => String(u.email || '').toLowerCase() === ADMIN_CS_EMAIL)
+      || users.find((u) => u.role === 'admin');
+    if (!admin) { toast(`CS belum bisa dihubungi lewat chat. Email: ${ADMIN_CS_EMAIL}`); return; }
+    await startDirect(admin.id);
+  } catch (err) {
+    toast(err.message || `Email CS: ${ADMIN_CS_EMAIL}`);
+  }
+}
+
+/* ================= tentang aplikasi ================= */
+const ABOUT_HTML = `
+  <div class="about-hero">
+    <div class="about-logo">📱</div>
+    <h3>Whatsap Indo</h3>
+    <p class="about-sub">APK WhatsApp Indo Developer • Versi 1.0.0</p>
+    <span class="about-badge"><svg viewBox="0 0 24 24"><use href="#ic-verified" /></svg> Developer resmi: mazval-developer-java</span>
+  </div>
+
+  <section class="about-sec" style="--i:0">
+    <h4><svg viewBox="0 0 24 24"><use href="#ic-info" /></svg> Tentang Aplikasi</h4>
+    <p>Whatsap Indo adalah aplikasi chat real-time dengan pengiriman foto, video, dan file hingga <b>2GB</b>,
+    notifikasi sistem, status 24 jam, grup besar, serta ratusan bot premium (AI, informasi, media, hiburan,
+    alat produktivitas) yang bisa dipakai lewat paket premium.</p>
+  </section>
+
+  <section class="about-sec" style="--i:1">
+    <h4><svg viewBox="0 0 24 24"><use href="#ic-check" /></svg> Cara Menggunakan</h4>
+    <ol class="about-steps">
+      <li><b>1</b><span><strong>Daftar akun</strong> — isi nama, email &amp; password, lalu tunggu persetujuan admin.</span></li>
+      <li><b>2</b><span><strong>Masuk &amp; lengkapi profil</strong> — ketuk Menu → Profil &amp; Info untuk nama, bio, dan foto profil.</span></li>
+      <li><b>3</b><span><strong>Mulai chat</strong> — tekan ✏️, cari teman lewat email, atau buat grup baru.</span></li>
+      <li><b>4</b><span><strong>Aktifkan paket premium</strong> — Menu → Paket &amp; Harga, pilih paket lalu hubungi admin/CS.</span></li>
+      <li><b>5</b><span><strong>Pakai bot</strong> — Menu → Daftar Bot, pilih bot lalu langsung ngobrol dengannya.</span></li>
+      <li><b>6</b><span><strong>Undang teman</strong> — Menu → Undang Teman, bagikan kode WA-MAZ-VAL-XXXX untuk token tambahan.</span></li>
+    </ol>
+  </section>
+
+  <section class="about-sec" style="--i:2">
+    <h4><svg viewBox="0 0 24 24"><use href="#ic-phone" /></svg> Kontak Admin / CS Developer</h4>
+    <p class="about-cs-lead">Ada masalah, butuh aktivasi paket, atau laporan bug? Hubungi customer service developer:</p>
+    <div class="about-cs">
+      <div class="about-cs-row"><span class="cs-ico"><svg viewBox="0 0 24 24"><use href="#ic-mail" /></svg></span>
+        <span class="cs-text"><strong>Email CS</strong><small>ovalkyzz@gmail.com</small></span>
+        <a class="cs-go" href="mailto:ovalkyzz@gmail.com?subject=CS%20Whatsap%20Indo">Kirim</a></div>
+      <div class="about-cs-row"><span class="cs-ico"><svg viewBox="0 0 24 24"><use href="#ic-chat" /></svg></span>
+        <span class="cs-text"><strong>Chat admin di aplikasi</strong><small>Balasan langsung di kotak masuk</small></span>
+        <button class="cs-go" id="aboutCsChat" type="button">Chat</button></div>
+      <div class="about-cs-row"><span class="cs-ico"><svg viewBox="0 0 24 24"><use href="#ic-crown" /></svg></span>
+        <span class="cs-text"><strong>Aktivasi paket premium</strong><small>Minta admin mengaktifkan paket pilihanmu</small></span>
+        <button class="cs-go" id="aboutCsPlans" type="button">Paket</button></div>
+    </div>
+  </section>
+
+  <section class="about-sec" style="--i:3">
+    <h4><svg viewBox="0 0 24 24"><use href="#ic-shield" /></svg> Keamanan &amp; Privasi</h4>
+    <ul class="about-list">
+      <li>Foto profil dilindungi: klik kanan, seret, simpan &amp; cetak dimatikan.</li>
+      <li>Satu akun hanya boleh aktif di satu perangkat.</li>
+      <li>Akun baru wajib disetujui admin — mencegah bot &amp; spam.</li>
+    </ul>
+  </section>
+
+  <p class="about-copy">Whatsap Indo • v1.0.0 • MIT<br/>© mazval-developer-java</p>
+`;
+
+function openAboutDrawer() {
+  openDrawer('aboutDrawer');
+  const body = $('aboutBody');
+  if (!body.dataset.ready) {
+    body.innerHTML = ABOUT_HTML;
+    body.dataset.ready = '1';
+    body.querySelector('#aboutCsChat').addEventListener('click', () => void chatWithAdmin());
+    body.querySelector('#aboutCsPlans').addEventListener('click', () => openPlanDrawer());
+  }
+}
+
+$('btnCloseAbout').addEventListener('click', closeDrawers);
+
+/* ================= proteksi gambar profil ================= */
+// foto profil tidak bisa diklik kanan, diseret, disalin, dicetak, atau disimpan
+function imgProtected(node) {
+  const el = node instanceof Element ? node : (node && node.parentElement);
+  return !!(el && el.closest && el.closest('.avatar, .protect-img'));
+}
+
+document.addEventListener('contextmenu', (e) => {
+  if (imgProtected(e.target)) {
+    e.preventDefault();
+    toast('Foto profil dilindungi — tidak bisa disimpan lewat klik kanan.');
+  }
+});
+
+document.addEventListener('dragstart', (e) => {
+  if (imgProtected(e.target)) e.preventDefault();
+});
+
+document.addEventListener('copy', (e) => {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount && imgProtected(sel.anchorNode)) e.preventDefault();
+});
+
+document.addEventListener('keydown', (e) => {
+  const key = String(e.key || '').toLowerCase();
+  const combo = e.ctrlKey || e.metaKey;
+  if (key === 'printscreen') {
+    // kosongkan papan klip hasil screenshot bila browser mengizinkan
+    try { void navigator.clipboard && navigator.clipboard.writeText(' '); } catch { /* ditolak browser */ }
+    toast('Screenshot dibatasi — gambar profil Anda dilindungi.');
+    return;
+  }
+  if (combo && (key === 'p' || key === 's')) {
+    e.preventDefault();
+    toast(key === 'p' ? 'Mencetak halaman dinonaktifkan — gambar dilindungi.' : 'Menyimpan halaman dinonaktifkan — gambar dilindungi.');
+  }
+});
+
+// tekan-tahan lama di ponsel sering memicu menu simpan gambar
+document.addEventListener('touchstart', (e) => {
+  if (imgProtected(e.target)) e.preventDefault();
+}, { passive: false });
+
+/* ================= foto profil: rapikan & anti-rusak ================= */
+// foto dipotong persegi (center-crop 512px) supaya bulat & jelas tanpa terpotong wajah
+function squareImage(file, size = 512) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = c.height = size;
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+        c.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          if (!blob) return reject(new Error('Gagal memproses foto'));
+          resolve(new File([blob], 'avatar.jpg', { type: 'image/jpeg' }));
+        }, 'image/jpeg', 0.92);
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(new Error('Foto tidak bisa diproses'));
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('File gambar rusak atau format tidak didukung'));
+    };
+    img.src = url;
+  });
+}
+
 
 /* ================= latar belakang chat ================= */
 let pendingWpType = 'image';
@@ -2297,6 +2746,7 @@ function syncBotPeer(updated) {
   if (currentChat()?.peer?.id === updated.id) {
     updateChatStatus();
     if ($('chatName')) $('chatName').innerHTML = esc(chatTitle(currentChat())) + badge(updated.verified);
+    setAvatar($('chatAvatar'), currentChat().peer);
   }
 }
 
@@ -2392,7 +2842,7 @@ async function openContactInfo() {
           <h3 id="ciName">${esc(u.name)}${badge(u.verified)}</h3>
           ${canEditBot ? '<button class="ci-edit" id="ciNameBtn" type="button" title="Ubah nama bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-edit" /></svg></button>' : ''}
         </div>
-        <div class="ci-title">
+        <div class="ci-title ci-title-bio">
           <p class="bio" id="ciBio">${esc(u.about || 'Tidak ada bio')}</p>
           ${canEditBot ? '<button class="ci-edit" id="ciBioBtn" type="button" title="Ubah bio bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-edit" /></svg></button>' : ''}
         </div>
@@ -2467,15 +2917,20 @@ $('profileAbout').addEventListener('input', () => {
 
 $('avatarInput').addEventListener('change', async () => {
   const file = $('avatarInput').files[0];
+  $('avatarInput').value = '';
   if (!file) return;
+  if (!file.type.startsWith('image/')) { toast('File harus berupa gambar (JPG/PNG/WEBP)'); return; }
   if (file.size > 5 * 1024 * 1024) { toast('Avatar maksimal 5MB'); return; }
   try {
-    const meta = await uploadFile(file, () => {});
+    // potong persegi dulu supaya bulat, jelas, dan tidak terpotong saat ditampilkan
+    let upload = file;
+    try { upload = await squareImage(file); } catch (proc) { toast(proc.message); return; }
+    const meta = await uploadFile(upload, () => {});
     const data = await api('/api/me', { method: 'PATCH', body: { avatar: meta.url } });
     S.me = data.user;
     renderMe();
     setAvatar($('profileAvatar'), S.me);
-    toast('Foto profil diperbarui');
+    toast('Foto profil diperbarui ✓');
   } catch (err) { toast(err.message); }
 });
 
@@ -2735,16 +3190,25 @@ function renderAdmStats(stats) {
 
 function renderAdmPlanSelect() {
   $('admPlan').innerHTML = adm.plans.map((p) =>
-    `<option value="${esc(p.id)}">${esc(p.label)} • ${p.days} hari</option>`).join('');
+    `<option value="${esc(p.id)}">${esc(p.label)} • ${p.days} hari${p.price ? ` • ${rupiah(p.price)}` : ''}</option>`).join('');
 }
 
 function renderAdmPlans() {
   $('admPlans').innerHTML = adm.plans.map((p, i) => `
-    <div class="adm-plan-row">
-      <input type="text" value="${esc(p.label)}" data-plan-label="${i}" maxlength="30" />
-      <input type="number" min="1" max="3650" value="${p.days}" data-plan-days="${i}" />
-      <span>hari</span>
-    </div>`).join('');
+    <div class="adm-plan-card${p.permanen ? ' is-perm' : ''}">
+      <div class="adm-plan-row">
+        <input type="text" value="${esc(p.label)}" data-plan-label="${i}" maxlength="30" aria-label="Nama paket" />
+        <input type="number" min="1" max="3650" value="${Number(p.days) || 1}" data-plan-days="${i}" aria-label="Durasi hari" />
+        <span class="adm-plan-unit">hari</span>
+      </div>
+      <div class="adm-plan-row">
+        <input type="number" min="0" max="1000000000" step="500" value="${Number(p.price) || 0}" data-plan-price="${i}" aria-label="Harga rupiah" />
+        <span class="adm-plan-unit">Rp</span>
+        <input type="number" min="0" max="1000000" value="${Number(p.dailyLimit) || 0}" data-plan-limit="${i}" aria-label="Limit pesan bot harian" />
+        <span class="adm-plan-unit">bot/hari</span>
+      </div>
+      <small class="adm-plan-hint">${p.permanen ? 'Paket permanen — masa aktif selamanya' : 'Limit 0 = tanpa batas'}${(p.excluded || []).length ? ` • ${p.excluded.length} bot eksklusif ditutup` : ''}</small>
+    </div>`).join('') || '<div class="empty-state">Belum ada paket.</div>';
 }
 
 function admMsg(elId, msg, isError) {
@@ -2829,10 +3293,17 @@ async function searchAdminUsers() {
 }
 
 $('btnSavePlans').addEventListener('click', async () => {
+  const val = (sel, fallback) => {
+    const el = document.querySelector(sel);
+    return el && el.value !== '' && el.value !== null ? Number(el.value) : fallback;
+  };
+  // label/harga/limit diedit; id, bot eksklusif & sifat permanen ikut dikirim utuh
   const plans = adm.plans.map((p, i) => ({
-    id: p.id,
+    ...p,
     label: (document.querySelector(`[data-plan-label="${i}"]`)?.value || p.label).trim(),
-    days: Number(document.querySelector(`[data-plan-days="${i}"]`)?.value || p.days),
+    days: val(`[data-plan-days="${i}"]`, Number(p.days) || 1),
+    price: val(`[data-plan-price="${i}"]`, Number(p.price) || 0),
+    dailyLimit: val(`[data-plan-limit="${i}"]`, Number(p.dailyLimit) || 0),
   }));
   try {
     const data = await api('/api/admin/settings', { method: 'PUT', body: { plans } });
@@ -3397,7 +3868,7 @@ async function openGroupInfo() {
     body.innerHTML = `
       <div class="group-hero">
         <div class="gi-avatar-wrap">
-          <div class="avatar avatar-xl ring">${chat.avatar ? `<img src="${esc(chat.avatar)}" alt="">` : `<span>${esc((chat.name || 'G').charAt(0).toUpperCase())}</span>`}</div>
+          <div class="avatar avatar-xl ring" id="giAvatar"></div>
           ${isAdmin ? `<button class="avatar-edit" id="giAvatarBtn" type="button" title="Ganti foto grup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg></button>` : ''}
         </div>
         <input type="file" id="giAvatarInput" accept="image/*" class="hidden" />
@@ -3418,6 +3889,8 @@ async function openGroupInfo() {
       <div class="ps-label" style="padding:0 4px 8px">Anggota</div>
       <div class="member-list" id="giMembers"></div>
       <button class="btn-ghost danger" id="giLeave"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-exit" /></svg> Keluar dari grup</button>`;
+
+    setAvatar($('giAvatar'), { name: chat.name, avatar: chat.avatar });
 
     const list = body.querySelector('#giMembers');
     list.innerHTML = members.map((m) => `

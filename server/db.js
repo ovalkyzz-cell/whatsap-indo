@@ -52,7 +52,14 @@ CREATE TABLE IF NOT EXISTS users (
   banned_at       BIGINT NOT NULL DEFAULT 0,
   last_device     TEXT,
   last_ip         TEXT,
-  last_login_at   BIGINT NOT NULL DEFAULT 0
+  last_login_at   BIGINT NOT NULL DEFAULT 0,
+  ref_code        TEXT,
+  referred_by     TEXT,
+  ref_rewarded    SMALLINT NOT NULL DEFAULT 0,
+  invite_count    INTEGER NOT NULL DEFAULT 0,
+  bot_tokens      INTEGER NOT NULL DEFAULT 0,
+  bot_usage_day   TEXT,
+  bot_usage_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -208,7 +215,14 @@ CREATE TABLE IF NOT EXISTS users (
   banned_at       INTEGER NOT NULL DEFAULT 0,
   last_device     TEXT,
   last_ip         TEXT,
-  last_login_at   INTEGER NOT NULL DEFAULT 0
+  last_login_at   INTEGER NOT NULL DEFAULT 0,
+  ref_code        TEXT,
+  referred_by     TEXT,
+  ref_rewarded    INTEGER NOT NULL DEFAULT 0,
+  invite_count    INTEGER NOT NULL DEFAULT 0,
+  bot_tokens      INTEGER NOT NULL DEFAULT 0,
+  bot_usage_day   TEXT,
+  bot_usage_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -358,6 +372,13 @@ const TABLE_MIGRATIONS = {
     ['last_device', 'TEXT', 'TEXT'],
     ['last_ip', 'TEXT', 'TEXT'],
     ['last_login_at', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['ref_code', 'TEXT', 'TEXT'],
+    ['referred_by', 'TEXT', 'TEXT'],
+    ['ref_rewarded', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['invite_count', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['bot_tokens', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['bot_usage_day', 'TEXT', 'TEXT'],
+    ['bot_usage_count', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   chats: [
     ['avatar', 'TEXT', 'TEXT'],

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
+const referral = require('./referral');
 
 const JWT_SECRET = process.env.JWT_SECRET || resolveSecret();
 const TOKEN_TTL = '30d';
@@ -91,7 +92,7 @@ function publicUser(row) {
   };
 }
 
-async function register({ email, name, password }, meta = {}) {
+async function register({ email, name, password, ref }, meta = {}) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw httpError(400, 'Email tidak valid');
   }
@@ -101,6 +102,8 @@ async function register({ email, name, password }, meta = {}) {
   if (!password || password.length < 6) {
     throw httpError(400, 'Password minimal 6 karakter');
   }
+  // kode undangan divalidasi dulu supaya tidak ada baris tersisip separuh jalan
+  const inviter = await referral.findInviter(ref);
   const existing = await db.get('SELECT id FROM users WHERE email = ?', email.trim().toLowerCase());
   if (existing) throw httpError(409, 'Email sudah terdaftar');
 
@@ -110,8 +113,9 @@ async function register({ email, name, password }, meta = {}) {
   // akun baru wajib disetujui admin lebih dulu, kecuali email admin/verifikasi
   const status = ADMIN_EMAILS.includes(email.trim().toLowerCase()) ? 'active' : 'pending';
   await db.run(
-    `INSERT INTO users (id, email, name, password_hash, verified, account_status, created_at, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, email, name, password_hash, verified, account_status, created_at, last_seen,
+       referred_by, bot_tokens)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     email.trim().toLowerCase(),
     name.trim(),
@@ -119,7 +123,9 @@ async function register({ email, name, password }, meta = {}) {
     isVerifiedEmail(email) ? 1 : 0,
     status,
     now,
-    now
+    now,
+    inviter ? inviter.id : null,
+    inviter ? referral.WELCOME_TOKENS : 0
   );
 
   const row = await db.get('SELECT * FROM users WHERE id = ?', id);
@@ -127,11 +133,16 @@ async function register({ email, name, password }, meta = {}) {
     return {
       user: publicUser(row),
       pending: true,
-      message: 'Pendaftaran diterima. Menunggu persetujuan admin sebelum bisa masuk.',
+      refApplied: !!inviter,
+      message: inviter
+        ? `Pendaftaran diterima (kode undangan ${referral.normalizeCode(ref)} dipakai). Menunggu persetujuan admin sebelum bisa masuk.`
+        : 'Pendaftaran diterima. Menunggu persetujuan admin sebelum bisa masuk.',
     };
   }
+  // akun aktif langsung: pengundang langsung mendapat token undangannya
+  if (inviter) await referral.rewardInviter(id);
   const fresh = await startSession(row, meta);
-  return { user: publicUser(fresh), token: sign(fresh) };
+  return { user: publicUser(fresh), token: sign(fresh), refApplied: !!inviter };
 }
 
 async function login({ email, password }, meta = {}) {

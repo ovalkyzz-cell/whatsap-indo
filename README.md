@@ -20,9 +20,13 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Bot premium | **69 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 60 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi, Parse NIK, Tracking Paket, NGL, NGL Spam) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **69 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
+| Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 4 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup), **Mingguan Rp10.000** (limit 200/hari), **Bulanan Rp25.000** (tanpa limit), **Permanen Rp50.000** (100 tahun); admin bisa mengubah nama, durasi, harga, limit, bot eksklusif & status permanen |
+| Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
+| Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas Whatsap Indo Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
+| Proteksi foto | Foto profil terlindungi: klik kanan, seret, salin, unduh & blokir gambar dimatikan; screenshot (PrintScreen / Ctrl+P / Ctrl+S) dan menu cetak menyembunyikannya |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
 | Edit bot | Admin bisa ganti **foto profil, nama & bio** bot langsung dari panel Info Kontak |
-| Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Tentang, Keluar |
+| Menu pojok kanan atas | Panel menu geser dari kanan: Profil & Info, Latar Belakang, Paket & Harga, Undang Teman, Tentang Aplikasi, Keluar |
 | Latar belakang chat | Ganti background percakapan dengan **foto atau video** (per akun, reset kapan saja) |
 | Background beranda | Latar halaman masuk bisa diganti **foto / video** — oleh admin (berlaku semua pengguna) maupun per akun (Menu → Latar Halaman Utama) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
@@ -317,6 +321,38 @@ Pembatasan akses (gerbang `canUseBots` = **admin ATAU premium aktif**; menolak u
 - bot **tidak bisa ditambahkan ke grup** (`POST /api/chats/:id/members` → `403`) dan tidak
   membalas di grup.
 
+### Paket, kuota bot & undangan teman
+
+Paket disimpan di `settings.plans` lewat `PUT /api/admin/settings` dan dinormalisasi
+`normalizePlans` (`server/settings.js`): tiap paket `{ id, label, days, price, dailyLimit,
+excluded, permanent }` (maks 12 paket). Data lama **tanpa `price`** dianggap usang dan
+diganti `DEFAULT_PLANS` — 4 paket resmi (Harian Rp1.000/50 pesan/5 bot eksklusif tertutup,
+Mingguan Rp10.000/200, Bulanan Rp25.000/tanpa limit, Permanen Rp50.000/tanpa limit +
+`permanent: true`); paket custom admin tetap dipakai dan **paket resmi yang hilang
+ditambahkan otomatis di belakang**.
+
+- `GET /api/plans` (login) → `{ plans, botTotal, exclusiveBotIds, invite, me }` untuk halaman
+  *Paket & Harga*: `me` berisi `planId`, `limit`, `used`, `tokens`, `until`, `active`, `admin`.
+- **Bot eksklusif** (`EXCLUSIVE_BOTS`: `bot-verif-am`, `bot-nik`, `bot-pos`, `bot-wilayah`,
+  `bot-nftoken`) hanya untuk paket di atas Harian: disaring dari `GET /api/bots`, pencarian,
+  profil (`404`) & chat (`403` "Bot ini tidak termasuk paket …") — admin selalu lolos.
+- **Kuota harian** (`consumeBotQuota` di `server/index.js`, dijalankan tepat sebelum pesan bot
+  disimpan): kolom `bot_usage_day`/`bot_usage_count` di-reset otomatis per hari (WIB);
+  kuota habis → memakai **1 token** (`bot_tokens`); token habis → `message:send` gagal dengan
+  pesan *Kuota bot paket … sudah habis* yang tampil di chat.
+- Admin (`premium_until` + role) melewati seluruh filter & kuota.
+
+**Undangan teman** (`server/referral.js`): kode `WA-MAZ-VAL-XXXX` (4 karakter tanpa 0/O/1/I/L,
+dibuat saat pertama dibuka lewat `GET /api/referral`), link `${origin}/?ref=KODE`.
+
+- `POST /api/auth/register` menerima `ref` → kode divalidasi **sebelum** baris user dibuat
+  (kode salah/asing → `400`), pendaftar dicatat `referred_by` + langsung `bot_tokens + 5`;
+- saat akun tamu **disetujui admin** (`POST /api/admin/users/:id/approve`) pengundang mendapat
+  `bot_tokens + 5` & `invite_count + 1` — idempoten lewat kolom `ref_rewarded`;
+- `GET /api/referral` → `{ code, link, tokens, invited, referred, welcomeTokens, inviteTokens }`;
+- kolom baru ikut migrasi `TABLE_MIGRATIONS` (`server/db.js`): `ref_code`, `referred_by`,
+  `ref_rewarded`, `invite_count`, `bot_tokens`, `bot_usage_day`, `bot_usage_count`.
+
 Foto profil bot — **khusus admin**:
 
 - di **Info kontak** bot muncul tombol kamera pada foto; pilih gambar (maks 5MB) → unggah →
@@ -337,6 +373,10 @@ Foto profil bot — **khusus admin**:
   brute-force) → HTTP `429`.
 - Endpoint API butuh `Authorization: Bearer <JWT>`; event socket hanya diteruskan ke
   pengguna terautentikasi yang merupakan peserta chat terkait.
+- Foto profil & gambar terlindungi di sisi klien (`public/js/app.js`): `contextmenu`,
+  `dragstart`, `copy` & `touchstart` lama diblokir, `PrintScreen` / `Ctrl+P` / `Ctrl+S` membuat
+  tampilan kosong, dan `@media print` menyembunyikan gambar — plus unggahan foto profil
+  selalu di-crop square (512px JPEG) supaya tampil rapi.
 
 ## Lisensi
 

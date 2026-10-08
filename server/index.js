@@ -13,6 +13,7 @@ const presence = require('./presence');
 const bus = require('./bus');
 const settings = require('./settings');
 const bots = require('./bots');
+const referral = require('./referral');
 const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile } = require('./upload');
 
@@ -290,27 +291,139 @@ function canUseBots(user) {
   return auth.isAdmin(user) || auth.isPremium(user);
 }
 
+// hari versi WIB (UTC+7) supaya kuota harian sama bagi seluruh pengguna Indonesia
+function dayKey() {
+  return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// bot yang tidak dicakup paket pengguna (admin selalu dapat semua bot)
+async function excludedBots(user) {
+  if (auth.isAdmin(user)) return new Set();
+  const plan = await settings.planOf(user);
+  return new Set((plan && plan.excluded) || []);
+}
+
+// tolak bot di luar cakupan paket (mis. bot eksklusif di paket Harian)
+async function assertBotAllowed(user, botId) {
+  const excluded = await excludedBots(user);
+  if (!excluded.has(botId)) return;
+  const plan = await settings.planOf(user);
+  const label = plan ? plan.label : 'Anda';
+  throw auth.httpError(
+    403,
+    `Bot ini tidak termasuk paket ${label}. Buka menu Paket & Harga untuk upgrade.`,
+    'bot_locked'
+  );
+}
+
+// kuota pesan bot harian sesuai paket; habis -> pakai token undangan, lalu ditolak
+async function consumeBotQuota(user) {
+  if (auth.isAdmin(user)) return;
+  const plan = await settings.planOf(user);
+  const limit = plan ? Number(plan.dailyLimit) || 0 : 0;
+  if (!limit) return; // tanpa limit (Bulanan, Permanen, atau paket custom tanpa limit)
+  const day = dayKey();
+  const row = await db.get('SELECT bot_usage_day, bot_usage_count, bot_tokens FROM users WHERE id = ?', user.id);
+  const used = row && row.bot_usage_day === day ? Number(row.bot_usage_count) || 0 : 0;
+  if (used < limit) {
+    await db.run(
+      `UPDATE users SET bot_usage_count = CASE WHEN bot_usage_day = ? THEN bot_usage_count + 1 ELSE 1 END,
+         bot_usage_day = ? WHERE id = ?`,
+      day,
+      day,
+      user.id
+    );
+    return;
+  }
+  const tokens = row ? Number(row.bot_tokens) || 0 : 0;
+  if (tokens > 0) {
+    await db.run('UPDATE users SET bot_tokens = bot_tokens - 1 WHERE id = ? AND bot_tokens > 0', user.id);
+    return;
+  }
+  const label = plan ? plan.label : 'Anda';
+  throw new Error(
+    `Kuota bot paket ${label} hari ini sudah habis (${limit} pesan). Ajak teman pakai kode undangan agar dapat token tambahan, atau upgrade paket di menu Paket & Harga.`
+  );
+}
+
+// info kuota untuk ditampilkan di menu Paket & daftar bot
+async function botAccess(user) {
+  const plan = await settings.planOf(user);
+  const row = await db.get(
+    'SELECT bot_usage_day, bot_usage_count, bot_tokens, premium_until FROM users WHERE id = ?',
+    user.id
+  );
+  const day = dayKey();
+  const used = row && row.bot_usage_day === day ? Number(row.bot_usage_count) || 0 : 0;
+  return {
+    planId: plan ? plan.id : (user.premium_plan || null),
+    planLabel: plan ? plan.label : null,
+    limit: plan ? Number(plan.dailyLimit) || 0 : 0,
+    used,
+    tokens: Number(row && row.bot_tokens) || 0,
+    until: Number(row && row.premium_until) || 0,
+    active: auth.isPremium(user),
+    admin: auth.isAdmin(user),
+  };
+}
+
+app.get('/api/plans', auth.requireAuth, ah(async (req, res) => {
+  const [plans, access, invite] = await Promise.all([
+    settings.getPlans(),
+    botAccess(req.user),
+    referral.stats(req.user),
+  ]);
+  const groups = bots.catalog();
+  res.json({
+    plans,
+    botTotal: groups.reduce((sum, g) => sum + g.bots.length, 0),
+    exclusiveBotIds: settings.EXCLUSIVE_BOTS,
+    invite: {
+      code: invite.code,
+      invited: invite.invited,
+      tokens: invite.tokens,
+      welcomeTokens: invite.welcomeTokens,
+      inviteTokens: invite.inviteTokens,
+      referred: invite.referred,
+    },
+    me: access,
+  });
+}));
+
+// kode undangan + statistik: makin banyak teman join, makin banyak token
+app.get('/api/referral', auth.requireAuth, ah(async (req, res) => {
+  const stats = await referral.stats(req.user);
+  const origin = req.get('origin') || `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
+  res.json({ ...stats, link: `${origin}/?ref=${stats.code}` });
+}));
+
 app.get('/api/bots', auth.requireAuth, ah(async (req, res) => {
   const groups = bots.catalog();
-  const total = groups.reduce((sum, group) => sum + group.bots.length, 0);
+  const totalAll = groups.reduce((sum, group) => sum + group.bots.length, 0);
   if (!canUseBots(req.user)) {
     return res.status(403).json({
       error: 'Daftar bot khusus pengguna premium.',
       locked: true,
-      total,
+      total: totalAll,
       plans: await settings.getPlans(),
     });
   }
 
-  const ids = groups.flatMap((group) => group.bots.map((bot) => bot.id));
+  // paket terbatas (mis. Harian) menyembunyikan bot eksklusif milik paket di atasnya
+  const excluded = await excludedBots(req.user);
+  const visibleGroups = groups
+    .map((group) => ({ ...group, bots: group.bots.filter((bot) => !excluded.has(bot.id)) }))
+    .filter((group) => group.bots.length);
+  const ids = visibleGroups.flatMap((group) => group.bots.map((bot) => bot.id));
   const rows = ids.length
     ? await db.all(`SELECT id, avatar FROM users WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids)
     : [];
   const avatars = new Map(rows.map((row) => [row.id, row.avatar]));
-  for (const group of groups) {
+  for (const group of visibleGroups) {
     for (const bot of group.bots) bot.avatar = avatars.get(bot.id) || null;
   }
-  res.json({ groups, total, premiumOnly: true });
+  const total = visibleGroups.reduce((sum, group) => sum + group.bots.length, 0);
+  res.json({ groups: visibleGroups, total, premiumOnly: true, access: await botAccess(req.user) });
 }));
 
 app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
@@ -323,11 +436,12 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
     like,
     like
   );
-  // bot internal hanya terlihat oleh admin & pengguna premium
+  // bot internal hanya terlihat oleh admin & pengguna premium yang paketnya mencakup bot tsb
   const canSeeBots = canUseBots(req.user);
+  const excluded = canSeeBots ? await excludedBots(req.user) : new Set();
   // email yang dipribatkan tidak bisa ditemukan lewat email
   const visible = rows.filter((r) => {
-    if (bots.isBot(r) && !canSeeBots) return false;
+    if (bots.isBot(r) && (!canSeeBots || excluded.has(r.id))) return false;
     if (!r.priv_email) return true;
     const matchEmail = String(r.email || '').toLowerCase().includes(q.toLowerCase());
     const matchName = String(r.name || '').toLowerCase().includes(q.toLowerCase());
@@ -346,6 +460,12 @@ app.get('/api/users/:id', auth.requireAuth, ah(async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
   if (bots.isBot(row) && !canUseBots(req.user)) {
     return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  }
+  if (bots.isBot(row)) {
+    const excluded = await excludedBots(req.user);
+    if (excluded.has(row.id)) {
+      return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+    }
   }
   res.json({
     user: helpers.serializeUser(row, req.user.id, {
@@ -444,6 +564,10 @@ app.get('/api/chats', auth.requireAuth, ah(async (req, res) => {
   let chats = await listChats(req.user.id);
   // chat bot disembunyikan bagi yang kehilangan akses (bukan admin/premium)
   if (!canUseBots(req.user)) chats = chats.filter((c) => !(c.peer && c.peer.isBot));
+  else {
+    const excluded = await excludedBots(req.user);
+    if (excluded.size) chats = chats.filter((c) => !(c.peer && c.peer.isBot && excluded.has(c.peer.id)));
+  }
   res.json({ chats });
 }));
 
@@ -454,6 +578,7 @@ app.post('/api/chats/direct', auth.requireAuth, ah(async (req, res) => {
   if (bots.isBot(peer) && !canUseBots(req.user)) {
     return res.status(403).json({ error: 'Bot hanya dapat digunakan oleh admin dan pengguna premium.' });
   }
+  if (bots.isBot(peer)) await assertBotAllowed(req.user, peer.id);
   const chat = await helpers.getOrCreateDirectChat(req.user.id, peerId);
   const row = await db.get(
     `SELECT c.* FROM chats c
@@ -1008,7 +1133,7 @@ app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, re
   const { plans, homeBg } = req.body || {};
   if (plans !== undefined) {
     const saved = await settings.setPlans(plans);
-    if (!saved) return res.status(400).json({ error: 'Data paket tidak valid (minimal 3 paket, durasi 1-3650 hari)' });
+    if (!saved) return res.status(400).json({ error: 'Data paket tidak valid (minimal 3 paket, durasi 1-3650 hari, harga & limit wajar)' });
   }
   if (homeBg !== undefined) {
     const saved = await settings.setHomeBg(homeBg);
@@ -1058,7 +1183,10 @@ app.post('/api/admin/premium', auth.requireAuth, requireAdmin, ah(async (req, re
   if (!user) return res.status(404).json({ error: 'Email tidak terdaftar di sistem' });
 
   const base = Math.max(Date.now(), Number(user.premium_until) || 0);
-  const until = base + plan.days * 24 * 3600 * 1000;
+  // paket Permanen tidak kedaluwarsa (disimpan sebagai 100 tahun ke depan)
+  const until = plan.permanent
+    ? Date.now() + 100 * 365 * 24 * 3600 * 1000
+    : base + plan.days * 24 * 3600 * 1000;
   await db.run(
     'UPDATE users SET premium_plan = ?, premium_until = ?, verified = 1 WHERE id = ?',
     plan.id,
@@ -1107,6 +1235,9 @@ app.post('/api/admin/users/:id/approve', auth.requireAuth, requireAdmin, ah(asyn
   if (target.banned) return res.status(400).json({ error: 'Akun sedang diblokir. Buka blokir dulu.' });
   if (target.account_status === 'active') return res.json({ user: adminUser(target), already: true });
   await db.run(`UPDATE users SET account_status = 'active', reject_reason = NULL WHERE id = ?`, target.id);
+  // teman yang diundang resmi bergabung -> pengundang mendapat token undangan
+  const inviter = await referral.rewardInviter(target.id);
+  if (inviter) await emitToUser(inviter.id, 'profile:updated', { id: inviter.id });
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
   await emitToUser(target.id, 'profile:updated', { id: target.id });
   await adminEvent('approved', { user: adminUser(fresh) });
@@ -1594,10 +1725,19 @@ async function handleSend(user, payload) {
     throw new Error('Bukan anggota chat ini');
   }
 
-  // bot internal: akses dibatasi untuk admin & pengguna premium
+  // bot internal: akses dibatasi untuk admin & pengguna premium sesuai paketnya
   const botPeer = await bots.peerInChat(chatId);
   if (botPeer && !canUseBots(user)) {
     throw new Error('Bot hanya dapat digunakan oleh admin dan pengguna premium.');
+  }
+  if (botPeer) {
+    const excluded = await excludedBots(user);
+    if (excluded.has(botPeer.id)) {
+      const plan = await settings.planOf(user);
+      throw new Error(
+        `Bot ini tidak termasuk paket ${plan ? plan.label : 'Anda'}. Buka menu Paket & Harga untuk upgrade.`
+      );
+    }
   }
 
   const cleanType = ['text', 'image', 'video', 'audio', 'file'].includes(type) ? type : 'text';
@@ -1631,6 +1771,9 @@ async function handleSend(user, payload) {
 
   const cleanViewOnce = cleanType === 'image' && !!viewOnce ? 1 : 0;
   const cleanDuration = Math.max(0, Math.min(3_600_000, Math.round(Number(duration) || 0)));
+
+  // potong kuota tepat sebelum pesan disimpan (habis -> token undangan -> ditolak)
+  if (botPeer) await consumeBotQuota(user);
 
   await db.run(
     `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, view_once, duration, created_at)

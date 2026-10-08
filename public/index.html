@@ -236,6 +236,26 @@
         <path d="M12 5.2v13.6M5.2 12l6.8 6.8L18.8 12" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </symbol>
+      <symbol id="ic-star" viewBox="0 0 24 24">
+        <path d="M12 3.4l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-gift" viewBox="0 0 24 24">
+        <path d="M3.8 11.2h16.4v8.4a1.9 1.9 0 0 1-1.9 1.9H5.7a1.9 1.9 0 0 1-1.9-1.9z" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M2.8 7.6h18.4v3.6H2.8zM12 7.6V21.5" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linejoin="round" />
+        <path d="M12 7.6S10.7 3.8 8.6 3.8a2.1 2.1 0 0 0 0 3.8M12 7.6s1.3-3.8 3.4-3.8a2.1 2.1 0 0 1 0 3.8"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-zap" viewBox="0 0 24 24">
+        <path d="M13.3 2.6L4.9 13.6h5.6l-.6 7.8 8.4-11h-5.6z" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="ic-phone" viewBox="0 0 24 24">
+        <path d="M6.4 3.6h3l1.6 4-2 1.4a11.5 11.5 0 0 0 5.4 5.4l1.4-2 4 1.6v3a2 2 0 0 1-2.2 2C10.7 18.6 5.4 13.3 4.4 5.8a2 2 0 0 1 2-2.2z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+      </symbol>
     </defs>
   </svg>
 
@@ -274,6 +294,10 @@
         </label>
         <label>Password
           <input type="password" name="password" placeholder="Minimal 6 karakter" required minlength="6" autocomplete="new-password" />
+        </label>
+        <label class="ref-label" for="refInput">Kode Undangan <small>opsional — dari teman yang mengundang Anda</small>
+          <input type="text" name="ref" id="refInput" placeholder="WA-MAZ-VAL-XXXX" maxlength="16"
+            autocomplete="off" autocapitalize="characters" spellcheck="false" />
         </label>
         <button type="submit" class="btn-primary">Daftar</button>
       </form>
@@ -509,6 +533,16 @@
           <span class="mi-text"><strong>Profil &amp; Info</strong><small>Nama, bio, foto, verifikasi</small></span>
           <span class="mi-arrow">›</span>
         </button>
+        <button class="menu-item menu-item-premium" data-menu="plans">
+          <span class="mi-ico mi-ico-gold"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-star" /></svg></span>
+          <span class="mi-text"><strong>Paket &amp; Harga</strong><small>Premium Harian, Mingguan, Bulanan, Permanen</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
+        <button class="menu-item" data-menu="invite">
+          <span class="mi-ico mi-ico-gift"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-gift" /></svg></span>
+          <span class="mi-text"><strong>Undang Teman</strong><small>Bagikan kode, kumpulkan token bot</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
         <button class="menu-item" data-menu="wallpaper">
           <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-image" /></svg></span>
           <span class="mi-text"><strong>Latar Belakang Chat</strong><small>Ganti background foto / video</small></span>
@@ -541,7 +575,7 @@
         </button>
         <button class="menu-item" data-menu="about">
           <span class="mi-ico"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-info" /></svg></span>
-          <span class="mi-text"><strong>Tentang Whatsap Indo</strong><small>Versi 1.0.0 • © mazval-developer-java</small></span>
+          <span class="mi-text"><strong>Tentang Aplikasi</strong><small>Whatsap Indo APK, cara pakai &amp; kontak CS</small></span>
           <span class="mi-arrow">›</span>
         </button>
         <button class="menu-item danger" data-menu="logout">
@@ -565,6 +599,39 @@
         <span class="bc-count" id="bcCount"></span>
       </div>
       <div class="bc-body" id="bcBody"></div>
+    </div>
+
+    <!-- ============ PAKET & HARGA ============ -->
+    <div class="drawer drawer-right drawer-wide hidden" id="planDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnClosePlan" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Paket &amp; Harga</strong>
+      </header>
+      <div class="plan-body" id="planBody"></div>
+    </div>
+
+    <!-- ============ UNDANG TEMAN ============ -->
+    <div class="drawer drawer-right drawer-wide hidden" id="inviteDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseInvite" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Undang Teman</strong>
+      </header>
+      <div class="invite-body" id="inviteBody"></div>
+    </div>
+
+    <!-- ============ TENTANG APLIKASI ============ -->
+    <div class="drawer drawer-right drawer-wide hidden" id="aboutDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseAbout" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Tentang Aplikasi</strong>
+      </header>
+      <div class="about-body" id="aboutBody"></div>
     </div>
 
     <!-- ============ PUSAT NOTIFIKASI ============ -->
@@ -867,7 +934,7 @@
 
         <section class="adm-section">
           <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-grid" /></svg> Atur Paket</h4>
-          <p class="adm-note">Nama &amp; durasi (hari) untuk 3 paket langganan.</p>
+          <p class="adm-note">Nama, durasi (hari), harga (Rp) &amp; limit pesan bot harian tiap paket. Limit <b>0</b> = tanpa batas.</p>
           <div class="adm-plans" id="admPlans"></div>
           <button class="btn-primary" id="btnSavePlans">Simpan Paket</button>
         </section>

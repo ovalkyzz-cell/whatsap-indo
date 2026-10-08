@@ -393,7 +393,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const noOv = await api('/api/admin/overview', { token: tokA });
   ok(noOv.status === 403, 'bukan admin ditolak 403');
   const ov = await api('/api/admin/overview', { token: tokAdm });
-  ok(ov.status === 200 && ov.data.stats.users > 0 && Array.isArray(ov.data.plans) && ov.data.plans.length === 3,
+  ok(ov.status === 200 && ov.data.stats.users > 0 && Array.isArray(ov.data.plans) && ov.data.plans.length >= 3,
     'overview admin (statistik + paket)');
 
   const grant1 = await api('/api/admin/premium', {
@@ -415,9 +415,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     method: 'PUT', token: tokAdm,
     body: {
       plans: [
-        { id: 'uji-sehari', label: '1 Hari', days: 1 },
-        { id: 'mingguan', label: 'Mingguan', days: 7 },
-        { id: 'bulanan', label: 'Bulanan', days: 30 },
+        { id: 'uji-sehari', label: '1 Hari', days: 1, price: 1000, dailyLimit: 0, excluded: [] },
+        { id: 'mingguan', label: 'Mingguan', days: 7, price: 10000, dailyLimit: 200, excluded: [] },
+        { id: 'bulanan', label: 'Bulanan', days: 30, price: 25000, dailyLimit: 0, excluded: [] },
       ],
     },
   });
@@ -796,9 +796,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const rpPrem = await signup({ email: premEmail, name: 'Pengguna Premium', password: 'secret123' });
   ok(rpPrem.status === 201 && !!rpPrem.data.token, 'akun uji premium disiapkan');
   const tokPrem = rpPrem.data.token;
-  // id paket diambil dinamis (bisa berubah lewat pengaturan admin)
+  // id paket diambil dinamis (bisa berubah lewat pengaturan admin);
+  // pakai paket tanpa bot eksklusif agar daftar bot lengkap untuk pengujian
   const cfgPrem = await admApi('/api/admin/settings');
-  const planPrem = (cfgPrem.data.plans || [])[0];
+  const planPrem = (cfgPrem.data.plans || []).find((p) => !(p.excluded && p.excluded.length))
+    || (cfgPrem.data.plans || [])[0];
   ok(!!planPrem, 'daftar paket premium tersedia');
   const grantPrem = await admApi('/api/admin/premium', {
     method: 'POST',
@@ -1258,6 +1260,138 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   ok(revokeKatalog.status === 200 && revokeKatalog.data.user.premiumActive === false,
     'premium akun uji dicabut kembali setelah pengujian');
+
+  console.log('\n[31] Paket premium, kuota bot & undangan teman');
+
+  // daftar paket resmi dibuka dari aplikasi (tanpa edit admin)
+  const paketApi = await api('/api/plans', { token: tokB });
+  ok(paketApi.status === 200 && Array.isArray(paketApi.data.plans) && paketApi.data.plans.length >= 4,
+    'halaman paket menerima daftar paket premium');
+  const harga = Object.fromEntries((paketApi.data.plans || []).map((p) => [p.id, p.price]));
+  ok(harga.harian === 1000 && harga.mingguan === 10000 && harga.bulanan === 25000 && harga.permanen === 50000,
+    'harga paket resmi: Rp1.000 / Rp10.000 / Rp25.000 / Rp50.000');
+  const paketHarian = (paketApi.data.plans || []).find((p) => p.id === 'harian');
+  ok(!!paketHarian && (paketHarian.excluded || []).length === 5 && paketHarian.dailyLimit === 50,
+    'paket Harian: 5 bot eksklusif ditutup + limit 50 pesan/hari');
+  const paketPermanen = (paketApi.data.plans || []).find((p) => p.id === 'permanen');
+  ok(!!paketPermanen && paketPermanen.permanent === true && paketPermanen.dailyLimit === 0,
+    'paket Permanen: permanen + tanpa limit');
+  ok(paketApi.data.botTotal === 69 && Array.isArray(paketApi.data.exclusiveBotIds)
+    && paketApi.data.exclusiveBotIds.length === 5,
+    'total bot & daftar bot eksklusif dikirim ke halaman paket');
+  ok(!!paketApi.data.me && typeof paketApi.data.me.tokens === 'number' && typeof paketApi.data.me.used === 'number'
+    && paketApi.data.invite && /^WA-MAZ-VAL-[A-Z0-9]{4}$/.test(paketApi.data.invite.code || ''),
+    'status paket + kode undangan saya');
+
+  // undangan: kode format resmi, tamu join, kedua pihak dapat token
+  const refA = await api('/api/referral', { token: tokA });
+  ok(refA.status === 200 && /^WA-MAZ-VAL-[A-Z0-9]{4}$/.test(refA.data.code || '')
+    && String(refA.data.link || '').includes(`?ref=${refA.data.code}`),
+    'kode undangan WA-MAZ-VAL-XXXX + link siap dibagikan');
+  const tokenSebelum = refA.data.tokens;
+  const tamuEmail = `tamu${stamp}@test.id`;
+  const regTamu = await api('/api/auth/register', {
+    method: 'POST',
+    body: { name: 'Tamu Undangan', email: tamuEmail, password: 'secret123', ref: refA.data.code },
+  });
+  ok(regTamu.status === 201 && regTamu.data.pending === true && regTamu.data.refApplied === true,
+    'pendaftar baru memakai kode undangan');
+  const refA2 = await api('/api/referral', { token: tokA });
+  ok(refA2.data.tokens === tokenSebelum,
+    'token pengundang baru masuk setelah tamu disetujui');
+  const apTamu = await admApi(`/api/admin/users/${regTamu.data.user.id}/approve`, { method: 'POST', body: {} });
+  ok(apTamu.status === 200, 'tamu undangan disetujui admin');
+  const refA3 = await api('/api/referral', { token: tokA });
+  ok(refA3.data.tokens === tokenSebelum + 5 && refA3.data.invited === 1,
+    'pengundang mendapat +5 token & 1 undangan tercatat');
+  const lgTamu = await api('/api/auth/login', { method: 'POST', body: { email: tamuEmail, password: 'secret123' } });
+  const refTamu = await api('/api/referral', { token: lgTamu.data.token });
+  ok(refTamu.status === 200 && refTamu.data.tokens === 5 && refTamu.data.referred === true,
+    'tamu mendapat 5 token selamat datang');
+  const regSalah = await api('/api/auth/register', {
+    method: 'POST',
+    body: { name: 'Salah Kode', email: `salah${stamp}@test.id`, password: 'secret123', ref: 'WA-MAZ-VAL-99' },
+  });
+  ok(regSalah.status === 400 && /undangan/i.test(regSalah.data.error || ''),
+    'kode undangan tidak valid ditolak 400');
+
+  // paket uji limit harian 1 pesan
+  const setLimit = await admApi('/api/admin/settings', {
+    method: 'PUT',
+    body: {
+      plans: [
+        { id: 'uji-sehari', label: '1 Hari', days: 1, price: 1000, dailyLimit: 0, excluded: [] },
+        { id: 'mingguan', label: 'Mingguan', days: 7, price: 10000, dailyLimit: 200, excluded: [] },
+        { id: 'bulanan', label: 'Bulanan', days: 30, price: 25000, dailyLimit: 0, excluded: [] },
+        { id: 'uji-limit', label: 'Uji Limit', days: 2, price: 5000, dailyLimit: 1, excluded: [] },
+      ],
+    },
+  });
+  ok(setLimit.status === 200 && setLimit.data.plans.some((p) => p.id === 'uji-limit'),
+    'admin menambah paket dengan limit harian');
+
+  const limEmail = `limit${stamp}@test.id`;
+  const rpLim = await signup({ email: limEmail, name: 'Uji Limit', password: 'secret123' });
+  ok(rpLim.status === 201, 'akun uji limit disiapkan');
+  const grantLim = await admApi('/api/admin/premium', {
+    method: 'POST', body: { email: limEmail, plan: 'uji-limit' },
+  });
+  ok(grantLim.status === 200 && grantLim.data.user.premiumActive === true,
+    'premium paket limit harian diberikan');
+  const chatLim = await api('/api/chats/direct', {
+    method: 'POST', token: rpLim.data.token, body: { peerId: 'bot-glm' },
+  });
+  ok(chatLim.status === 201 && !!chatLim.data.chat.id, 'paket limit tetap bisa membuka bot');
+
+  const limSock = io(BASE, { auth: { token: rpLim.data.token } });
+  await new Promise((r) => limSock.on('connect', r));
+  const limAck1 = await emitAck(limSock, 'message:send', {
+    chatId: chatLim.data.chat.id, type: 'text', body: 'halo pertama',
+  });
+  ok(limAck1 && limAck1.ok === true, 'pesan pertama (sesuai limit harian) diterima');
+  const limAck2 = await emitAck(limSock, 'message:send', {
+    chatId: chatLim.data.chat.id, type: 'text', body: 'halo kedua beda',
+  });
+  ok(limAck2 && limAck2.ok === false && /Kuota bot/i.test(limAck2.error || ''),
+    'pesan kedua ditolak: kuota harian habis & token 0');
+  limSock.close();
+
+  // paket Harian menyembunyikan bot eksklusif
+  const grantHarian = await admApi('/api/admin/premium', {
+    method: 'POST', body: { email: limEmail, plan: 'harian' },
+  });
+  ok(grantHarian.status === 200 && grantHarian.data.user.premiumActive === true,
+    'akun uji dipindah ke paket Harian');
+  const katHarian = await api('/api/bots', { token: rpLim.data.token });
+  const idHarian = (katHarian.data.groups || []).flatMap((g) => g.bots.map((b) => b.id));
+  ok(katHarian.status === 200 && katHarian.data.total === 64 && idHarian.length === 64
+    && !idHarian.includes('bot-verif-am') && !idHarian.includes('bot-nftoken'),
+    'paket Harian menyembunyikan 5 bot eksklusif (69 - 5 = 64)');
+  const bukaEks = await api('/api/chats/direct', {
+    method: 'POST', token: rpLim.data.token, body: { peerId: 'bot-nik' },
+  });
+  ok(bukaEks.status === 403 && /tidak termasuk paket/i.test(bukaEks.data.error || ''),
+    'chat bot eksklusif ditolak dengan pesan upgrade');
+  const cariEks = await api('/api/users/search?q=Verif', { token: rpLim.data.token });
+  ok((cariEks.data.users || []).every((u) => u.id !== 'bot-verif-am'),
+    'bot eksklusif tidak muncul di pencarian paket Harian');
+  const profilEks = await api('/api/users/bot-verif-am', { token: rpLim.data.token });
+  ok(profilEks.status === 404, 'profil bot eksklusif 404 untuk paket Harian');
+
+  // admin tetap melihat semua bot + bisa atur paket
+  const katAdmAkhir = await admApi('/api/bots');
+  ok(katAdmAkhir.status === 200 && katAdmAkhir.data.total === 69, 'admin tetap melihat 69 bot');
+  const setBalik = await admApi('/api/admin/settings', {
+    method: 'PUT',
+    body: {
+      plans: [
+        { id: 'uji-sehari', label: '1 Hari', days: 1, price: 1000, dailyLimit: 0, excluded: [] },
+        { id: 'mingguan', label: 'Mingguan', days: 7, price: 10000, dailyLimit: 200, excluded: [] },
+        { id: 'bulanan', label: 'Bulanan', days: 30, price: 25000, dailyLimit: 0, excluded: [] },
+      ],
+    },
+  });
+  ok(setBalik.status === 200, 'pengaturan paket dikembalikan');
 
   console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
   process.exit(fail ? 1 : 0);
