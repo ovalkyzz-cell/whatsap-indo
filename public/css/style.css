@@ -104,12 +104,15 @@ input, textarea { font: inherit; }
 .sidebar {
   width: 400px; min-width: 320px; border-right: 1px solid var(--wa-border);
   display: flex; flex-direction: column; background: var(--wa-panel); z-index: 5;
-  position: relative; overflow: hidden;
+  position: relative; overflow: visible;
 }
 .sidebar > *:not(.home-bg) { position: relative; z-index: 1; }
 .sidebar-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; background: var(--wa-header); gap: 8px;
+  padding: 12px 16px 22px; min-height: 84px; background: var(--wa-header); gap: 8px;
+}
+.sidebar-header .avatar {
+  position: relative; z-index: 99;
 }
 .me { display: flex; align-items: center; gap: 12px; min-width: 0; cursor: pointer; }
 .me-info { display: flex; flex-direction: column; min-width: 0; }
@@ -342,6 +345,37 @@ input, textarea { font: inherit; }
   padding: 9px 12px; font-size: 13.5px; font-weight: 500;
 }
 
+/* ---------- call ---------- */
+.call-modal {
+  position: fixed; inset: 0; background: rgba(7, 20, 18, .92); z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.call-box { text-align: center; color: #fff; animation: msgIn .2s ease; }
+.call-box h3 { margin-top: 16px; font-size: 24px; font-weight: 500; }
+.call-box p { color: #a9c7bf; margin-top: 6px; }
+.call-box-wide { width: min(920px, 100%); }
+.call-actions { display: flex; gap: 18px; justify-content: center; margin-top: 26px; }
+.call-btn {
+  padding: 13px 26px; border-radius: 28px; font-weight: 600; font-size: 15px;
+  color: #fff; transition: filter .15s; display: inline-flex; align-items: center; gap: 8px;
+}
+.call-btn.accept, .call-btn.toggle { background: var(--wa-teal); }
+.call-btn.decline { background: #ef5350; }
+.call-btn.toggle.off { background: #54656f; opacity: .7; }
+.call-btn:hover { filter: brightness(1.12); }
+.call-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+.call-btn:disabled:hover { filter: none; }
+.call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.call-timer { font-variant-numeric: tabular-nums; color: #a9c7bf; }
+.call-videos { position: relative; background: #0b141a; border-radius: 14px; overflow: hidden; min-height: 320px; display: flex; align-items: center; justify-content: center; }
+.call-videos video { width: 100%; height: 100%; max-height: 60vh; object-fit: cover; }
+#localVideo {
+  position: absolute; bottom: 14px; right: 14px; width: 200px; height: 150px;
+  object-fit: cover; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.5); background: #000;
+}
+.call-avatar-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.call-state { margin-top: 10px; color: #a9c7bf; font-size: 14px; }
+
 /* ---------- scrollbar ---------- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--wa-thumb); border-radius: 3px; }
@@ -375,9 +409,12 @@ input, textarea { font: inherit; }
 
 /* menu */
 .menu-profile {
-  display: flex; align-items: center; gap: 14px; padding: 20px 18px; color: #fff;
+  display: flex; align-items: center; gap: 14px; padding: 20px 18px 30px; color: #fff;
   background: linear-gradient(135deg, #073c33 0%, #008069 55%, #00a884 130%);
-  position: relative; overflow: hidden;
+  position: relative; overflow: visible;
+}
+.menu-profile .avatar {
+  position: relative; z-index: 99;
 }
 .menu-profile::after {
   content: ''; position: absolute; right: -40px; top: -60px; width: 160px; height: 160px;
@@ -1378,6 +1415,8 @@ html[data-theme="dark"] #emptyHomeBg::after { background: rgba(4, 22, 18, .74); 
 .msg-file .file-ico .ico { width: 30px; height: 30px; color: var(--wa-accent-text); }
 .ap-play { display: grid; place-items: center; }
 .ap-play .ico { width: 16px; height: 16px; }
+.call-btn .ico { width: 21px; height: 21px; }
+.call-btn .btn-ico { width: 17px; height: 17px; }
 .status-create-ico .ico { width: 24px; height: 24px; }
 .status-add .ico { width: 15px; height: 15px; }
 .menu-item .mi-arrow .ico, .mi-arrow .ico { width: 18px; height: 18px; color: var(--wa-accent-text); }

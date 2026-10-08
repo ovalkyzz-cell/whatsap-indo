@@ -1,6 +1,6 @@
 # Whatsap Indo
 
-Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, kirim **foto / video / audio / file hingga 2GB**. Fitur panggilan suara & video **tidak tersedia** (sengaja dihapus dari aplikasi).
+Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, kirim **foto / video / audio / file hingga 2GB**, serta **panggilan suara & video** (WebRTC).
 
 ## Fitur
 
@@ -14,6 +14,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
 | Kartu angka | Kode/token khusus (` ```angka `) tampil dengan **font angka profesional** (tabular, tracking lebar) + Copy |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
+| Panggilan | **Suara & video WebRTC** 1-to-1: tombol di header chat & info kontak, layar dering (jawab/tolak/akhiri), mute mic & kamera, timer durasi — sinyal lewat Socket.IO `call:*` |
 | Preview unduh | Bot Downloader **wajib menampilkan hasil videonya**: rangkaian resolver otomatis (api-mazval → tikwm → fxtwitter → instance cobalt → Piped) mengambil file medianya, divalidasi via probe Range, lalu **diunduh ke server** dan tampil sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback terakhir: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
@@ -31,7 +32,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Latar belakang chat | Ganti background percakapan dengan **foto atau video** (per akun, reset kapan saja) |
 | Background beranda | Latar halaman masuk bisa diganti **foto / video** — oleh admin (berlaku semua pengguna) maupun per akun (Menu → Latar Halaman Utama) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
-| Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat |
+| Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat, aksi panggilan |
 | Notifikasi | Nada pesan + notifikasi browser saat tab tidak aktif + **Pusat Notifikasi** (lonceng dengan badge, riwayat notifikasi, tandai sudah dibaca) |
 | Profil | Nama, status, foto profil |
 | Responsif | Layout mobile (sidebar/chat bergantian) dan desktop ala WhatsApp Web |
@@ -81,8 +82,9 @@ bisa dibuka saat offline.
 
 ```
 server/
-  index.js     # Express + Socket.IO, routing API
+  index.js     # Express + Socket.IO, routing API, signaling WebRTC
   auth.js      # register/login, bcrypt, JWT middleware
+  calls.js     # catatan panggilan (tabel calls): buat, ubah state, bersihkan
   db.js        # SQLite (better-sqlite3) — users, chats, messages, status
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
   bots.js      # 69 bot admin (9 inti + 60 generik) + perintah + API api-mazval
@@ -92,11 +94,11 @@ server/
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
   bratimg.js   # generator gambar lokal bot Generator Gambar (SVG -> sharp -> PNG brattxt-*.png)
 public/
-  index.html   # shell SPA (auth, chat, drawer, pusat notifikasi)
+  index.html   # shell SPA (auth, chat, drawer, pusat notifikasi, modal panggilan)
   css/style.css
-  js/app.js    # state, API client, renderer (inkremental), socket, pusat notifikasi
+  js/app.js    # state, API client, renderer (inkremental), socket, pusat notifikasi, WebRTC
 test/
-  e2e.js       # e2e: auth, realtime, receipts, upload, delete, fitur panggilan dihapus,
+  e2e.js       # e2e: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot
                # & 20 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan,
@@ -149,17 +151,41 @@ Ada dua tingkatan:
 Layar tanpa login mengambil latar global dari `GET /api/settings/public` (tanpa autentikasi).
 URL divalidasi ketat: hanya path `/uploads/…` atau Blob Vercel (`settings.validBgUrl`).
 
-### Panggilan (dihapus)
+### Panggilan (WebRTC)
 
-Fitur panggilan suara & video WebRTC **tidak ada di aplikasi ini** — modul `server/calls.js`,
-handler `call:*`, tombol panggilan, dan layar dering semuanya dihapus:
+Panggilan suara & video 1-to-1 berjalan langsung antar browser (**WebRTC P2P**, hanya STUN
+Google/Twilio — tanpa TURN). Pintu masuknya: **tombol telepon di header chat** (suara/video)
+dan **tombol *Suara* / *Video* di panel Info Kontak** — disembunyikan otomatis untuk bot & grup.
 
-- tombol *Panggilan suara* / *Video call* tidak lagi ada di header chat & info kontak;
-- `server/index.js` tidak mendaftarkan listener `call:*` apa pun (event tersebut diabaikan);
-- test `e2e.js` bagian `[11]` mengunci kondisi ini: file modul tidak ada, marker frontend
-  (`startCall`, `RTCPeerConnection`, `call:invite`) hilang, dan event `call:*` tidak dijawab.
+Sinyal berjalan lewat Socket.IO (`call:*`) di `server/index.js`, dengan catatan panggilan
+tersimpan di **tabel `calls`** (`server/calls.js`):
 
-Komunikasi berjalan lewat pesan chat (teks, media, status, notifikasi) saja.
+1. `call:invite` (ada **ack**) → server membuat baris `calls` lalu mengirim `call:incoming`
+   ke semua tab/perangkat penerima. Offline → ack `ok:false` (baris dibuang).
+2. Penerima menekan *Jawab* → `call:accept` (menutup layar dering di tab lain milik penerima)
+   → membuat SDP **offer**.
+3. Penjawab menerima `offer` → membuat **answer**; keduanya bertukar ICE candidate
+   lewat `call:signal` (hanya untuk panggilan yang terdaftar di server).
+4. Selesai: `call:hangup` / `call:reject` → baris dihapus + `call:ended` dengan `reason`
+   (`ended` | `rejected` | `timeout` | `accepted` | `cancelled`).
+
+Perilaku pelindung:
+
+- dering maksimal **60 detik** (lalu `timeout`), koneksi WebRTC maksimal **20 detik**;
+- `disconnected` diberi toleransi **8 detik** sebelum panggilan ditutup (blip jaringan tidak
+  langsung memutus), `failed` langsung menutup;
+- penelepon/penerima menutup tab saat masih berdering → panggilan dibersihkan saat disconnect
+  (`cleanupCalls`) dan pihak lain menerima `call:ended`;
+- menolak otomatis bila sudah berada di panggilan lain; bot tidak dapat dipanggil;
+- pantulan/relay lewat **HTTPS** diperlukan untuk `getUserMedia` selain di localhost.
+
+> **Catatan HTTPS:** browser hanya mengizinkan `getUserMedia` (mikrofon/kamera) di **localhost**
+> atau lewat **HTTPS**. Buka `http://<ip-server>:3000` dari perangkat lain = panggilan akan
+> menolak dengan pesan jelas, karena itu untuk pemakaian luar localhost gunakan reverse proxy TLS
+> (mis. Caddy/Nginx) atau tunnel seperti ngrok.
+
+Test `e2e.js` bagian `[11]` memastikan modul, handler, tabel, tombol, modal, gaya CSS, dan
+alur sinyal `call:invite → call:incoming → call:hangup → call:ended` semuanya ada & bekerja.
 
 ### Keamanan masuk, persetujuan & panel admin
 

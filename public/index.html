@@ -264,6 +264,11 @@
         <path d="M6.4 3.6h3l1.6 4-2 1.4a11.5 11.5 0 0 0 5.4 5.4l1.4-2 4 1.6v3a2 2 0 0 1-2.2 2C10.7 18.6 5.4 13.3 4.4 5.8a2 2 0 0 1 2-2.2z"
           fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
       </symbol>
+      <symbol id="ic-hangup" viewBox="0 0 24 24">
+        <path d="M6.4 3.6h3l1.6 4-2 1.4a11.5 11.5 0 0 0 5.4 5.4l1.4-2 4 1.6v3a2 2 0 0 1-2.2 2C10.7 18.6 5.4 13.3 4.4 5.8a2 2 0 0 1 2-2.2z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"
+          transform="rotate(133.5 12 12)" />
+      </symbol>
     </defs>
   </svg>
 
@@ -399,6 +404,12 @@
             <small id="chatStatus">—</small>
           </div>
           <div class="header-actions">
+            <button class="icon-btn" id="btnCallVoice" title="Panggilan suara">
+              <svg viewBox="0 0 24 24" class="ico"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11.4 11.4 0 0 0 3.6.58 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .58 3.6 1 1 0 0 1-.25 1z" fill="currentColor"/></svg>
+            </button>
+            <button class="icon-btn" id="btnCallVideo" title="Panggilan video">
+              <svg viewBox="0 0 24 24" class="ico"><rect x="2.5" y="6.5" width="12.5" height="11" rx="2.5" fill="currentColor"/><path d="M15 11l5-3.2v8.4L15 13z" fill="currentColor"/></svg>
+            </button>
             <button class="icon-btn" id="btnContactInfo" title="Info kontak">
               <svg viewBox="0 0 24 24" class="ico"><use href="#ic-info" /></svg>
             </button>
@@ -963,6 +974,42 @@
       </div>
     </div>
   </section>
+
+  <!-- ============ INCOMING CALL ============ -->
+  <div class="call-modal hidden" id="incomingCall">
+    <div class="call-box">
+      <div class="avatar avatar-xl" id="inCallerAvatar"><span>?</span></div>
+      <h3 id="inCallerName">—</h3>
+      <p id="inCallKind">Panggilan masuk...</p>
+      <div class="call-actions">
+        <button class="call-btn decline" id="btnRejectCall"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-close" /></svg> Tolak</button>
+        <button class="call-btn accept" id="btnAcceptCall"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-check" /></svg> Jawab</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ACTIVE CALL ============ -->
+  <div class="call-modal hidden" id="activeCall">
+    <div class="call-box call-box-wide">
+      <div class="call-header">
+        <strong id="callPeerName">—</strong>
+        <span id="callTimer" class="call-timer">00:00</span>
+      </div>
+      <div class="call-videos">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
+        <div id="callAvatarFallback" class="call-avatar-fallback">
+          <div class="avatar avatar-xl" id="callPeerAvatar"><span>?</span></div>
+        </div>
+      </div>
+      <p id="callStateText" class="call-state">Menghubungkan...</p>
+      <div class="call-actions">
+        <button class="call-btn toggle" id="btnToggleMic" title="Mic"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-mic" /></svg></button>
+        <button class="call-btn toggle" id="btnToggleCam" title="Kamera"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg></button>
+        <button class="call-btn decline" id="btnHangup"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-hangup" /></svg> Akhiri</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ============ PEMONTOK STATUS ============ -->
   <div class="story-viewer hidden" id="storyViewer">

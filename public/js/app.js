@@ -15,6 +15,8 @@ const S = {
   statusFeed: [], // hasil /api/status (per pengguna)
   groupDraft: { name: '', members: [] },
   more: {},         // chatId -> masih ada pesan lebih lama di server
+  // call
+  call: null, // { callId, peer, kind, pc, incoming, state, startedAt, timer }
 };
 
 /* status render panel pesan — dipakai untuk render inkrementen & scroll */
@@ -128,6 +130,10 @@ function showApp() {
 }
 
 function logout(callServer = true, message) {
+  if (S.call) {
+    try { S.socket?.emit('call:hangup', { to: S.call.peer.id, callId: S.call.callId }); } catch { /* noop */ }
+    closeCall();
+  }
   const token = S.token;
   if (callServer && token) {
     // cabut sesi di server (satu akun satu device)
@@ -384,6 +390,12 @@ function updateChatStatus() {
   const chat = currentChat();
   if (!chat) return;
   const peer = chat.peer;
+  // bot tidak bisa dipanggil: tombol panggilan disembunyikan di header chat
+  const botPeer = !!(peer && peer.isBot);
+  for (const id of ['btnCallVoice', 'btnCallVideo']) {
+    const el = $(id);
+    if (el) el.style.display = botPeer ? 'none' : '';
+  }
   const t = S.typing[chat.id];
   if (t && Object.keys(t).length) {
     $('chatStatus').textContent = 'sedang mengetik...';
@@ -1110,6 +1122,11 @@ function connectSocket() {
       if (prevActive) updateChatStatus();
     }).catch(() => {});
   });
+
+  // calls
+  socket.on('call:incoming', onCallIncoming);
+  socket.on('call:signal', onCallSignal);
+  socket.on('call:ended', onCallEnded);
 }
 
 /* ================= notifikasi (melayang + sistem + push offline) ================= */
@@ -2871,9 +2888,16 @@ async function openContactInfo() {
       </div>
       <div class="contact-actions">
         <button class="btn-ghost" id="ciChat"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-chat" /></svg> Pesan</button>
+        ${u.isBot ? '' : `
+        <button class="btn-ghost" id="ciVoice"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-phone" /></svg> Suara</button>
+        <button class="btn-ghost" id="ciVideo"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-video" /></svg> Video</button>`}
       </div>`;
     setAvatar($('contactAvatar'), peer);
     $('ciChat').addEventListener('click', () => { closeDrawers(); $('messageInput').focus(); });
+    if (!u.isBot) {
+      $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
+      $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
+    }
     if (canEditBot) bindBotProfileEdit(u, peer);
   } catch (err) {
     body.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
@@ -3409,6 +3433,392 @@ async function loadHomeBg() {
     applyHomeBg(data.homeBg);
   } catch { /* latar bawaan */ }
 }
+
+/* ================= WebRTC calls ================= */
+const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
+const RING_TIMEOUT_MS = 60000;    // maksimal menunggu jawaban
+const CONNECT_TIMEOUT_MS = 20000; // maksimal menunggu koneksi WebRTC terbentuk
+const DROP_GRACE_MS = 8000;       // toleransi 'disconnected' sebelum menutup panggilan
+
+function newCallId() { return 'call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+function blankCall(fields) {
+  return {
+    startedAt: null, timer: null, ringTimer: null, connectTimer: null, dropTimer: null,
+    pendingSignals: [], pc: null, localStream: null, peerReady: null,
+    ...fields,
+  };
+}
+
+$('btnCallVoice').addEventListener('click', () => startCall('audio'));
+$('btnCallVideo').addEventListener('click', () => startCall('video'));
+
+function startCall(kind) {
+  const chat = currentChat();
+  if (!chat || !chat.peer) { toast('Pilih chat terlebih dahulu'); return; }
+  if (chat.peer.isBot) { toast('Bot tidak bisa dipanggil'); return; }
+  if (S.call) { toast('Sedang dalam panggilan lain'); return; }
+  if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
+
+  const call = blankCall({
+    callId: newCallId(), peer: chat.peer, kind,
+    incoming: false, state: 'calling', mic: true, cam: kind === 'video',
+  });
+  S.call = call;
+  openCallUI(call);
+  setCallState('Menghubungkan...');
+
+  S.socket.emit('call:invite', { to: chat.peer.id, callId: call.callId, kind }, (res) => {
+    if (S.call !== call) return;
+    if (!res?.ok) {
+      toast(res?.error || 'Tidak dapat menghubungi pengguna');
+      closeCall();
+      return;
+    }
+    call.state = 'ringing';
+    setCallState('Berdering...');
+    armRingTimeout(call);
+    // aktifkan mic/kamera lebih awal supaya pratinjau tampil saat berdering
+    ensurePeer().catch(() => {});
+  });
+}
+
+function armRingTimeout(call) {
+  clearTimeout(call.ringTimer);
+  call.ringTimer = setTimeout(() => {
+    if (S.call !== call) return;
+    S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId, reason: 'timeout' });
+    toast('Panggilan tidak dijawab');
+    closeCall();
+  }, RING_TIMEOUT_MS);
+}
+
+function armConnectTimeout(call) {
+  clearTimeout(call.connectTimer);
+  call.connectTimer = setTimeout(() => {
+    if (S.call !== call || call.startedAt) return;
+    setCallState('Koneksi gagal');
+    S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+    toast('Koneksi panggilan gagal');
+    closeCall();
+  }, CONNECT_TIMEOUT_MS);
+}
+
+function onCallIncoming({ callId, kind, from }) {
+  if (!callId || !from || !from.id) return;
+  if (S.call) { // sudah sibuk -> tolak otomatis
+    S.socket?.emit('call:reject', { to: from.id, callId });
+    return;
+  }
+  const cleanKind = kind === 'video' ? 'video' : 'audio';
+  S.call = blankCall({
+    callId, peer: from, kind: cleanKind,
+    incoming: true, state: 'incoming', mic: true, cam: cleanKind === 'video',
+  });
+  $('inCallerName').innerHTML = esc(from.name) + badge(from.verified);
+  $('inCallKind').textContent = cleanKind === 'video' ? 'Panggilan video masuk...' : 'Panggilan suara masuk...';
+  setAvatar($('inCallerAvatar'), from);
+  $('incomingCall').classList.remove('hidden');
+  if (NOTIF.sound) beep('notif');
+}
+
+$('btnRejectCall').addEventListener('click', () => {
+  const call = S.call;
+  if (!call) return;
+  S.socket?.emit('call:reject', { to: call.peer.id, callId: call.callId });
+  closeCall();
+});
+$('btnAcceptCall').addEventListener('click', async () => {
+  const call = S.call;
+  if (!call || !call.incoming) return;
+  if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
+
+  $('incomingCall').classList.add('hidden');
+  call.incoming = false;
+  call.state = 'connecting';
+  openCallUI(call);
+  setCallState('Menghubungkan...');
+  S.socket.emit('call:accept', { callId: call.callId });
+
+  try {
+    await ensurePeer();
+    const offer = await call.pc.createOffer();
+    await call.pc.setLocalDescription(offer);
+    S.socket.emit('call:signal', {
+      to: call.peer.id, callId: call.callId,
+      signal: { type: 'offer', offer: call.pc.localDescription },
+    });
+    setCallState('Menunggu koneksi...');
+    armConnectTimeout(call);
+  } catch (err) {
+    console.warn(err);
+    if (S.call === call) { // abortCall sudah menangani kasus izin media ditolak
+      toast('Gagal memulai panggilan');
+      S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+      closeCall();
+    }
+    return;
+  }
+  drainSignals();
+});
+
+$('btnHangup').addEventListener('click', () => {
+  const call = S.call;
+  if (!call) return;
+  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+  closeCall();
+});
+
+function onCallSignal({ callId, signal }) {
+  if (!S.call || S.call.callId !== callId) return;
+  if (!signal || typeof signal !== 'object') return;
+  S.call.pendingSignals.push(signal);
+  drainSignals();
+}
+
+/* Diproses satu per satu (rantai promise) agar offer/answer/ICE tidak
+   saling menabrak ketika getUserMedia masih berjalan. */
+let drainChain = Promise.resolve();
+
+function drainSignals() {
+  drainChain = drainChain.then(runDrain).catch((err) => console.warn('signal drain', err));
+}
+
+async function runDrain() {
+  const call = S.call;
+  if (!call || !call.pendingSignals.length) return;
+  // sinyal untuk panggilan masuk ditampung sampai ditekan "Jawab"
+  if (call.incoming && !$('incomingCall').classList.contains('hidden')) return;
+  await ensurePeer();
+  while (S.call === call && call.pendingSignals.length) {
+    await handleSignal(call.pendingSignals.shift());
+  }
+}
+
+function ensurePeer() {
+  const call = S.call;
+  if (!call) return Promise.reject(new Error('Panggilan sudah berakhir'));
+  if (!call.peerReady) call.peerReady = createPeer(call);
+  return call.peerReady;
+}
+
+async function createPeer(call) {
+  const pc = new RTCPeerConnection(ICE);
+  call.pc = pc;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const err = new Error('Akses kamera/mikrofon butuh HTTPS atau localhost');
+    abortCall(call, err.message);
+    throw err;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: call.kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+    });
+  } catch (err) {
+    abortCall(call, 'Akses kamera/mikrofon ditolak: ' + (err.message || 'izin ditolak'));
+    throw err;
+  }
+
+  if (S.call !== call) { // panggilan sudah ditutup selama meminta izin
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error('Panggilan sudah berakhir');
+  }
+
+  call.localStream = stream;
+  stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+  $('localVideo').srcObject = stream;
+  $('localVideo').style.display = call.kind === 'video' ? 'block' : 'none';
+  $('btnToggleMic').disabled = false;
+  $('btnToggleCam').disabled = call.kind !== 'video';
+
+  pc.ontrack = (e) => {
+    if (S.call !== call || !e.streams || !e.streams[0]) return;
+    if (!$('remoteVideo').srcObject) $('remoteVideo').srcObject = e.streams[0];
+    $('remoteVideo').style.display = 'block';
+    // panggilan suara: avatar tetap tampil; video: avatar hilang saat video tiba
+    if (e.track && e.track.kind === 'video') $('callAvatarFallback').style.display = 'none';
+    setCallState('Tersambung');
+    if (!call.startedAt) startCallTimer();
+  };
+
+  pc.onicecandidate = (e) => {
+    if (e.candidate && S.call === call) {
+      S.socket?.emit('call:signal', {
+        to: call.peer.id, callId: call.callId,
+        signal: { type: 'candidate', candidate: e.candidate },
+      });
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (S.call !== call) return;
+    const st = pc.connectionState;
+    if (st === 'connected') {
+      clearTimeout(call.dropTimer);
+      setCallState('Tersambung');
+      if (!call.startedAt) startCallTimer();
+    } else if (st === 'failed') {
+      setCallState('Koneksi gagal');
+      finishCall(call, 'Koneksi panggilan gagal');
+    } else if (st === 'disconnected') {
+      setCallState('Koneksi terputus...');
+      clearTimeout(call.dropTimer);
+      call.dropTimer = setTimeout(() => {
+        if (S.call === call && pc.connectionState !== 'connected') finishCall(call, 'Panggilan terputus');
+      }, DROP_GRACE_MS);
+    }
+  };
+
+  return pc;
+}
+
+function abortCall(call, message) {
+  if (S.call !== call) return;
+  toast(message);
+  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+  closeCall();
+}
+
+function finishCall(call, message) {
+  if (S.call !== call) return;
+  toast(message);
+  S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId });
+  closeCall();
+}
+
+async function handleSignal(signal) {
+  const call = S.call;
+  if (!call || !call.pc) return;
+  try {
+    if (signal.type === 'offer') {
+      await call.pc.setRemoteDescription(new RTCSessionDescription(signal.offer));
+      await flushCandidates(call);
+      const answer = await call.pc.createAnswer();
+      await call.pc.setLocalDescription(answer);
+      S.socket?.emit('call:signal', {
+        to: call.peer.id, callId: call.callId,
+        signal: { type: 'answer', answer: call.pc.localDescription },
+      });
+      setCallState('Menunggu koneksi...');
+      armConnectTimeout(call);
+    } else if (signal.type === 'answer') {
+      await call.pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      await flushCandidates(call);
+      setCallState('Menunggu koneksi...');
+      armConnectTimeout(call);
+    } else if (signal.type === 'candidate') {
+      if (!call.pc.remoteDescription) {
+        (call.bufferedCandidates = call.bufferedCandidates || []).push(signal.candidate);
+      } else {
+        await call.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+      }
+    }
+  } catch (err) { console.warn('signal error', err); }
+}
+
+async function flushCandidates(call) {
+  const list = call.bufferedCandidates || [];
+  call.bufferedCandidates = [];
+  for (const c of list) {
+    try { await call.pc.addIceCandidate(new RTCIceCandidate(c)); } catch (err) { console.warn(err); }
+  }
+}
+
+function onCallEnded({ callId, reason }) {
+  if (!S.call || S.call.callId !== callId) return;
+  // diterima/ditolak di tab lain: cukup tutup layar dering, jangan ganggu panggilan aktif
+  if (reason === 'accepted' || reason === 'cancelled') {
+    if (S.call.incoming) closeCall();
+    return;
+  }
+  if (reason === 'rejected') toast('Panggilan ditolak');
+  else if (reason === 'timeout') toast('Panggilan tidak dijawab');
+  else toast('Panggilan diakhiri');
+  closeCall();
+}
+
+function openCallUI(call) {
+  $('callPeerName').innerHTML = esc(call.peer.name) + badge(call.peer.verified);
+  setAvatar($('callPeerAvatar'), call.peer);
+  $('remoteVideo').srcObject = null;
+  $('localVideo').srcObject = null;
+  $('remoteVideo').style.display = 'none';
+  $('localVideo').style.display = 'none';
+  $('callAvatarFallback').style.display = 'flex';
+  $('btnToggleCam').style.display = call.kind === 'video' ? 'inline-flex' : 'none';
+  $('btnToggleMic').classList.remove('off');
+  $('btnToggleCam').classList.remove('off');
+  $('btnToggleMic').disabled = true;
+  $('btnToggleCam').disabled = true;
+  $('callTimer').textContent = '00:00';
+  $('activeCall').classList.remove('hidden');
+}
+
+function setCallState(text) {
+  const el = $('callStateText');
+  if (el) el.textContent = text;
+}
+
+function startCallTimer() {
+  const call = S.call;
+  if (!call || call.startedAt) return;
+  call.startedAt = Date.now();
+  clearInterval(call.timer);
+  call.timer = setInterval(() => {
+    if (!S.call || S.call !== call) { clearInterval(call.timer); return; }
+    const s = Math.floor((Date.now() - call.startedAt) / 1000);
+    $('callTimer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+}
+
+function closeCall() {
+  const call = S.call;
+  if (!call) return;
+  clearInterval(call.timer);
+  clearTimeout(call.ringTimer);
+  clearTimeout(call.connectTimer);
+  clearTimeout(call.dropTimer);
+  if (call.localStream) call.localStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
+  if (call.pc) {
+    try {
+      call.pc.ontrack = null;
+      call.pc.onicecandidate = null;
+      call.pc.onconnectionstatechange = null;
+      call.pc.close();
+    } catch { /* noop */ }
+  }
+  $('activeCall').classList.add('hidden');
+  $('incomingCall').classList.add('hidden');
+  $('remoteVideo').srcObject = null;
+  $('localVideo').srcObject = null;
+  $('remoteVideo').style.display = 'none';
+  $('localVideo').style.display = 'none';
+  $('callAvatarFallback').style.display = 'flex';
+  S.call = null;
+}
+
+$('btnToggleMic').addEventListener('click', () => {
+  const call = S.call;
+  if (!call?.localStream) { toast('Mikrofon belum siap'); return; }
+  const track = call.localStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  call.mic = track.enabled;
+  $('btnToggleMic').classList.toggle('off', !track.enabled);
+});
+$('btnToggleCam').addEventListener('click', () => {
+  const call = S.call;
+  if (!call?.localStream) { toast('Kamera belum siap'); return; }
+  const track = call.localStream.getVideoTracks()[0];
+  if (!track) { toast('Kamera tidak tersedia'); return; }
+  track.enabled = !track.enabled;
+  call.cam = track.enabled;
+  $('btnToggleCam').classList.toggle('off', !track.enabled);
+});
 
 /* ================= misc ui ================= */
 $('btnBack').addEventListener('click', () => {

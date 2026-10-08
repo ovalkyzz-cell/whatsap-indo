@@ -226,29 +226,46 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const rm2 = await api(`/api/chats/${chatId}/messages`, { token: tokB });
   ok(rm2.data.messages.find((m) => m.id === msg1.id)?.deleted, 'message marked deleted for receiver');
 
-  console.log('\n[11] Fitur panggilan (suara & video) dihapus total');
+  console.log('\n[11] Fitur panggilan (suara & video WebRTC) aktif');
   const pathMod = require('path');
-  ok(!fs.existsSync(pathMod.join(__dirname, '..', 'server', 'calls.js')), 'server/calls.js sudah dihapus');
+  ok(fs.existsSync(pathMod.join(__dirname, '..', 'server', 'calls.js')), 'server/calls.js ada');
   const idxSrc = fs.readFileSync(pathMod.join(__dirname, '..', 'server', 'index.js'), 'utf8');
-  ok(!idxSrc.includes("require('./calls')") && !idxSrc.includes("'call:") && !idxSrc.includes('"call:'),
-    'server/index.js tidak lagi mendaftarkan handler call:*');
-  ok(!html.includes('btnCallVoice') && !html.includes('btnCallVideo')
-    && !html.includes('id="incomingCall"') && !html.includes('id="activeCall"'),
-    'tombol & modal panggilan hilang dari index.html');
-  ok(!jsText.includes('startCall') && !jsText.includes('RTCPeerConnection')
-    && !jsText.includes("socket.on('call:") && !jsText.includes('call:invite'),
-    'app.js tidak punya logika panggilan WebRTC');
+  ok(idxSrc.includes("require('./calls')"), 'server/index.js memuat modul calls');
+  ok(idxSrc.includes("socket.on('call:invite'") && idxSrc.includes("socket.on('call:accept'")
+    && idxSrc.includes("socket.on('call:signal'") && idxSrc.includes("socket.on('call:reject'")
+    && idxSrc.includes("socket.on('call:hangup'"),
+    'server/index.js mendaftarkan seluruh handler call:*');
+  ok(idxSrc.includes('cleanupCalls('), 'pembersihan panggilan dipanggil saat disconnect');
+  const dbSrc = fs.readFileSync(pathMod.join(__dirname, '..', 'server', 'db.js'), 'utf8');
+  ok(/CREATE TABLE IF NOT EXISTS calls/.test(dbSrc), 'skema database punya tabel calls');
+  ok(html.includes('id="btnCallVoice"') && html.includes('id="btnCallVideo"'),
+    'tombol panggilan suara & video ada di header chat');
+  ok(html.includes('id="incomingCall"') && html.includes('id="activeCall"')
+    && html.includes('id="btnHangup"'),
+    'modal panggilan masuk & aktif (dengan tombol akhiri) ada di index.html');
+  ok(html.includes('id="ic-hangup"'), 'ikon sprite #ic-hangup tersedia');
+  ok(jsText.includes('startCall') && jsText.includes('RTCPeerConnection')
+    && jsText.includes("socket.on('call:signal', onCallSignal)") && jsText.includes('call:invite')
+    && jsText.includes('id="ciVoice"'),
+    'app.js punya logika panggilan WebRTC + tombol info kontak');
   const cssText = await css.text();
-  ok(!cssText.includes('.call-modal') && !cssText.includes('.call-btn'),
-    'style.css tidak punya gaya panel panggilan');
+  ok(cssText.includes('.call-modal') && cssText.includes('.call-btn') && cssText.includes('.call-videos'),
+    'style.css punya gaya panel panggilan');
 
-  // runtime: event call:* diabaikan server (tidak ada ack, tidak ada event balik)
-  let ghostAck = false;
-  sockA2.emit('call:invite', { to: userB.id, callId: `call-${stamp}-ghost`, kind: 'audio' }, () => { ghostAck = true; });
-  const noIncoming = await expectNoEvent(sockB, 'call:incoming', 450);
+  // runtime: sinyal call:* berfungsi end-to-end
+  const callId = `call-${stamp}-rt`;
+  const bIncoming = waitEvent(sockB, 'call:incoming', 5000).catch(() => null);
+  let inviteAck = null;
+  sockA2.emit('call:invite', { to: userB.id, callId, kind: 'video' }, (res) => { inviteAck = res; });
+  const incoming = await bIncoming;
   await sleep(50);
-  ok(!ghostAck, 'server tidak menjawab call:invite (handler sudah dilepas)');
-  ok(!noIncoming.got, 'tidak ada event call:incoming dipancarkan server');
+  ok(inviteAck?.ok === true && incoming && incoming.callId === callId && incoming.kind === 'video',
+    'call:invite dijawab ack ok & call:incoming sampai ke penerima');
+  const bEnded = waitEvent(sockB, 'call:ended', 5000).catch(() => null);
+  sockA2.emit('call:hangup', { to: userB.id, callId, reason: 'ended' });
+  const ended = await bEnded;
+  await sleep(50);
+  ok(ended && ended.callId === callId && ended.reason === 'ended', 'call:hangup memicu call:ended di penerima');
 
   console.log('\n[12] Upload safety (mencegah XSS file buatan pengguna)');
   const fdHtml = new FormData();
@@ -1128,9 +1145,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let callBotAck = null;
   feedSock.emit('call:invite', { to: 'bot-ai', callId: `call-bot-${stamp}`, kind: 'audio' }, (r) => { callBotAck = r; });
   await new Promise((r) => setTimeout(r, 500));
-  ok(!callBotAck, 'server tidak menjawab panggilan ke bot (seluruh handler call dilepas)');
-  ok(!jsText.includes('botPeer') && !jsText.includes('startCall') && !jsText.includes('Bot tidak bisa dipanggil'),
-    'frontend tidak lagi punya logika panggilan bot');
+  ok(callBotAck && callBotAck.ok === false && /Bot tidak dapat dipanggil/.test(callBotAck.error || ''),
+    `server menolak panggilan ke bot (dapat: ${callBotAck ? callBotAck.error : 'tanpa balasan'})`);
+  ok(jsText.includes('Bot tidak bisa dipanggil') && jsText.includes('botPeer'),
+    'frontend menyembunyikan tombol & menjaga startCall untuk bot');
 
   console.log('\n[28] 15 bot baru: kodesnap, npm zip, katalog model & bot generik');
 
