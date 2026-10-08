@@ -2074,8 +2074,8 @@ function renderPlans(data) {
       void chatWithAdmin();
     });
   });
-  $('#planCs').addEventListener('click', () => void chatWithAdmin());
-  $('#planInvite').addEventListener('click', () => openInviteDrawer());
+  $('planCs').addEventListener('click', () => void chatWithAdmin());
+  $('planInvite').addEventListener('click', () => openInviteDrawer());
   animatePlanCards(body);
 }
 
@@ -2177,15 +2177,15 @@ function renderInvite(data) {
 
     <p class="inv-note">${data.referred ? 'Anda terdaftar lewat undangan teman — token selamat datang sudah ditambahkan.' : 'Makin banyak teman diundang, makin banyak token untuk kuota bot harianmu.'}</p>
   `;
-  $('#invCopyCode').addEventListener('click', async () => {
+  $('invCopyCode').addEventListener('click', async () => {
     const ok = await copyText(code);
     toast(ok ? 'Kode undangan disalin ✓' : 'Gagal menyalin — salin manual: ' + code);
-    if (ok) $('#invCopyCode').classList.add('done');
+    if (ok) $('invCopyCode').classList.add('done');
   });
-  $('#invCopyLink').addEventListener('click', async () => {
+  $('invCopyLink').addEventListener('click', async () => {
     toast((await copyText(link)) ? 'Link undangan disalin ✓' : 'Gagal menyalin link');
   });
-  $('#invShare').addEventListener('click', async () => {
+  $('invShare').addEventListener('click', async () => {
     if (navigator.share) {
       try {
         await navigator.share({ title: 'Gabung Whatsap Indo', text: `Daftar pakai kode undangan saya: ${code}`, url: link });
