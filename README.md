@@ -34,8 +34,9 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
 | Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat, aksi panggilan |
 | Notifikasi | Nada pesan + notifikasi browser saat tab tidak aktif + **Pusat Notifikasi** (lonceng dengan badge, riwayat notifikasi, tandai sudah dibaca) |
-| Profil | Nama, status, foto profil |
+| Profil | Nama, status, foto profil dengan **pemotong rasio bebas** — geser, cubit/scroll untuk zoom, tarik sudut untuk ubah bentuk, preset *Bebas / 1:1 / 3:4 / 4:3 / 16:9 / 9:16* (berlaku untuk foto profil, foto grup & foto bot) |
 | Responsif | Layout mobile (sidebar/chat bergantian) dan desktop ala WhatsApp Web |
+| Scroll | Momentum halus (`-webkit-overflow-scrolling: touch`), `overscroll-behavior: contain` di tiap kontainer daftar/pesan/drawer, tanpa pull-to-refresh saat dipakai sebagai APK, dan `:hover` dibatasi ke perangkat tetikus supaya baris tidak menempel miring di layar sentuh |
 
 ## Menjalankan
 
@@ -43,7 +44,8 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
-npm test           # test end-to-end (server harus berjalan)
+npm test           # test logika pemotong foto + test end-to-end (server harus berjalan)
+npm run test:crop  # geometri pemotong foto saja (tanpa server)
 npm run test:bots  # unit test balasan 69 bot (API dimock, tanpa jaringan)
 ```
 
@@ -66,13 +68,17 @@ Variabel lingkungan opsional:
 
 ### Instal sebagai aplikasi (desktop & Android)
 
-Aplikasi adalah **PWA** lengkap: `public/manifest.json`, ikon di `public/icons/`
+Aplikasi adalah **PWA** lengkap: `public/manifest.json` (`id`/`start_url`/`scope` = `/`,
+`display: standalone` + `display_override`, `launch_handler: navigate-existing` agar jendela
+yang sudah terbuka dipakai ulang, bukan dibuka dobel), ikon di `public/icons/`
 (192, 512, maskable, apple-touch), dan `public/sw.js` yang meng-cache shell aplikasi
 (aset statis saja — `/api`, `/uploads`, dan socket.io tidak pernah di-cache) supaya
-bisa dibuka saat offline.
+bisa dibuka saat offline. Satu basis kode yang sama dipakai untuk web, desktop & APK.
 
 - **Desktop (Windows/macOS/Linux):** buka di Chrome/Edge → menu ⋮ → *Install app* /
-  *Install Whatsap Indo*. Jendela mandiri tanpa address bar, ikon sendiri di taskbar/dock.
+  *Install Whatsap Indo*. Jendela mandiri tanpa address bar, ikon sendiri di taskbar/dock;
+  layout desktop (sidebar 432px pada layar ≥1440px) tetap dipakai, scroll daftar chat,
+  pesan & drawer berjalan dengan momentum yang sama seperti di ponsel.
 - **Android (APK):** situs lolos kriteria instalasi Chrome → buka
   [pwabuilder.com](https://www.pwabuilder.com) dengan URL produksi → *Package for stores*
   → unduh APK/AAB (Android Package) untuk dipasang atau diunggah ke Play Store.
@@ -98,6 +104,8 @@ public/
   css/style.css
   js/app.js    # state, API client, renderer (inkremental), socket, pusat notifikasi, WebRTC
 test/
+  crop.js        # 22 assert geometri pemotong foto: rasio bebas/terkunci, clamp zoom
+                 # & geser, koordinat ekspor, jangkar sudut, zoom ke titik (tanpa browser)
   e2e.js       # e2e: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot
@@ -424,9 +432,12 @@ Foto profil bot — **khusus admin**:
 - Endpoint API butuh `Authorization: Bearer <JWT>`; event socket hanya diteruskan ke
   pengguna terautentikasi yang merupakan peserta chat terkait.
 - Foto profil & gambar terlindungi di sisi klien (`public/js/app.js`): `contextmenu`,
-  `dragstart`, `copy` & `touchstart` lama diblokir, `PrintScreen` / `Ctrl+P` / `Ctrl+S` membuat
-  tampilan kosong, dan `@media print` menyembunyikan gambar — plus unggahan foto profil
-  selalu di-crop square (512px JPEG) supaya tampil rapi.
+  `dragstart` & `copy` diblokir, `PrintScreen` / `Ctrl+P` / `Ctrl+S` membuat
+  tampilan kosong, dan `@media print` menyembunyikan gambar — tanpa memakai
+  `preventDefault()` di `touchstart` supaya gesture scroll daftar chat & pesan tetap lancar
+  saat jari dimulai dari foto. Unggahan foto profil melewati **pemotong rasio bebas**
+  (JPEG kualitas 0.92, sisi terpanjang 512–1024px) sehingga pengatur sendiri
+  area yang dipakai, bukan center-crop otomatis.
 
 ## Lisensi
 

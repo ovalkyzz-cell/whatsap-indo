@@ -1,7 +1,7 @@
 /* Service Worker: notifikasi WhatsApp-style (online & offline) */
 'use strict';
 
-const CACHE = 'wa-static-v1';
+const CACHE = 'wa-static-v2';
 const PRECACHE = [
   '/',
   '/index.html',

@@ -214,11 +214,50 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const jsText = await js.text();
   const css = await fetch(BASE + '/css/style.css');
   ok(css.status === 200, 'style.css served');
+  const styleText = await css.text();
   const saveBgIds = (html.match(/id="btnSaveHomeBg"/g) || []).length;
   ok(saveBgIds === 1, 'id tombol simpan latar pengguna unik (tanpa duplikat)');
   ok(html.includes('id="btnSaveHomeBgAdm"'), 'tombol Simpan Background admin punya id sendiri');
   ok(jsText.includes("btnSaveHomeBgAdm") && jsText.includes("/api/admin/settings"),
     'handler simpan latar admin terikat & memanggil API admin');
+
+  // pemotong foto rasio bebas (menggantikan crop persegi paksa)
+  ok(html.includes('id="cropModal"') && html.includes('id="cropFrame"')
+    && html.includes('class="crop-ratio active" data-ratio="0"'),
+    'markup pemotong foto rasio bebas tersedia & default Bebas');
+  ok(jsText.includes('function openCropper') && jsText.includes('function cropExport')
+    && !jsText.includes('function squareImage'),
+    'app.js memakai pemotong rasio bebas, crop persegi paksa dihapus');
+  ok(jsText.includes("openCropper(file, { title: 'Atur foto profil' })"),
+    'ganti foto profil diarahkan ke pemotong');
+  ok(!/startsWith\('image\/\*'\)/.test(jsText)
+    && jsText.includes("file.type.startsWith('image/')"),
+    'pemeriksaan tipe gambar memakai prefix image/ (tanpa wildcard literal)');
+  ok(/function openCropper\(file, opts = \{\}\)[\s\S]{0,120}if \(CROP\.open\) \{ resolve\(null\); return; \}/.test(jsText),
+    'pemotong tidak bisa dibuka ganda saat masih terbuka');
+  ok(!/addEventListener\('touchstart'[\s\S]{0,140}imgProtected/.test(jsText),
+    'sentuhan pada foto profil tidak lagi memblokir gesture scroll');
+  ok(styleText.includes('-webkit-overflow-scrolling: touch') && styleText.includes('overscroll-behavior: contain'),
+    'kontainer scroll memakai momentum & overscroll terkandung');
+  ok(styleText.includes('@media (hover: hover) and (pointer: fine)'),
+    'efek hover dibatasi ke perangkat tetikus agar tidak menempel di sentuh');
+  ok(/\.group-form\s*\{[^}]*overflow-y:\s*auto/.test(styleText)
+    && /\.group-info-body\s*\{[^}]*overflow-y:\s*auto/.test(styleText)
+    && /\.status-body\s*\{[^}]*overflow-y:\s*auto/.test(styleText)
+    && /\.menu-list\s*\{[^}]*overflow-y:\s*auto/.test(styleText),
+  'seluruh isi drawer punya overflow-y sehingga konten panjang bisa digulir');
+
+  // siap dipasang sebagai APK (Android) maupun aplikasi desktop
+  const mf = await (await fetch(BASE + '/manifest.json')).json();
+  ok(mf.display === 'standalone' && Array.isArray(mf.display_override)
+    && mf.display_override.includes('standalone') && mf.start_url === '/' && mf.scope === '/',
+    'manifest siap dipasang sebagai APK / aplikasi desktop');
+  ok(Array.isArray(mf.icons) && mf.icons.some((i) => i.purpose === 'maskable')
+    && mf.icons.some((i) => i.sizes === '512x512'),
+    'manifest memuat ikon 512 & maskable untuk launcher');
+  const swText = await (await fetch(BASE + '/sw.js')).text();
+  ok(/const CACHE = 'wa-static-v\d+'/.test(swText) && swText.includes("'/js/app.js'"),
+    'service worker memakai versi cache terbaru');
 
   console.log('\n[10] Delete message');
   const del = await api(`/api/messages/${msg1.id}`, { method: 'DELETE', token: tokA });
@@ -248,8 +287,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     && jsText.includes("socket.on('call:signal', onCallSignal)") && jsText.includes('call:invite')
     && jsText.includes('id="ciVoice"'),
     'app.js punya logika panggilan WebRTC + tombol info kontak');
-  const cssText = await css.text();
-  ok(cssText.includes('.call-modal') && cssText.includes('.call-btn') && cssText.includes('.call-videos'),
+  ok(styleText.includes('.call-modal') && styleText.includes('.call-btn') && styleText.includes('.call-videos'),
     'style.css punya gaya panel panggilan');
 
   // runtime: sinyal call:* berfungsi end-to-end

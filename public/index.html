@@ -235,6 +235,11 @@
           fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
         <path d="M14.6 6.4l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
       </symbol>
+      <symbol id="ic-zoom" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.2" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M15.2 15.2L20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+        <path d="M8 10.5h5M10.5 8v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      </symbol>
       <symbol id="ic-bell" viewBox="0 0 24 24">
         <path d="M18 9.2a6 6 0 1 0-12 0c0 5.2-2 6.8-2 6.8h16s-2-1.6-2-6.8z" fill="none"
           stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
@@ -1037,6 +1042,43 @@
     <button class="icon-btn vo-close" id="btnCloseVo" title="Tutup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg></button>
     <img id="voImage" alt="Foto sekali lihat" />
     <p class="vo-note">Foto ini hanya bisa dilihat satu kali.</p>
+  </div>
+
+  <!-- ============ POTONG FOTO (RASIO BEBAS) ============ -->
+  <div class="crop-modal hidden" id="cropModal" role="dialog" aria-modal="true" aria-labelledby="cropTitle">
+    <div class="crop-box">
+      <header class="crop-head">
+        <strong id="cropTitle">Atur foto profil</strong>
+        <button class="icon-btn" id="btnCropClose" type="button" title="Tutup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg></button>
+      </header>
+      <div class="crop-stage" id="cropStage">
+        <img id="cropImg" alt="" draggable="false" />
+        <div class="crop-frame" id="cropFrame">
+          <i class="crop-h" data-h="tl"></i>
+          <i class="crop-h" data-h="tr"></i>
+          <i class="crop-h" data-h="bl"></i>
+          <i class="crop-h" data-h="br"></i>
+        </div>
+      </div>
+      <p class="crop-hint">Seret foto untuk menggeser, cubit/scroll untuk zoom, tarik sudut untuk mengubah rasio.</p>
+      <div class="crop-ratios" id="cropRatios">
+        <button type="button" class="crop-ratio active" data-ratio="0">Bebas</button>
+        <button type="button" class="crop-ratio" data-ratio="1">1:1</button>
+        <button type="button" class="crop-ratio" data-ratio="0.75">3:4</button>
+        <button type="button" class="crop-ratio" data-ratio="1.3333333">4:3</button>
+        <button type="button" class="crop-ratio" data-ratio="1.7777778">16:9</button>
+        <button type="button" class="crop-ratio" data-ratio="0.5625">9:16</button>
+      </div>
+      <div class="crop-zoom">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><use href="#ic-zoom" /></svg>
+        <input type="range" id="cropZoom" min="100" max="600" value="100" step="1" aria-label="Perbesar foto" />
+        <span class="crop-zoom-val" id="cropZoomVal">1x</span>
+      </div>
+      <div class="crop-actions">
+        <button type="button" class="btn-ghost" id="btnCropCancel">Batal</button>
+        <button type="button" class="btn-primary" id="btnCropOk"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-check" /></svg> Pakai Foto</button>
+      </div>
+    </div>
   </div>
 
   <div class="toast hidden" id="toast"></div>

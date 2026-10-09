@@ -2333,43 +2333,410 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// tekan-tahan lama di ponsel sering memicu menu simpan gambar
-document.addEventListener('touchstart', (e) => {
-  if (imgProtected(e.target)) e.preventDefault();
-}, { passive: false });
+/* Catatan: pelindung foto TIDAK memakai preventDefault() di touchstart.
+   Dulu tiap sentuhan pada .avatar diblokir sehingga gesture scroll di daftar
+   chat & pesan mati kalau jari mulai dari foto — scroll jadi tersendat.
+   Menu "simpan gambar" tekan-tahan sudah ditangani event contextmenu di atas
+   dan -webkit-touch-callout: none di CSS, jadi scroll tetap lancar. */
 
-/* ================= foto profil: rapikan & anti-rusak ================= */
-// foto dipotong persegi (center-crop 512px) supaya bulat & jelas tanpa terpotong wajah
-function squareImage(file, size = 512) {
+/* ================= pemotong foto: rasio bebas, zoom & geser =================
+   Foto tidak lagi dipaksa center-crop persegi. Pengguna menggeser foto,
+   zoom (geser jari / scroll / slider), dan memilih rasio potongan sendiri
+   (Bebas, 1:1, 3:4, 4:3, 16:9, 9:16) sebelum foto dikirim. */
+const CROP = {
+  open: false, ratio: 0, natural: [1, 1], base: 1, scale: 1, minScale: 1, maxScale: 1,
+  ox: 0, oy: 0, rect: { x: 0, y: 0, w: 0, h: 0 }, stage: { w: 0, h: 0 },
+  url: null, pointers: new Map(), pinch: null, mode: null, handle: null, start: null,
+  onDone: null,
+};
+const CROP_MIN = 64;
+const CROP_MAX_OUT = 1024;
+
+function cropEl(id) { return document.getElementById(id); }
+
+function cropSize() {
+  const st = cropEl('cropStage');
+  CROP.stage.w = st.clientWidth;
+  CROP.stage.h = st.clientHeight;
+}
+
+function cropCenterRect() {
+  const { w: SW, h: SH } = CROP.stage;
+  const ratio = CROP.ratio;
+  const pad = 0.88;
+  let w = SW * pad;
+  let h = SH * pad;
+  if (ratio) {
+    if (w / h > ratio) w = h * ratio;
+    else h = w / ratio;
+  } else {
+    const side = Math.min(w, h);
+    w = h = side;
+  }
+  CROP.rect = { x: (SW - w) / 2, y: (SH - h) / 2, w, h };
+}
+
+function cropScales() {
+  const nw = CROP.natural[0];
+  const nh = CROP.natural[1];
+  const r = CROP.rect;
+  CROP.minScale = Math.max(r.w / nw, r.h / nh);
+  CROP.maxScale = Math.max(CROP.minScale, CROP.base) * 6;
+  CROP.scale = Math.min(Math.max(CROP.scale, CROP.minScale), CROP.maxScale);
+}
+
+function cropClamp() {
+  const { w: SW, h: SH } = CROP.stage;
+  const r = CROP.rect;
+  const imgW = CROP.natural[0] * CROP.scale;
+  const imgH = CROP.natural[1] * CROP.scale;
+  const minX = r.x + r.w - SW / 2 - imgW / 2;
+  const maxX = r.x - SW / 2 + imgW / 2;
+  const minY = r.y + r.h - SH / 2 - imgH / 2;
+  const maxY = r.y - SH / 2 + imgH / 2;
+  CROP.ox = minX > maxX ? (minX + maxX) / 2 : Math.min(Math.max(CROP.ox, minX), maxX);
+  CROP.oy = minY > maxY ? (minY + maxY) / 2 : Math.min(Math.max(CROP.oy, minY), maxY);
+}
+
+function cropRender() {
+  const img = cropEl('cropImg');
+  const frame = cropEl('cropFrame');
+  const r = CROP.rect;
+  img.style.width = `${CROP.natural[0]}px`;
+  img.style.height = `${CROP.natural[1]}px`;
+  img.style.transform = `translate(-50%, -50%) translate(${CROP.ox}px, ${CROP.oy}px) scale(${CROP.scale})`;
+  frame.style.left = `${r.x}px`;
+  frame.style.top = `${r.y}px`;
+  frame.style.width = `${r.w}px`;
+  frame.style.height = `${r.h}px`;
+  const zoom = cropEl('cropZoom');
+  const val = Math.round((CROP.scale / CROP.minScale) * 100);
+  zoom.value = String(Math.min(600, Math.max(100, val)));
+  updateRangeFill(zoom);
+  cropEl('cropZoomVal').textContent = `${(Number(zoom.value) / 100).toFixed(1)}x`;
+}
+
+function cropSync() {
+  cropScales();
+  cropClamp();
+  cropRender();
+}
+
+/* zoom ke titik tertentu supaya bagian yang disentuh tetap di tempat */
+function cropZoomAt(mult, px, py) {
+  const { w: SW, h: SH } = CROP.stage;
+  const s0 = CROP.scale;
+  const s1 = Math.min(Math.max(s0 * mult, CROP.minScale), CROP.maxScale);
+  if (s1 === s0) return;
+  const cx0 = SW / 2 + CROP.ox;
+  const cy0 = SH / 2 + CROP.oy;
+  const ux = (px - cx0) / s0;
+  const uy = (py - cy0) / s0;
+  CROP.scale = s1;
+  CROP.ox = px - ux * s1 - SW / 2;
+  CROP.oy = py - uy * s1 - SH / 2;
+  cropClamp();
+  cropRender();
+}
+
+function cropLocalPoint(e) {
+  const box = cropEl('cropStage').getBoundingClientRect();
+  return { x: e.clientX - box.left, y: e.clientY - box.top };
+}
+
+function cropSetRatio(ratio) {
+  CROP.ratio = ratio;
+  cropEl('cropRatios').querySelectorAll('.crop-ratio').forEach((b) => {
+    b.classList.toggle('active', Number(b.dataset.ratio) === ratio);
+  });
+  if (ratio) cropCenterRect();
+  cropSync();
+}
+
+function cropResizeFrom(handle, p) {
+  const { w: SW, h: SH } = CROP.stage;
+  const r = CROP.rect;
+  const ratio = CROP.ratio;
+  const left = handle[0] === 'l';
+  const top = handle[0] === 't';
+  const ax = left ? r.x + r.w : r.x;
+  const ay = top ? r.y + r.h : r.y;
+  let dx = Math.abs(p.x - ax);
+  let dy = Math.abs(p.y - ay);
+  if (ratio) {
+    let w = Math.max(dx, dy * ratio);
+    const limW = left ? ax : SW - ax;
+    const limH = top ? ay : SH - ay;
+    w = Math.min(w, limW, limH * ratio);
+    w = Math.max(w, Math.max(CROP_MIN, CROP_MIN * ratio));
+    CROP.rect = {
+      x: left ? ax - w : ax,
+      y: top ? ay - w / ratio : ay,
+      w,
+      h: w / ratio,
+    };
+  } else {
+    let w = Math.min(dx, left ? ax : SW - ax);
+    let h = Math.min(dy, top ? ay : SH - ay);
+    w = Math.max(w, CROP_MIN);
+    h = Math.max(h, CROP_MIN);
+    CROP.rect = {
+      x: left ? ax - w : ax,
+      y: top ? ay - h : ay,
+      w,
+      h,
+    };
+  }
+  // jaga bingkai selalu di dalam panggung
+  CROP.rect.x = Math.min(Math.max(CROP.rect.x, 0), Math.max(0, SW - CROP.rect.w));
+  CROP.rect.y = Math.min(Math.max(CROP.rect.y, 0), Math.max(0, SH - CROP.rect.h));
+  CROP.rect.w = Math.min(CROP.rect.w, SW);
+  CROP.rect.h = Math.min(CROP.rect.h, SH);
+  cropSync();
+}
+
+function cropPointerDown(e) {
+  if (!CROP.open) return;
+  const st = cropEl('cropStage');
+  st.setPointerCapture(e.pointerId);
+  CROP.pointers.set(e.pointerId, cropLocalPoint(e));
+  if (CROP.pointers.size === 2) {
+    const [a, b] = [...CROP.pointers.values()];
+    CROP.pinch = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y),
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      scale: CROP.scale,
+    };
+    CROP.mode = 'pinch';
+    return;
+  }
+  const h = e.target && e.target.dataset ? e.target.dataset.h : null;
+  CROP.start = cropLocalPoint(e);
+  if (h) {
+    CROP.mode = 'handle';
+    CROP.handle = h;
+  } else {
+    CROP.mode = 'pan';
+    CROP.startOx = CROP.ox;
+    CROP.startOy = CROP.oy;
+  }
+}
+
+function cropPointerMove(e) {
+  if (!CROP.open || !CROP.pointers.has(e.pointerId)) return;
+  CROP.pointers.set(e.pointerId, cropLocalPoint(e));
+  const p = CROP.pointers.get(e.pointerId);
+  if (CROP.mode === 'pinch' && CROP.pointers.size >= 2) {
+    const [a, b] = [...CROP.pointers.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const { w: SW, h: SH } = CROP.stage;
+    const s0 = CROP.pinch.scale;
+    const ux = (CROP.pinch.mid.x - (SW / 2 + CROP.ox)) / s0;
+    const uy = (CROP.pinch.mid.y - (SH / 2 + CROP.oy)) / s0;
+    const s1 = Math.min(Math.max(s0 * (dist / (CROP.pinch.dist || 1)), CROP.minScale), CROP.maxScale);
+    CROP.scale = s1;
+    CROP.ox = mid.x - ux * s1 - SW / 2;
+    CROP.oy = mid.y - uy * s1 - SH / 2;
+    cropClamp();
+    cropRender();
+    return;
+  }
+  if (CROP.mode === 'pan') {
+    CROP.ox = CROP.startOx + (p.x - CROP.start.x);
+    CROP.oy = CROP.startOy + (p.y - CROP.start.y);
+    cropClamp();
+    cropRender();
+  } else if (CROP.mode === 'handle') {
+    cropResizeFrom(CROP.handle, p);
+  }
+}
+
+function cropPointerUp(e) {
+  CROP.pointers.delete(e.pointerId);
+  if (CROP.pointers.size < 2) {
+    CROP.pinch = null;
+    if (CROP.pointers.size === 0) {
+      CROP.mode = null;
+      CROP.handle = null;
+    } else {
+      CROP.mode = 'pan';
+      CROP.start = [...CROP.pointers.values()][0];
+      CROP.startOx = CROP.ox;
+      CROP.startOy = CROP.oy;
+    }
+  }
+}
+
+function cropWheel(e) {
+  if (!CROP.open) return;
+  e.preventDefault();
+  const p = cropLocalPoint(e);
+  cropZoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, p.x, p.y);
+}
+
+/* hasilkan berkas JPEG dari area yang dipilih */
+function cropExport() {
   return new Promise((resolve, reject) => {
+    const img = cropEl('cropImg');
+    const { w: SW, h: SH } = CROP.stage;
+    const r = CROP.rect;
+    const s = CROP.scale;
+    const imgLeft = SW / 2 + CROP.ox - (CROP.natural[0] * s) / 2;
+    const imgTop = SH / 2 + CROP.oy - (CROP.natural[1] * s) / 2;
+    const sx = Math.max(0, (r.x - imgLeft) / s);
+    const sy = Math.max(0, (r.y - imgTop) / s);
+    const sw = Math.min(CROP.natural[0] - sx, r.w / s);
+    const sh = Math.min(CROP.natural[1] - sy, r.h / s);
+    if (!(sw > 0 && sh > 0)) { reject(new Error('Area potongan tidak valid')); return; }
+    const longest = Math.max(sw, sh);
+    // hasil minimal 512 sisi terpanjang (tajam saat tampil bulat), maksimal 1024
+    const out = Math.min(CROP_MAX_OUT, Math.max(512, Math.round(longest)));
+    const q = out / longest;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(sw * q));
+    c.height = Math.max(1, Math.round(sh * q));
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    try {
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    } catch (err) {
+      reject(new Error('Foto tidak bisa diproses'));
+      return;
+    }
+    c.toBlob((blob) => {
+      if (!blob) { reject(new Error('Gagal memproses foto')); return; }
+      resolve(new File([blob], 'avatar.jpg', { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.92);
+  });
+}
+
+function cropClose(result) {
+  if (!CROP.open) return;
+  CROP.open = false;
+  if (CROP.url) { URL.revokeObjectURL(CROP.url); CROP.url = null; }
+  document.body.classList.remove('crop-open');
+  cropEl('cropModal').classList.add('hidden');
+  const cb = CROP.onDone;
+  CROP.onDone = null;
+  CROP.pointers.clear();
+  CROP.pinch = null;
+  CROP.mode = null;
+  if (cb) cb(result);
+}
+
+/* buka pemotong; resolve File saat ditekan "Pakai Foto", null saat batal */
+function openCropper(file, opts = {}) {
+  return new Promise((resolve) => {
+    if (CROP.open) { resolve(null); return; }
+    if (!file || !file.type.startsWith('image/')) {
+      toast('File harus berupa gambar (JPG/PNG/WEBP)');
+      resolve(null);
+      return;
+    }
     const url = URL.createObjectURL(file);
-    const img = new Image();
+    const img = cropEl('cropImg');
+    const fail = (msg) => {
+      URL.revokeObjectURL(url);
+      if (CROP.url === url) CROP.url = null;
+      img.removeAttribute('src');
+      // pastikan tidak ada modal setengah terbuka bila gagal di tengah jalan
+      if (CROP.open) {
+        CROP.open = false;
+        CROP.onDone = null;
+        document.body.classList.remove('crop-open');
+        cropEl('cropModal').classList.add('hidden');
+      }
+      toast(msg);
+      resolve(null);
+    };
     img.onload = () => {
       try {
-        const c = document.createElement('canvas');
-        c.width = c.height = size;
-        const ctx = c.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        const side = Math.min(img.naturalWidth, img.naturalHeight);
-        ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
-        c.toBlob((blob) => {
-          URL.revokeObjectURL(url);
-          if (!blob) return reject(new Error('Gagal memproses foto'));
-          resolve(new File([blob], 'avatar.jpg', { type: 'image/jpeg' }));
-        }, 'image/jpeg', 0.92);
+        CROP.url = url;
+        CROP.natural = [img.naturalWidth || 1, img.naturalHeight || 1];
+        CROP.open = true;
+        CROP.ratio = 0;
+        CROP.onDone = resolve;
+        CROP.pointers.clear();
+        CROP.pinch = null;
+        CROP.mode = null;
+        cropEl('cropTitle').textContent = opts.title || 'Atur foto profil';
+        cropEl('cropModal').classList.remove('hidden');
+        document.body.classList.add('crop-open');
+        cropSize();
+        cropCenterRect();
+        CROP.base = Math.min(
+          CROP.stage.w / CROP.natural[0],
+          CROP.stage.h / CROP.natural[1],
+        );
+        CROP.scale = CROP.base;
+        CROP.ox = 0;
+        CROP.oy = 0;
+        cropEl('cropRatios').querySelectorAll('.crop-ratio').forEach((b) => {
+          b.classList.toggle('active', Number(b.dataset.ratio) === 0);
+        });
+        cropSync();
       } catch (err) {
-        URL.revokeObjectURL(url);
-        reject(new Error('Foto tidak bisa diproses'));
+        fail('Foto tidak bisa diproses');
       }
     };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('File gambar rusak atau format tidak didukung'));
-    };
+    img.onerror = () => fail('File gambar rusak atau format tidak didukung');
     img.src = url;
   });
 }
+
+(function bindCropper() {
+  const st = cropEl('cropStage');
+  if (!st) return;
+  st.addEventListener('pointerdown', cropPointerDown);
+  st.addEventListener('pointermove', cropPointerMove);
+  st.addEventListener('pointerup', cropPointerUp);
+  st.addEventListener('pointercancel', cropPointerUp);
+  st.addEventListener('wheel', cropWheel, { passive: false });
+  cropEl('cropRatios').addEventListener('click', (e) => {
+    const b = e.target.closest('.crop-ratio');
+    if (b) cropSetRatio(Number(b.dataset.ratio));
+  });
+  cropEl('cropZoom').addEventListener('input', () => {
+    const m = Number(cropEl('cropZoom').value) / 100;
+    CROP.scale = Math.min(Math.max(CROP.minScale * m, CROP.minScale), CROP.maxScale);
+    cropClamp();
+    cropRender();
+  });
+  cropEl('btnCropOk').addEventListener('click', async () => {
+    try {
+      const out = await cropExport();
+      cropClose(out);
+    } catch (err) {
+      toast(err.message || 'Gagal memproses foto');
+    }
+  });
+  cropEl('btnCropCancel').addEventListener('click', () => cropClose(null));
+  cropEl('btnCropClose').addEventListener('click', () => cropClose(null));
+  // klik area gelap di luar kotak = batal
+  cropEl('cropModal').addEventListener('click', (e) => {
+    if (e.target === cropEl('cropModal')) cropClose(null);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && CROP.open) cropClose(null);
+  });
+  window.addEventListener('resize', () => {
+    if (!CROP.open) return;
+    const prev = { ...CROP.stage };
+    cropSize();
+    if (prev.w && prev.h) {
+      CROP.rect.x *= CROP.stage.w / prev.w;
+      CROP.rect.y *= CROP.stage.h / prev.h;
+      CROP.rect.w *= CROP.stage.w / prev.w;
+      CROP.rect.h *= CROP.stage.h / prev.h;
+    }
+    cropSync();
+  });
+})();
+
 
 
 /* ================= latar belakang chat ================= */
@@ -2781,7 +3148,9 @@ function bindBotProfileEdit(user, peer) {
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) { toast('Foto profil maksimal 5MB'); return; }
     try {
-      const meta = await uploadFile(file, () => {});
+      const upload = await openCropper(file, { title: 'Atur foto profil bot' });
+      if (!upload) return;
+      const meta = await uploadFile(upload, () => {});
       const updated = await patchBot(user, { avatar: meta.url });
       setAvatar($('contactAvatar'), { ...peer, ...updated });
       toast('Foto profil bot diperbarui');
@@ -2943,9 +3312,9 @@ $('avatarInput').addEventListener('change', async () => {
   if (!file.type.startsWith('image/')) { toast('File harus berupa gambar (JPG/PNG/WEBP)'); return; }
   if (file.size > 5 * 1024 * 1024) { toast('Avatar maksimal 5MB'); return; }
   try {
-    // potong persegi dulu supaya bulat, jelas, dan tidak terpotong saat ditampilkan
-    let upload = file;
-    try { upload = await squareImage(file); } catch (proc) { toast(proc.message); return; }
+    // pemotong rasio bebas: pengatur sendiri area, zoom & rasio potongan
+    const upload = await openCropper(file, { title: 'Atur foto profil' });
+    if (!upload) return;
     const meta = await uploadFile(upload, () => {});
     const data = await api('/api/me', { method: 'PATCH', body: { avatar: meta.url } });
     S.me = data.user;
@@ -4322,8 +4691,14 @@ async function openGroupInfo() {
           if (!file.type.startsWith('image/')) { toast('Pilih file gambar (JPG/PNG/WEBP)'); return; }
           if (file.size > 50 * 1024 * 1024) { toast('Ukuran maksimal 50MB'); return; }
           try {
+            // foto besar dilewati pemotong supaya aman di memori WebView
+            let upload = file;
+            if (file.size <= 25 * 1024 * 1024) {
+              upload = await openCropper(file, { title: 'Atur foto grup' });
+              if (!upload) return;
+            }
             toast('Mengunggah foto grup...');
-            const meta = await uploadFile(file);
+            const meta = await uploadFile(upload);
             await api(`/api/chats/${chat.id}`, { method: 'PATCH', body: { avatar: meta.url } });
             await loadChats();
             const updated = S.chats.find((c) => c.id === chat.id);

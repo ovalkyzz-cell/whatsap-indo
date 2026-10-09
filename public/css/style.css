@@ -432,7 +432,7 @@ input, textarea { font: inherit; }
   margin-top: 9px; background: rgba(255, 255, 255, .16); color: #fff;
   border-color: rgba(255, 255, 255, .42);
 }
-.menu-list { display: flex; flex-direction: column; gap: 2px; padding: 10px; }
+.menu-list { display: flex; flex-direction: column; gap: 2px; padding: 10px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .menu-item {
   display: flex; align-items: center; gap: 13px; padding: 12px 13px; border-radius: 13px;
   text-align: left; transition: background .16s, transform .16s;
@@ -619,14 +619,22 @@ input, textarea { font: inherit; }
 
 /* ---------- micro-interaksi ---------- */
 .chat-item { transition: background .14s, transform .16s; }
-.chat-item:hover { transform: translateX(3px); }
-.chat-item:hover .avatar { transform: scale(1.05); }
 .avatar { transition: transform .2s cubic-bezier(.2, .9, .3, 1.4); }
 .icon-btn { transition: background .15s, transform .15s, color .15s; }
-.icon-btn:hover { transform: scale(1.08); }
 .icon-btn:active { transform: scale(.94); }
+/* Efek :hover hanya untuk tetikus. Di layar sentuh :hover menempel sampai
+   tap berikutnya, sehingga baris chat terlihat "macet" miring saat scroll. */
+@media (hover: hover) and (pointer: fine) {
+  .chat-item:hover { transform: translateX(3px); }
+  .chat-item:hover .avatar { transform: scale(1.05); }
+  .icon-btn:hover { transform: scale(1.08); }
+}
 .menu-btn.open { background: rgba(0, 168, 132, .16); color: var(--wa-accent-text); }
 .drawer-header .icon-btn:hover, .contact-hero .avatar:hover { transform: none; }
+@media (hover: none) {
+  .btn-primary:hover, .btn-ghost:hover, .scroll-down:hover,
+  .bc-card:hover, .plan-card:hover { transform: none; }
+}
 
 /* ---------- responsive ---------- */
 @media (max-width: 760px) {
@@ -868,7 +876,7 @@ html[data-theme="dark"] .wp-option.active { box-shadow: none; }
 }
 
 /* pembuat status */
-.status-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.status-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 .status-preview {
   min-height: 170px;
   border-radius: 14px;
@@ -1015,7 +1023,7 @@ html[data-theme="dark"] .wp-option.active { box-shadow: none; }
 .story-del { flex: none; }
 
 /* ================= grup ================= */
-.group-form { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.group-form { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 .group-name-label { display: flex; flex-direction: column; gap: 6px; }
 .group-form input[type='text'], #groupSearch, #giSearch {
   padding: 11px 12px;
@@ -1045,7 +1053,7 @@ html[data-theme="dark"] .wp-option.active { box-shadow: none; }
 .group-form-actions { position: sticky; bottom: 0; padding-top: 6px; }
 .group-form-actions .btn-primary { width: 100%; }
 
-.group-info-body { padding: 16px 14px; display: flex; flex-direction: column; gap: 14px; }
+.group-info-body { padding: 16px 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
 .group-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .group-hero h3 { margin: 6px 0 0; font-size: 19px; color: var(--wa-text); }
 .group-sub { margin: 0; color: var(--wa-text-2); font-size: 13px; }
@@ -1893,6 +1901,114 @@ html[data-theme="dark"] .mi-ico-gift { background: rgba(255, 64, 129, .16); colo
 .avatar-upload { position: relative; }
 @media print {
   .avatar, .protect-img, .avatar-upload, .story-viewer, .vo-viewer { display: none !important; }
+}
+
+/* ================= scroll: momentum halus & tanpa loncat =================
+   -webkit-overflow-scrolling: touch -> inersia mulus di WebView Android/APK
+   overscroll-behavior: contain      -> sampai bawah daftar tidak menarik
+                                        kontainer lain (anti "nyangkut")
+   overscroll-behavior-y: none di html/body -> pull-to-refresh tidak
+                                        mengganggu saat dipakai sebagai APK */
+.chat-list, .messages, .notif-center, .bc-body, .profile-body, .contact-body,
+.privacy-body, .admin-body, .wallpaper-body, .plan-body, .invite-body, .about-body,
+.adm-users, .adm-logs, .member-list, .group-form, .group-info-body, .status-body,
+.menu-list, .cb-scroll, .crop-box {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+html, body { overscroll-behavior-y: none; }
+button, .icon-btn, .chip, .menu-item, .chat-item { touch-action: manipulation; }
+
+/* ================= pemotong foto (rasio bebas) ================= */
+body.crop-open { overflow: hidden; }
+.crop-modal {
+  position: fixed; inset: 0; z-index: 130; background: rgba(7, 20, 18, .95);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.crop-box {
+  width: min(470px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto;
+  background: var(--wa-panel); border-radius: 18px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+  display: flex; flex-direction: column; animation: msgIn .2s ease;
+}
+.crop-head {
+  display: flex; align-items: center; gap: 10px; padding: 13px 14px;
+  background: var(--wa-header); border-radius: 18px 18px 0 0;
+}
+.crop-head strong { flex: 1; font-size: 15.5px; font-weight: 600; }
+.crop-stage {
+  position: relative; overflow: hidden; touch-action: none; user-select: none;
+  -webkit-user-select: none; background: #0b141a; cursor: grab;
+  height: min(46vh, 330px); min-height: 210px;
+}
+.crop-stage:active { cursor: grabbing; }
+.crop-stage img {
+  position: absolute; left: 50%; top: 50%; max-width: none; pointer-events: none;
+  transform-origin: center center; will-change: transform;
+  -webkit-user-drag: none; user-select: none; -webkit-user-select: none;
+}
+.crop-frame {
+  position: absolute; box-sizing: border-box; border: 1px solid rgba(255, 255, 255, .92);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .58); cursor: move; touch-action: none;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, .28) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, .28) 1px, transparent 1px);
+  background-size: 33.333% 33.333%;
+}
+.crop-h { position: absolute; width: 30px; height: 30px; touch-action: none; }
+.crop-h::after {
+  content: ""; position: absolute; width: 15px; height: 15px; border: 3px solid #fff;
+  border-radius: 3px; box-shadow: 0 1px 5px rgba(0, 0, 0, .55);
+}
+.crop-h[data-h="tl"] { left: -7px; top: -7px; cursor: nwse-resize; }
+.crop-h[data-h="tl"]::after { left: 7px; top: 7px; border-right: 0; border-bottom: 0; }
+.crop-h[data-h="tr"] { right: -7px; top: -7px; cursor: nesw-resize; }
+.crop-h[data-h="tr"]::after { right: 7px; top: 7px; border-left: 0; border-bottom: 0; }
+.crop-h[data-h="bl"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.crop-h[data-h="bl"]::after { left: 7px; bottom: 7px; border-right: 0; border-top: 0; }
+.crop-h[data-h="br"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.crop-h[data-h="br"]::after { right: 7px; bottom: 7px; border-left: 0; border-top: 0; }
+.crop-hint {
+  font-size: 11.5px; color: var(--wa-text-2); text-align: center;
+  padding: 9px 16px 0; line-height: 1.5;
+}
+.crop-ratios { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px 2px; }
+.crop-ratio {
+  border: 1px solid var(--wa-border); background: var(--wa-panel); color: var(--wa-text-2);
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; transition: .15s;
+}
+.crop-ratio:hover { background: var(--wa-hover); }
+.crop-ratio.active {
+  background: rgba(0, 168, 132, .14); border-color: var(--wa-teal); color: var(--wa-accent-text);
+}
+.crop-zoom { display: flex; align-items: center; gap: 10px; padding: 10px 16px 4px; }
+.crop-zoom .ico { width: 18px; height: 18px; color: var(--wa-text-2); flex-shrink: 0; }
+.crop-zoom input[type="range"] {
+  -webkit-appearance: none; appearance: none; flex: 1; height: 6px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--wa-teal) 0%, var(--wa-teal) var(--fill, 0%),
+    var(--wa-border) var(--fill, 0%), var(--wa-border) 100%);
+  outline: none; cursor: pointer;
+}
+.crop-zoom input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--wa-teal-dark); box-shadow: 0 2px 6px rgba(11, 20, 26, .25);
+}
+.crop-zoom input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  border: 2px solid var(--wa-teal-dark); box-shadow: 0 2px 6px rgba(11, 20, 26, .25);
+}
+.crop-zoom-val {
+  font-size: 12px; color: var(--wa-text-2); min-width: 42px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.crop-actions { display: flex; gap: 10px; padding: 12px 14px 16px; }
+.crop-actions .btn-ghost { padding: 11px 18px; }
+.crop-actions .btn-primary {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+@media (max-width: 480px) {
+  .crop-modal { padding: 10px; }
+  .crop-stage { height: min(40vh, 260px); }
 }
 
 /* ============ tema gelap: penyesuaian halaman premium ============ */
