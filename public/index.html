@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Whatsap Indo - chat real-time, kirim foto, video, dan file hingga 2GB" />
   <title>Whatsap Indo</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -23,11 +23,17 @@
         theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
       }
       document.documentElement.setAttribute('data-theme', theme);
+      // warna bilah jendela aplikasi ikut tema (penting saat dipasang sebagai aplikasi)
+      var tc = document.querySelector('meta[name="theme-color"]');
+      if (tc) tc.setAttribute('content', theme === 'dark' ? '#111b21' : '#008069');
     })();
   </script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
+
+  <!-- bilah status koneksi: muncul otomatis saat terputus / menyambung ulang -->
+  <div id="connBar" class="conn-bar hidden" role="status" aria-live="polite">Menghubungkan kembali…</div>
 
   <!-- ============ SPRITE IKON ============ -->
   <svg class="sprite" aria-hidden="true" focusable="false">

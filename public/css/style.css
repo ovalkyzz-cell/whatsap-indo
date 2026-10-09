@@ -58,6 +58,16 @@ input, textarea { font: inherit; }
 }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
+/* ---------- bilah status koneksi ---------- */
+.conn-bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1300;
+  background: var(--wa-teal-dark); color: #fff; text-align: center;
+  padding: 7px 12px calc(7px + env(safe-area-inset-top, 0px)); font-size: 12.5px;
+  letter-spacing: .2px; box-shadow: 0 1px 5px rgba(0, 0, 0, .28);
+  animation: connBarIn .18s ease;
+}
+@keyframes connBarIn { from { opacity: 0; transform: translateY(-100%); } to { opacity: 1; transform: translateY(0); } }
+
 /* ---------- auth ---------- */
 .auth-view {
   min-height: 100vh; display: flex; flex-direction: column; align-items: center;

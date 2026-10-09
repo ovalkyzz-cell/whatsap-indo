@@ -235,10 +235,23 @@ async function adminEvent(type, payload = {}) {
   }
 }
 
+// memutus semua socket milik satu akun lalu memberi tahu pemiliknya
+// (kecuali sesi baru yang sedang dipakai login terakhir)
+function kickUserSessions(userId, reason, keepSid = '') {
+  const room = io.sockets.adapter.rooms.get(`user:${userId}`);
+  if (!room) return;
+  for (const id of room) {
+    const s = io.sockets.sockets.get(id);
+    if (!s) continue;
+    if (keepSid && s.data.sid === keepSid) continue;
+    kickReplaced(s, reason);
+  }
+}
+
 // sesi lama dimatikan; socket klien diberi tahu lalu diputus
 async function revokeSessions(userId, reason) {
   await auth.clearSession(userId);
-  await emitToUser(userId, 'session:revoked', { reason: reason || 'revoked' });
+  kickUserSessions(userId, reason === 'logout' ? 'sesi-dicabut' : reason);
 }
 
 // ---------- auth routes ----------
@@ -259,9 +272,9 @@ app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
     const out = await auth.login(req.body || {}, meta);
     res.json(out);
     await recordLogin({ userId: out.user.id, email: out.user.email, ...meta, result: 'success' });
-    // perangkat lain memakai akun yang sama -> sesi lamanya diganti
+    // perangkat lain memakai akun yang sama -> sesi lamanya diputus
     const sid = (auth.verifyToken(out.token) || {}).sid || '';
-    await emitToUser(out.user.id, 'session:replaced', { sid });
+    kickUserSessions(out.user.id, 'login-baru', sid);
     await adminEvent('login', {
       userId: out.user.id,
       name: out.user.name,
@@ -432,6 +445,9 @@ app.get('/api/bots', auth.requireAuth, ah(async (req, res) => {
 }));
 
 app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
+  if (!floodGuard(`search:${req.user.id}`, 150, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu banyak pencarian. Coba lagi sebentar lagi.' });
+  }
   const q = String(req.query.q || '').trim();
   const like = `%${q}%`;
   const rows = await db.all(
@@ -601,6 +617,9 @@ app.get('/api/chats', auth.requireAuth, ah(async (req, res) => {
 }));
 
 app.post('/api/chats/direct', auth.requireAuth, ah(async (req, res) => {
+  if (!floodGuard(`direct:${req.user.id}`, 150, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu sering membuat chat. Coba lagi nanti.' });
+  }
   const peerId = String(req.body?.peerId || '');
   const peer = await db.get('SELECT * FROM users WHERE id = ?', peerId);
   if (!peer) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
@@ -619,9 +638,33 @@ app.post('/api/chats/direct', auth.requireAuth, ah(async (req, res) => {
   res.status(201).json({ chat: (await helpers.serializeChats([row], req.user.id))[0] });
 }));
 
+// Riwayat panggilan. `?since=<ms>` hanya mengembalikan panggilan tak terjawab
+// sesudah waktu itu — dipakai klien saat boot untuk menyinkronkan Pusat Notifikasi.
+app.get('/api/calls', auth.requireAuth, ah(async (req, res) => {
+  const since = Number(req.query.since) || 0;
+  const rows = since > 0
+    ? await calls.missedFor(req.user.id, since)
+    : await calls.listRecent(req.user.id, req.query.limit);
+  const out = [];
+  for (const row of rows) {
+    const peerId = row.caller_id === req.user.id ? row.callee_id : row.caller_id;
+    const peer = await db.get('SELECT * FROM users WHERE id = ?', peerId);
+    if (!peer) continue;
+    out.push({
+      id: row.id,
+      peer: helpers.serializeUser(peer, req.user.id, { premium: false }),
+      direction: row.caller_id === req.user.id ? 'outgoing' : 'incoming',
+      kind: row.kind,
+      state: row.state,
+      at: row.created_at,
+      duration: row.answered_at ? Math.max(0, Number(row.updated_at || 0) - Number(row.answered_at)) : 0,
+    });
+  }
+  res.json({ calls: out });
+}));
+
 // ---------- grup ----------
 const MAX_GROUP_MEMBERS = 500;
-
 function validChatUrl(url) {
   return /^\/uploads\/[\w.\-]+$/.test(String(url || ''))
     || /^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\/[\w.%\-/~]+$/.test(String(url || ''));
@@ -643,11 +686,16 @@ app.post('/api/chats/group', auth.requireAuth, ah(async (req, res) => {
   }
 
   const found = await db.all(
-    `SELECT id FROM users WHERE id IN (${memberIds.map(() => '?').join(', ')})`,
+    `SELECT * FROM users WHERE id IN (${memberIds.map(() => '?').join(', ')})`,
     ...memberIds
   );
   if (found.length !== memberIds.length) {
     return res.status(400).json({ error: 'Ada anggota yang tidak ditemukan' });
+  }
+  // bot hanya boleh di chat pribadi — kalau ikut terdaftar di grup, seluruh
+  // pesan grup jadi terkunci oleh kuota bot
+  if (found.some((u) => bots.isBot(u))) {
+    return res.status(403).json({ error: 'Bot tidak dapat ditambahkan ke grup. Gunakan chat pribadi dengan bot.' });
   }
 
   const id = await db.transaction(async () => {
@@ -788,14 +836,27 @@ app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
     return res.status(403).json({ error: 'Bukan anggota chat ini' });
   }
   const before = req.query.before ? Number(req.query.before) : Date.now();
+  const beforeId = String(req.query.beforeId || '');
   const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const rows = await db.all(
-    `SELECT * FROM messages WHERE chat_id = ? AND created_at < ?
-     ORDER BY created_at DESC, id DESC LIMIT ?`,
-    req.params.id,
-    before,
-    limit
-  );
+  // kursor keyset (created_at, id): pesan yang berbagi milidetik yang sama
+  // dengan batas halaman tidak lagi terlewat saat menggulir ke atas
+  const rows = beforeId
+    ? await db.all(
+      `SELECT * FROM messages WHERE chat_id = ? AND (created_at < ? OR (created_at = ? AND id < ?))
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+      req.params.id,
+      before,
+      before,
+      beforeId,
+      limit
+    )
+    : await db.all(
+      `SELECT * FROM messages WHERE chat_id = ? AND created_at < ?
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+      req.params.id,
+      before,
+      limit
+    );
   res.json({
     messages: await helpers.serializeMessages(rows.reverse(), req.user.id),
     hasMore: rows.length === limit,
@@ -874,12 +935,14 @@ app.get('/api/messages/media/:id', auth.requireAuth, ah(async (req, res) => {
   if (row.view_once) {
     if (row.sender_id !== req.user.id) {
       if (row.opened_at) return res.status(410).json({ error: 'Foto sekali lihat sudah dibuka' });
-      await db.run(
+      const upd = await db.run(
         'UPDATE messages SET opened_at = ?, opened_by = ? WHERE id = ? AND opened_at IS NULL',
         Date.now(),
         req.user.id,
         row.id
       );
+      // hanya satu permintaan yang boleh menang (dijaga atomik oleh WHERE)
+      if (upd.changes !== 1) return res.status(410).json({ error: 'Foto sekali lihat sudah dibuka' });
       await emitToUser(row.sender_id, 'message:viewed', { messageId: row.id, chatId: row.chat_id });
     }
   }
@@ -1493,18 +1556,106 @@ async function broadcastPresence(userId) {
   await emitToUser(userId, 'presence', { userId, online, lastSeen: (row && row.last_seen) || Date.now() });
 }
 
-// panggilan yang masih berdering / tanpa peserta daring dibersihkan saat pengguna pergi
+// panggilan saat pengguna pergi: penerima boleh putus & sambung kembali tanpa
+// kehilangan dering (seperti WhatsApp); hanya pemanggil yang pergi yang membatalkan
 async function cleanupCalls(userId) {
-  const mine = await calls.listForUser(userId);
+  const mine = await calls.listActiveForUser(userId);
   for (const call of mine) {
-    const other = call.caller_id === userId ? call.callee_id : call.caller_id;
     if (call.state === 'ringing') {
+      if (call.caller_id !== userId) continue; // penerima offline: dering dibiarkan sampai batas waktu
       const removed = await calls.remove(call.id);
-      if (removed) await emitToUser(other, 'call:ended', { callId: call.id, reason: 'ended' });
-    } else if (!(await presence.isOnline(call.caller_id)) && !(await presence.isOnline(call.callee_id))) {
-      await calls.remove(call.id);
+      if (removed) await emitToUser(call.callee_id, 'call:ended', { callId: call.id, reason: 'cancelled' });
+      continue;
+    }
+    if (!(await presence.isOnline(call.caller_id)) && !(await presence.isOnline(call.callee_id))) {
+      // sesi aktif ditinggal kedua perangkat -> tutup sebagai riwayat, jangan hapus
+      await calls.finish(call.id, 'ended');
     }
   }
+}
+
+// notifikasi panggilan tak terjawab ala WhatsApp (daring lewat socket, luring lewat push)
+async function notifyMissedCall(call) {
+  const caller = await db.get('SELECT * FROM users WHERE id = ?', call.caller_id);
+  if (!caller) return;
+  const kindLabel = call.kind === 'video' ? 'Panggilan video tak terjawab' : 'Panggilan suara tak terjawab';
+  const chat = await helpers.getOrCreateDirectChat(call.caller_id, call.callee_id).catch(() => null);
+  const payload = {
+    type: 'call',
+    action: 'missed',
+    title: kindLabel,
+    body: caller.name,
+    callId: call.id,
+    kind: call.kind,
+    from: publicCaller(caller, call.callee_id),
+    chatId: chat ? chat.id : null,
+    icon: caller.priv_avatar ? null : caller.avatar || null,
+    tag: `call-${call.id}`,
+    url: chat ? `/?chat=${chat.id}` : '/',
+    at: Date.now(),
+  };
+  const delivered = await emitToUser(call.callee_id, 'call:missed', payload);
+  if (!delivered) {
+    await Promise.race([
+      pushNotify([call.callee_id], payload),
+      new Promise((resolve) => setTimeout(() => resolve(0), 2500)),
+    ]);
+  }
+}
+
+// pemanggil ikut diberi tahu lewat pusat notifikasi (riwayat ala WhatsApp)
+async function notifyCallOutcome(call, reason) {
+  const callee = await db.get('SELECT * FROM users WHERE id = ?', call.callee_id);
+  if (!callee) return;
+  const chat = await helpers.getOrCreateDirectChat(call.caller_id, call.callee_id).catch(() => null);
+  const text = {
+    timeout: 'Panggilan tidak dijawab',
+    rejected: 'Panggilan ditolak',
+    declined: 'Panggilan ditolak',
+    ended: 'Panggilan berakhir',
+  }[reason] || 'Panggilan berakhir';
+  await emitToUser(call.caller_id, 'call:log', {
+    type: 'call',
+    kind: 'missed',
+    reason,
+    title: text,
+    body: callee.name,
+    callId: call.id,
+    peerId: callee.id,
+    chatId: chat ? chat.id : null,
+    icon: callee.priv_avatar ? null : callee.avatar || null,
+    tag: `calllog-${call.id}`,
+    at: Date.now(),
+  });
+}
+
+// sapu bersih: dering lewat batas waktu -> tak terjawab (+ notifikasi ala WhatsApp)
+async function sweepCalls() {
+  try {
+    const expired = await calls.expireRinging();
+    for (const call of expired) {
+      await emitToUser(call.caller_id, 'call:ended', { callId: call.id, reason: 'timeout' });
+      await notifyMissedCall(call);
+      await notifyCallOutcome(call, 'timeout');
+    }
+    const stale = await calls.expireStaleActive();
+    for (const call of stale) {
+      await emitToUser(call.caller_id, 'call:ended', { callId: call.id, reason: 'ended' });
+      await emitToUser(call.callee_id, 'call:ended', { callId: call.id, reason: 'ended' });
+    }
+    await calls.purgeOld();
+  } catch (err) {
+    console.error('sweep calls:', err.message);
+  }
+}
+
+let callSweepTimer = null;
+function startCallSweeper() {
+  if (callSweepTimer) return;
+  const tick = setInterval(() => void sweepCalls(), 5_000);
+  if (tick.unref) tick.unref();
+  callSweepTimer = tick;
+  void sweepCalls();
 }
 
 async function handleDisconnect(user, socketId) {
@@ -1560,19 +1711,24 @@ io.on('connection', (socket) => {
   const first = presence.addLocal(user.id, socket.id);
   socket.join(`user:${user.id}`);
 
-  socket.on('session:replaced', ({ sid } = {}) => {
-    if (sid === undefined || socket.data.sid === sid) return; // sesi yang sama: biarkan
-    kickReplaced(socket, 'login-baru');
-  });
-
-  socket.on('session:revoked', () => kickReplaced(socket, 'sesi-dicabut'));
-
   void (async () => {
     try {
       await presence.persist(user.id, socket.id);
       if (first) {
         await broadcastPresence(user.id);
         await adminEvent('online', { userId: user.id, name: user.name, email: user.email });
+      }
+      // panggilan masuk yang masih berdering dikirim ulang ke perangkat ini —
+      // penerima boleh tiba/luring dulu, dering tetap sampai padam sendiri
+      const pending = await calls.pendingIncoming(user.id);
+      for (const call of pending) {
+        const caller = await db.get('SELECT * FROM users WHERE id = ?', call.caller_id);
+        if (!caller) continue;
+        socket.emit('call:incoming', {
+          callId: call.id,
+          kind: call.kind === 'video' ? 'video' : 'audio',
+          from: publicCaller(caller, user.id),
+        });
       }
     } catch (err) {
       console.error('connect:', err.message);
@@ -1586,6 +1742,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('typing', ({ chatId, typing } = {}) => {
+    if (!floodGuard(`typing:${user.id}`, 120, 60_000)) return;
     helpers
       .isMember(chatId, user.id)
       .then((member) => {
@@ -1604,6 +1761,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('chat:read', ({ chatId } = {}) => {
+    if (!floodGuard(`read:${user.id}`, 60, 60_000)) return;
     helpers
       .isMember(chatId, user.id)
       .then((member) => (member ? markChatRead(chatId, user.id) : null))
@@ -1611,6 +1769,9 @@ io.on('connection', (socket) => {
   });
 
   // ---------- WebRTC signaling ----------
+  // hanya pemanggil & penerima yang boleh mengendalikan sebuah panggilan
+  const callPeerId = (call, who) => (call.caller_id === who ? call.callee_id : call.caller_id);
+
   socket.on('call:invite', ({ to, callId, kind } = {}, ack) => {
     const reply = (payload) => { try { ack?.(payload); } catch { /* ack sudah ditutup */ } };
     void (async () => {
@@ -1623,17 +1784,45 @@ io.on('connection', (socket) => {
         if (!target) return reply({ ok: false, error: 'Pengguna tidak ditemukan' });
         if (bots.isBot(target)) return reply({ ok: false, error: 'Bot tidak dapat dipanggil' });
 
-        await calls.create({ id, callerId: user.id, calleeId: targetId, kind });
+        // satu pemanggil satu panggilan (baris macet dibersihkan sapu bersih berkala)
+        const busy = await db.get(
+          `SELECT id FROM calls WHERE caller_id = ? AND state IN ('ringing', 'accepted', 'active')`,
+          user.id
+        );
+        if (busy) return reply({ ok: false, error: 'Anda sedang dalam panggilan lain' });
+
+        const cleanKind = kind === 'video' ? 'video' : 'audio';
+        await calls.create({ id, callerId: user.id, calleeId: targetId, kind: cleanKind });
+
         const delivered = await emitToUser(targetId, 'call:incoming', {
           callId: id,
-          kind: kind === 'video' ? 'video' : 'audio',
+          kind: cleanKind,
           from: publicCaller(user, targetId),
         });
+
+        // Penerima tidak daring: panggilan TETAP dibuat & tetap berdering di server
+        // sampai batas waktu — perangkat penerima dikabari lewat push, dan bila ia
+        // kembali daring dalam masa dering, dering dikirim ulang (ala WhatsApp).
         if (!delivered) {
-          await calls.remove(id);
-          return reply({ ok: false, error: 'Pengguna sedang offline' });
+          const chat = await helpers.getOrCreateDirectChat(user.id, targetId).catch(() => null);
+          await Promise.race([
+            pushNotify([targetId], {
+              type: 'call',
+              action: 'ring',
+              title: cleanKind === 'video' ? 'Panggilan video masuk' : 'Panggilan suara masuk',
+              body: user.name,
+              callId: id,
+              kind: cleanKind,
+              from: publicCaller(user, targetId),
+              chatId: chat ? chat.id : null,
+              icon: user.priv_avatar ? null : user.avatar || null,
+              tag: `call-${id}`,
+              url: chat ? `/?chat=${chat.id}` : '/',
+            }),
+            new Promise((resolve) => setTimeout(() => resolve(0), 2500)),
+          ]);
         }
-        reply({ ok: true, delivered: true });
+        reply({ ok: true, delivered });
       } catch (err) {
         console.error('call:invite:', err.message);
         reply({ ok: false, error: 'Gagal memulai panggilan' });
@@ -1646,8 +1835,9 @@ io.on('connection', (socket) => {
       try {
         const id = String(callId || '');
         const call = await calls.get(id);
-        if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
-        await calls.setState(id, 'accepted');
+        if (!call || call.callee_id !== user.id) return; // hanya penerima yang boleh menjawab
+        const accepted = await calls.accept(id);
+        if (!accepted) return; // sudah ditutup atau sudah dijawab perangkat lain
         await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'accepted' });
       } catch (err) {
         console.error('call:accept:', err.message);
@@ -1658,14 +1848,14 @@ io.on('connection', (socket) => {
   socket.on('call:signal', ({ to, callId, signal } = {}) => {
     void (async () => {
       try {
-        const targetId = String(to || '');
         const id = String(callId || '');
-        if (!id || !targetId || targetId === user.id) return;
+        if (!id) return;
         const call = await calls.get(id);
         if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
+        const targetId = callPeerId(call, user.id);
+        if (String(to || '') && String(to) !== targetId) return; // tujuan harus pesertanya sendiri
         if (!signal || typeof signal !== 'object') return;
         if (!['offer', 'answer', 'candidate'].includes(signal.type)) return;
-        if (!(await db.get('SELECT id FROM users WHERE id = ?', targetId))) return;
         if (signal.type === 'answer') await calls.setState(id, 'active');
         await emitToUser(targetId, 'call:signal', {
           callId: id,
@@ -1682,10 +1872,13 @@ io.on('connection', (socket) => {
     void (async () => {
       try {
         const id = String(callId || '');
-        const targetId = String(to || '');
-        await calls.remove(id);
-        if (targetId && targetId !== user.id) {
-          await emitToUser(targetId, 'call:ended', { callId: id, reason: 'rejected' });
+        const call = await calls.get(id);
+        if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
+        const peerId = callPeerId(call, user.id);
+        const changed = await calls.finish(id, 'declined');
+        if (changed) {
+          await emitToUser(peerId, 'call:ended', { callId: id, reason: 'rejected' });
+          if (call.callee_id === user.id) await notifyCallOutcome(call, 'rejected');
         }
         await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'cancelled' });
       } catch (err) {
@@ -1698,13 +1891,17 @@ io.on('connection', (socket) => {
     void (async () => {
       try {
         const id = String(callId || '');
-        const targetId = String(to || '');
-        await calls.remove(id);
-        const mapped = reason === 'timeout' ? 'timeout' : 'ended';
-        if (targetId && targetId !== user.id) {
-          await emitToUser(targetId, 'call:ended', { callId: id, reason: mapped });
-        }
+        const call = await calls.get(id);
+        if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
+        const timedOut = reason === 'timeout';
+        const peerId = callPeerId(call, user.id);
+        const changed = await calls.finish(id, timedOut ? 'missed' : 'ended');
+        await emitToUser(peerId, 'call:ended', { callId: id, reason: timedOut ? 'timeout' : 'ended' });
         await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'ended' });
+        if (changed && timedOut) {
+          await notifyMissedCall(call);
+          await notifyCallOutcome(call, 'timeout');
+        }
       } catch (err) {
         console.error('call:hangup:', err.message);
       }
@@ -2038,6 +2235,7 @@ async function boot() {
     console.error('bot:', err.message);
   }
   presence.start();
+  startCallSweeper();
   try {
     await bus.start((msg) => {
       for (const uid of msg.userIds || []) {

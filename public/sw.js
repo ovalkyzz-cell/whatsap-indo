@@ -1,7 +1,7 @@
 /* Service Worker: notifikasi WhatsApp-style (online & offline) */
 'use strict';
 
-const CACHE = 'wa-static-v2';
+const CACHE = 'wa-static-v3';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -79,7 +79,8 @@ function readPayload(event) {
 
 self.addEventListener('push', (event) => {
   const data = readPayload(event);
-  const title = data.title || 'Pesan baru';
+  const isCall = data.type === 'call';
+  const title = data.title || (isCall ? 'Panggilan masuk' : 'Pesan baru');
   event.waitUntil((async () => {
     // ada jendela yang sedang tampil -> teruskan ke halaman (banner melayang, tanpa dobel)
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -92,11 +93,13 @@ self.addEventListener('push', (event) => {
     // tidak ada jendela aktif (aplikasi ditutup / tab disembunyikan) -> notifikasi sistem
     const options = {
       body: data.body || '',
-      tag: data.tag || 'wa-message',
+      tag: data.tag || (isCall ? 'wa-call' : 'wa-message'),
       renotify: true,
       data,
     };
     if (data.icon) options.icon = data.icon;
+    // panggilan: notifikasi menempel sampai disentuh (apa pun status daringnya)
+    if (isCall) options.requireInteraction = true;
     await self.registration.showNotification(title, options);
   })());
 });
@@ -110,10 +113,10 @@ self.addEventListener('notificationclick', (event) => {
     const target = windows.find((c) => 'focus' in c);
     if (target) {
       await target.focus();
-      target.postMessage({ type: 'wa-open-chat', chatId });
+      target.postMessage({ type: 'wa-open-chat', chatId, data });
       return;
     }
-    await self.clients.openWindow(chatId ? `/?chat=${encodeURIComponent(chatId)}` : '/');
+    await clients.openWindow(chatId ? `/?chat=${encodeURIComponent(chatId)}` : '/');
   })());
 });
 

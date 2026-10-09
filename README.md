@@ -14,7 +14,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
 | Kartu angka | Kode/token khusus (` ```angka `) tampil dengan **font angka profesional** (tabular, tracking lebar) + Copy |
 | Kirim media | Foto, video, audio, dokumen — **maksimal 2GB per file** |
-| Panggilan | **Suara & video WebRTC** 1-to-1: tombol di header chat & info kontak, layar dering (jawab/tolak/akhiri), mute mic & kamera, timer durasi — sinyal lewat Socket.IO `call:*` |
+| Panggilan | **Suara & video WebRTC** 1-to-1: tombol di header chat & info kontak, layar dering (jawab/tolak/akhiri), mute mic & kamera, timer durasi — sinyal lewat Socket.IO `call:*`. **Tetap berdering walau penerima luring**: baris `calls` dibuat & notifikasi push dikirim, dering **dikirim ulang otomatis** saat penerima kembali daring, lalu tercatat sebagai **panggilan tak terjawab** |
 | Preview unduh | Bot Downloader **wajib menampilkan hasil videonya**: rangkaian resolver otomatis (api-mazval → tikwm → fxtwitter → instance cobalt → Piped) mengambil file medianya, divalidasi via probe Range, lalu **diunduh ke server** dan tampil sebagai **pesan video langsung** disertai kapsi *Hasil unduhan: X MB* (fallback terakhir: thumbnail + tautan unduh) |
 | Lampiran | Preview sebelum kirim, progress bar unggah, unduh inline |
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
@@ -33,7 +33,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Background beranda | Latar halaman masuk bisa diganti **foto / video** — oleh admin (berlaku semua pengguna) maupun per akun (Menu → Latar Halaman Utama) |
 | Profil & Bio | Nama, bio, foto profil, info akun (email, status verifikasi, bergabung, ID) |
 | Info kontak | Panel info lawan chat: bio, email, status online/terakhir dilihat, aksi panggilan |
-| Notifikasi | Nada pesan + notifikasi browser saat tab tidak aktif + **Pusat Notifikasi** (lonceng dengan badge, riwayat notifikasi, tandai sudah dibaca) |
+| Notifikasi | Nada pesan + **notifikasi sistem saat tab tidak aktif** (tetap terlihat walau tab sedang terbuka) + **Pusat Notifikasi** (lonceng dengan badge, riwayat notifikasi, tandai sudah dibaca, otomatis terisi lagi saat aplikasi dibuka) + **notifikasi panggilan tak terjawab** + **bilah koneksi** "Menghubungkan kembali…" saat socket terputus |
 | Profil | Nama, status, foto profil dengan **pemotong rasio bebas** — geser, cubit/scroll untuk zoom, tarik sudut untuk ubah bentuk, preset *Bebas / 1:1 / 3:4 / 4:3 / 16:9 / 9:16* (berlaku untuk foto profil, foto grup & foto bot) |
 | Responsif | Layout mobile (sidebar/chat bergantian) dan desktop ala WhatsApp Web |
 | Scroll | Momentum halus (`-webkit-overflow-scrolling: touch`), `overscroll-behavior: contain` di tiap kontainer daftar/pesan/drawer, tanpa pull-to-refresh saat dipakai sebagai APK, dan `:hover` dibatasi ke perangkat tetikus supaya baris tidak menempel miring di layar sentuh |
@@ -44,8 +44,9 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
-npm test           # test logika pemotong foto + test end-to-end (server harus berjalan)
+npm test           # crop + calls + e2e (server harus berjalan)
 npm run test:crop  # geometri pemotong foto saja (tanpa server)
+npm run test:calls # unit test mesin panggilan (dering, kirim-ulang, tak terjawab)
 npm run test:bots  # unit test balasan 69 bot (API dimock, tanpa jaringan)
 ```
 
@@ -65,6 +66,10 @@ Variabel lingkungan opsional:
 - `DOWNLOAD_BUDGET_MS` — total waktu maksimal rangkaian resolver Downloader dalam ms
   (default `90000`); berlaku untuk seluruh jalur: api-mazval, tikwm, fxtwitter, cobalt & Piped
 - `COBALT_API_KEY` — API key opsional bila memakai instance cobalt yang dilindungi key
+- `CALL_RING_MS` — lama dering sebelum panggilan ditandai **tak terjawab** (default `60000`)
+- `CALL_ACTIVE_MAX_MS` — batas panggilan aktif sebelum dipaksa ditutup sapu bersih
+  (default `21600000` = 6 jam)
+- `CALL_HISTORY_DAYS` — retensi riwayat panggilan di tabel `calls` (default `30`)
 
 ### Instal sebagai aplikasi (desktop & Android)
 
@@ -83,6 +88,25 @@ bisa dibuka saat offline. Satu basis kode yang sama dipakai untuk web, desktop &
   [pwabuilder.com](https://www.pwabuilder.com) dengan URL produksi → *Package for stores*
   → unduh APK/AAB (Android Package) untuk dipasang atau diunggah ke Play Store.
   Alternatif: Chrome Android → menu ⋮ → *Tambahkan ke layar utama*.
+
+### Hasil uji
+
+Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
+
+| Tes | Hasil |
+|---|---|
+| `npm run test:crop` | **22 passed, 0 failed** |
+| `npm run test:calls` | **26 passed, 0 failed** |
+| `npm run test` (e2e) | **313 passed, 15 failed** |
+
+15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
+`MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
+Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model). Seluruh uji
+autentikasi, sesi, chat, grup, admin, media, panggilan (luring → kirim-ulang →
+ditolak → tak terjawab), notifikasi, PWA & keamanan **lolos semua**.
+
+Static check pendukung: `eslint` (tanpa error) dan audit `id` DOM
+(280 id di `index.html`, tanpa duplikat, tanpa `$()` yang mengacu ke id tak ada).
 
 ## Arsitektur
 
@@ -168,22 +192,45 @@ dan **tombol *Suara* / *Video* di panel Info Kontak** — disembunyikan otomatis
 Sinyal berjalan lewat Socket.IO (`call:*`) di `server/index.js`, dengan catatan panggilan
 tersimpan di **tabel `calls`** (`server/calls.js`):
 
-1. `call:invite` (ada **ack**) → server membuat baris `calls` lalu mengirim `call:incoming`
-   ke semua tab/perangkat penerima. Offline → ack `ok:false` (baris dibuang).
-2. Penerima menekan *Jawab* → `call:accept` (menutup layar dering di tab lain milik penerima)
-   → membuat SDP **offer**.
-3. Penjawab menerima `offer` → membuat **answer**; keduanya bertukar ICE candidate
+1. `call:invite` (ada **ack**) → server **selalu** membuat baris `calls` berstatus
+   `ringing` lalu mengirim `call:incoming` ke semua tab/perangkat penerima. Penerima
+   **luring pun tidak ditolak** — server tetap menjawab `ok:true` (dengan `delivered:false`)
+   dan mengirim **notifikasi push** berjudul *"Panggilan masuk"* supaya dering sampai
+   walau aplikasinya tertutup. (Satu-satunya penolakan: pemanggil sudah berada di
+   panggilan lain, atau lawannya bot.)
+2. Penerima kembali daring (membuka tab, jaringan pulih, atau tab lain terbuka) →
+   server membaca `calls.pendingIncoming()` lalu mengirim ulang `call:incoming` untuk
+   panggilan yang **masih berdering** — sama seperti WhatsApp yang terus berdering
+   sampai dijawab / ditolak / waktunya habis.
+3. Penerima menekan *Jawab* → `call:accept` (mencatat `answered_at` & menutup layar
+   dering di tab lain milik penerima) → membuat SDP **offer**.
+4. Penjawab menerima `offer` → membuat **answer**; keduanya bertukar ICE candidate
    lewat `call:signal` (hanya untuk panggilan yang terdaftar di server).
-4. Selesai: `call:hangup` / `call:reject` → baris dihapus + `call:ended` dengan `reason`
+5. Selesai: `call:hangup` / `call:reject` / habis masa dering → baris **tetap disimpan
+   sebagai riwayat** + `call:ended` dengan `reason`
    (`ended` | `rejected` | `timeout` | `accepted` | `cancelled`).
+
+Sapu bersih berkala (`sweepCalls`, tiap 5 detik, `server/index.js`):
+
+- dering yang lewat `CALL_RING_MS` → status `missed` + notifikasi
+  **panggilan tak terjawab** ke penerima (kirim `call:missed` + push fallback);
+- panggilan aktif yang macet (`CALL_ACTIVE_MAX_MS`) → ditutup `ended` di kedua sisi;
+- riwayat lebih tua dari `CALL_HISTORY_DAYS` → dihapus.
+
+**Riwayat & Pusat Notifikasi.** `GET /api/calls` mengembalikan riwayat panggilan
+(bisa difilter `?since=<ms>` untuk yang tak terjawab saja). Saat aplikasi dibuka,
+`syncMissedCalls()` menarik panggilan tak terjawab 7 hari terakhir ke **Pusat Notifikasi**
+(lonceng) — sehingga tidak ada panggilan tak terjawab yang hilang hanya karena ponsel
+offline saat itu.
 
 Perilaku pelindung:
 
-- dering maksimal **60 detik** (lalu `timeout`), koneksi WebRTC maksimal **20 detik**;
+- dering maksimal **60 detik** (lalu `timeout` + tak terjawab), koneksi WebRTC maksimal **20 detik**;
 - `disconnected` diberi toleransi **8 detik** sebelum panggilan ditutup (blip jaringan tidak
   langsung memutus), `failed` langsung menutup;
-- penelepon/penerima menutup tab saat masih berdering → panggilan dibersihkan saat disconnect
-  (`cleanupCalls`) dan pihak lain menerima `call:ended`;
+- **hanya pemanggil** yang menutup tab saat berdering yang membatalkan panggilan;
+  penerima boleh putus & sambung ulang tanpa deringnya hilang (`cleanupCalls`);
+- panggilan aktif ditutup otomatis saat **kedua** pihak sudah luring;
 - menolak otomatis bila sudah berada di panggilan lain; bot tidak dapat dipanggil;
 - pantulan/relay lewat **HTTPS** diperlukan untuk `getUserMedia` selain di localhost.
 
@@ -201,9 +248,12 @@ alur sinyal `call:invite → call:incoming → call:hangup → call:ended` semua
 ditanam di JWT (`sid`). `requireAuth` dan handshake Socket.IO membandingkan `sid` token dengan
 `session_id` akun:
 
-- login dari perangkat kedua → token & socket perangkat pertama langsung mati
-  (`admin:event` / `session:replaced` → klien keluar dengan pesan jelas);
-- `POST /api/auth/logout` mengosongkan sesi sehingga token lama ikut mati;
+- login dari perangkat kedua → **semua socket perangkat lama diputus langsung dari
+  server** (`kickUserSessions()` memutus socket lama, lalu klien menerima
+  `auth:session-replaced` dan keluar dengan pesan jelas);
+- `POST /api/auth/logout`, **tolak pendaftaran** & **blokir akun** memakai jalur yang sama,
+  sehingga sesi/token lama ikut mati **dan** tab yang masih terbuka langsung terputus
+  (bukan cuma menunggu muat ulang);
 - akun lama (data sebelum fitur ini) otomatis diminta masuk ulang satu kali.
 
 **Persetujuan pendaftaran.** Akun baru dibuat dengan `account_status = 'pending'` dan tidak

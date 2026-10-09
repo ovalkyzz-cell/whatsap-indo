@@ -175,10 +175,12 @@ CREATE TABLE IF NOT EXISTS calls (
   kind       TEXT NOT NULL DEFAULT 'audio',
   state      TEXT NOT NULL DEFAULT 'ringing',
   created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
+  updated_at BIGINT NOT NULL,
+  answered_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls (caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls (callee_id);
+CREATE INDEX IF NOT EXISTS idx_calls_state ON calls (state, created_at);
 
 CREATE TABLE IF NOT EXISTS bus (
   seq           BIGSERIAL PRIMARY KEY,
@@ -350,10 +352,12 @@ CREATE TABLE IF NOT EXISTS calls (
   kind       TEXT NOT NULL DEFAULT 'audio',
   state      TEXT NOT NULL DEFAULT 'ringing',
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls (caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls (callee_id);
+CREATE INDEX IF NOT EXISTS idx_calls_state ON calls (state, created_at);
 
 CREATE TABLE IF NOT EXISTS bus (
   seq           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -407,6 +411,9 @@ const TABLE_MIGRATIONS = {
   chats: [
     ['avatar', 'TEXT', 'TEXT'],
     ['created_by', 'TEXT', 'TEXT'],
+  ],
+  calls: [
+    ['answered_at', 'BIGINT', 'INTEGER'],
   ],
   messages: [
     ['view_once', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
@@ -614,7 +621,19 @@ async function transaction(fn) {
       client.release();
     }
   }
-  return locked(() => txStore.run(sqlite, () => fn(sqlite)));
+  // SQLite: kueri berjalan sinkron pada koneksi yang sama, jadi transaksi
+  // dibuka secara eksplisit supaya benar-benar atomic dan bisa di-rollback
+  return locked(() => txStore.run(sqlite, async () => {
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      const result = await fn(sqlite);
+      sqlite.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try { sqlite.exec('ROLLBACK'); } catch { /* transaksi sudah gagal */ }
+      throw err;
+    }
+  }));
 }
 
 async function acquireClient() {

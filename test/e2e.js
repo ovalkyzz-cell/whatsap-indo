@@ -305,6 +305,100 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(50);
   ok(ended && ended.callId === callId && ended.reason === 'ended', 'call:hangup memicu call:ended di penerima');
 
+  // ---- panggilan ala WhatsApp: tetap jalan walau penerima luring ----
+  const callsSrc = fs.readFileSync(pathMod.join(__dirname, '..', 'server', 'calls.js'), 'utf8');
+  ok(callsSrc.includes('pendingIncoming') && callsSrc.includes('expireRinging') && callsSrc.includes('missedFor'),
+    'server/calls.js punya masa dering, kirim-ulang & riwayat tak terjawab');
+  ok(idxSrc.includes('sweepCalls(') && idxSrc.includes('startCallSweeper'),
+    'server memantau masa dering lewat sapu bersih berkala');
+  ok(idxSrc.includes("app.get('/api/calls'"), 'endpoint riwayat panggilan /api/calls tersedia');
+  ok(idxSrc.includes("'call:missed'") && idxSrc.includes("'call:log'"),
+    'server mengirim notifikasi panggilan tak terjawab & riwayat panggilan');
+  ok(idxSrc.includes('calls.pendingIncoming('), 'dering dikirim ulang saat penerima kembali daring');
+  ok(jsText.includes("socket.on('call:missed', onCallMissed)") && jsText.includes('syncMissedCalls'),
+    'app.js menyinkronkan panggilan tak terjawab ke pusat notifikasi');
+  ok(/const CACHE = 'wa-static-v3'/.test(swText) && swText.includes("data.type === 'call'"),
+    'service worker menangani notifikasi panggilan dengan versi cache terbaru');
+  ok(jsText.includes('resyncAfterReconnect') && jsText.includes("socket.on('connect'"),
+    'app.js menyinkronkan chat ulang setelah koneksi pulih');
+  ok(jsText.includes('S.messages = {}') && jsText.includes('NC.items = []'),
+    'keluar akun membersihkan pesan & pusat notifikasi akun sebelumnya');
+  ok(jsText.includes('/api/calls?since=') || jsText.includes('since='),
+    'app.js memuat riwayat panggilan tak terjawab saat aplikasi dibuka');
+  ok(idxSrc.includes('kickUserSessions(') && !idxSrc.includes("socket.on('session:replaced'"),
+    'sesi lama benar-benar diputus server saat login/blokir');
+  ok(dbSrc.includes('BEGIN IMMEDIATE') && dbSrc.includes('ROLLBACK'),
+    'transaksi SQLite dibuka & di-rollback secara eksplisit');
+  ok(idxSrc.includes('Bot tidak dapat ditambahkan ke grup'),
+    'pembuatan grup menolak anggota bot');
+  ok(idxSrc.includes('beforeId') && jsText.includes('beforeId='),
+    'gulir riwayat memakai kursor keyset (created_at, id)');
+  ok(jsText.includes('connBar') && jsText.includes("socket.on('disconnect'"),
+    'ada indikator koneksi terputus / menyambung ulang');
+  ok(idxSrc.includes("floodGuard(`typing:") && idxSrc.includes("floodGuard(`search:"),
+    'typing & pencarian dibatasi agar tidak membanjiri server');
+
+  // pengguna tanpa koneksi sama sekali: panggilan tetap dibuat, tidak ditolak
+  const offSignup = await signup({ email: `luring${stamp}@test.id`, name: 'Luring', password: 'secret123' });
+  const offId = offSignup.data.user.id;
+  const offChat = await api('/api/chats/direct', { method: 'POST', token: tokA, body: { peerId: offId } });
+  ok(offChat.status === 201 && offChat.data.chat, 'chat dengan pengguna luring dibuat');
+  const offCallId = `call-luring-${stamp}`;
+  const offAck = await new Promise((resolve) => {
+    let done = false;
+    const fin = (v) => { if (!done) { done = true; resolve(v); } };
+    sockA2.emit('call:invite', { to: offId, callId: offCallId, kind: 'audio' }, fin);
+    setTimeout(() => fin(null), 6000);
+  });
+  await sleep(150);
+  ok(offAck && offAck.ok === true && offAck.delivered === false,
+    'invite ke pengguna luring tetap ok (tidak lagi ditolak "sedang offline")');
+
+  const histRing = await api('/api/calls', { token: tokA });
+  ok(histRing.status === 200 && histRing.data.calls.some((c) => c.id === offCallId && c.state === 'ringing'),
+    'panggilan luring tercatat di riwayat dengan status ringing');
+
+  // pemanggil tidak boleh memulai panggilan kedua selagi masih berdering
+  const busyAck = await new Promise((resolve) => {
+    sockA2.emit('call:invite', { to: userB.id, callId: `call-sibuk-${stamp}`, kind: 'audio' }, resolve);
+    setTimeout(() => resolve(null), 5000);
+  });
+  ok(busyAck && busyAck.ok === false && /panggilan lain/i.test(busyAck.error || ''),
+    'pemanggil yang sedang menelepon ditolak saat menelepon lagi');
+
+  // perangkat penerima (baru) daring -> dering dikirim ulang
+  const offSock = io(BASE, { auth: { token: offSignup.data.token } });
+  const reRing = waitEvent(offSock, 'call:incoming', 6000).catch(() => null);
+  const rr = await reRing;
+  ok(rr && rr.callId === offCallId && rr.kind === 'audio',
+    'dering dikirim ulang begitu penerima kembali daring');
+
+  const callerEnded = waitEvent(sockA2, 'call:ended', 6000).catch(() => null);
+  offSock.emit('call:reject', { to: userA.id, callId: offCallId });
+  const rejected = await callerEnded;
+  await sleep(150);
+  ok(rejected && rejected.callId === offCallId && rejected.reason === 'rejected',
+    'penolakan penerima -> pemanggil menerima call:ended rejected');
+
+  const histDeclined = await api('/api/calls', { token: tokA });
+  ok(histDeclined.data.calls.find((c) => c.id === offCallId)?.state === 'declined',
+    'riwayat menyimpan status declined (tanpa menghapus baris)');
+  const histOff = await api(`/api/calls?since=${Date.now() - 60_000}`, { token: offSignup.data.token });
+  ok(histOff.status === 200 && Array.isArray(histOff.data.calls) && histOff.data.calls.length === 0,
+    'riwayat panggilan tak terjawab kosong untuk penerima yang sempat menolak');
+  offSock.close();
+
+  // pemanggil bebas menelepon lagi setelah panggilan selesai
+  const afterBusy = await new Promise((resolve) => {
+    sockA2.emit('call:invite', { to: userB.id, callId: `call-bebas-${stamp}`, kind: 'audio' }, resolve);
+    setTimeout(() => resolve(null), 5000);
+  });
+  ok(afterBusy && afterBusy.ok === true, 'panggilan baru diperbolehkan setelah yang lama selesai');
+  const cleanupAck = waitEvent(sockB, 'call:ended', 5000).catch(() => null);
+  sockA2.emit('call:hangup', { to: userB.id, callId: `call-bebas-${stamp}`, reason: 'ended' });
+  ok(!!(await cleanupAck), 'panggilan lanjutan ditutup kembali');
+  await sleep(150);
+
   console.log('\n[12] Upload safety (mencegah XSS file buatan pengguna)');
   const fdHtml = new FormData();
   fdHtml.append('file', new Blob(['<script>alert(1)</script>'], { type: 'text/html' }), 'evil.html');

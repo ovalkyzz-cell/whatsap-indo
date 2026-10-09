@@ -8,6 +8,8 @@ const S = {
   chats: [],
   activeChatId: null,
   messages: {},   // chatId -> array
+  loaded: {},     // chatId -> riwayat awal sudah ditarik dari server
+  everConnected: false, // socket pernah tersambung (untuk deteksi reconnect)
   typing: {},     // chatId -> { userId: timeoutId }
   pendingFile: null,
   viewOncePending: false, // lampiran berikutnya = foto sekali lihat
@@ -142,9 +144,24 @@ function logout(callServer = true, message) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     }).catch(() => { /* sesi sudah mati */ });
   }
-  if (callServer && S.socket) S.socket.disconnect();
+  // socket selalu diputus — juga saat dipaksa keluar (401 / diblokir) supaya
+  // server tidak terus mengirim pesan ke tab yang sudah keluar
+  if (S.socket) { try { S.socket.disconnect(); } catch { /* sudah putus */ } }
   void unsubscribePush();
   S.token = null; S.me = null; S.chats = []; S.activeChatId = null;
+  // bersihkan seluruh state milik akun sebelumnya supaya tidak bocor ke sesi berikutnya
+  const hadFile = !!(S.pendingFile || S.viewOncePending);
+  S.messages = {}; S.more = {}; S.loaded = {}; S.typing = {}; S.peerCache = {};
+  S.statusFeed = []; S.pendingFile = null; S.viewOncePending = false;
+  S.groupDraft = { name: '', members: [] }; S.everConnected = false;
+  if (hadFile) clearAttachPreview();
+  UI.chatId = null; UI.hasMore = true; UI.loadingOlder = false;
+  UI.newWhileUp = 0; UI.nearBottom = true;
+  NC.items = []; ncSave(); ncRenderBell();
+  $('appView').classList.remove('chat-open');
+  $('chatEmpty').classList.remove('hidden');
+  $('chatActive').classList.add('hidden');
+  $('messageInput').value = '';
   localStorage.removeItem('wa_token');
   showAuth(message);
   void loadHomeBg(); // kembali ke latar global/bawaan setelah keluar
@@ -220,6 +237,7 @@ async function startApp() {
   applyWallpaper();
   void loadHomeBg();
   await loadChats();
+  void syncMissedCalls(); // riwayat panggilan tak terjawab -> pusat notifikasi
   updateComposerButtons();
   connectSocket();
 }
@@ -274,6 +292,34 @@ async function loadChats() {
   const data = await api('/api/chats');
   S.chats = data.chats || [];
   renderChatList();
+}
+
+/* Koneksi pulih setelah putus: daftar chat & percakapan aktif disinkronkan
+   ulang supaya pesan yang terlewat saat luring tidak hilang (ala WhatsApp). */
+async function resyncAfterReconnect() {
+  try {
+    await loadChats();
+  } catch { /* daftar chat lama tetap dipakai */ }
+  const chatId = S.activeChatId;
+  if (!chatId) return;
+  try {
+    const data = await api(`/api/chats/${chatId}/messages?limit=100`);
+    const fresh = Array.isArray(data.messages) ? data.messages : [];
+    const local = S.messages[chatId] || [];
+    const realLocal = local.filter((m) => !String(m.id).startsWith('local-'));
+    const freshIds = new Set(fresh.map((m) => m.id));
+    // jendela lokal tidak lagi beririsan dengan yang terbaru -> riwayat lama
+    // sedang dibuka, biarkan apa adanya agar tidak menggulir balik
+    if (realLocal.length && !realLocal.some((m) => freshIds.has(m.id))) return;
+    const pendingUploads = local.filter((m) => String(m.id).startsWith('local-') && !freshIds.has(m.id));
+    S.messages[chatId] = [...fresh, ...pendingUploads];
+    S.more[chatId] = !!data.hasMore;
+    S.loaded[chatId] = true;
+    UI.hasMore = S.more[chatId] !== false;
+    UI.loadingOlder = false;
+    if (UI.chatId === chatId) { renderMessages(); scrollToBottom(false); }
+    markRead(chatId);
+  } catch { /* biarkan tampilan lama */ }
 }
 
 function chatTitle(chat) {
@@ -373,10 +419,26 @@ async function openChat(chatId) {
   updateChatStatus();
   renderChatList();
 
-  if (!S.messages[chatId]) {
-    const data = await api(`/api/chats/${chatId}/messages?limit=100`);
-    S.messages[chatId] = data.messages;
-    S.more[chatId] = !!data.hasMore;
+  if (!S.loaded[chatId]) {
+    try {
+      const data = await api(`/api/chats/${chatId}/messages?limit=100`);
+      const fresh = Array.isArray(data.messages) ? data.messages : [];
+      const ids = new Set(fresh.map((m) => m.id));
+      const local = S.messages[chatId] || [];
+      // pesan yang datang selagi riwayat dimuat (dan bubble optimis) tidak boleh hilang
+      S.messages[chatId] = [...fresh, ...local.filter((m) => !ids.has(m.id))];
+      S.more[chatId] = !!data.hasMore;
+      S.loaded[chatId] = true;
+    } catch (err) {
+      // muat gagal: jangan menampilkan panel lama di bawah judul chat baru
+      S.activeChatId = null;
+      $('appView').classList.remove('chat-open');
+      $('chatEmpty').classList.remove('hidden');
+      $('chatActive').classList.add('hidden');
+      renderChatList();
+      toast(err.message || 'Riwayat percakapan gagal dimuat');
+      return;
+    }
   }
   UI.hasMore = S.more[chatId] !== false;
   UI.loadingOlder = false;
@@ -739,7 +801,7 @@ function messageHtml(m, chat, opts = {}) {
 
   const ticks = out && !m.deleted ? tickHtml(m.status) : '';
   let progress = '';
-  if (m.status === 'sending') {
+  if (m.status === 'sending' && m.mediaSize != null) {
     progress = `<div class="uploading-label">Mengunggah ${m._progress || 0}% • ${esc(fmtSize(m.mediaSize))}</div>
       <div class="uploading-bar"><i style="width:${m._progress || 0}%"></i></div>`;
   }
@@ -830,12 +892,16 @@ async function loadOlderMessages() {
   const chat = currentChat();
   if (!chat || UI.loadingOlder || !UI.hasMore) return;
   const msgs = S.messages[chat.id] || [];
-  const first = msgs[0];
+  // kursor keyset (created_at, id) supaya pesan dengan milidetik yang sama
+  // tidak terlewat saat menggulir ke atas
+  const first = msgs.find((m) => !String(m.id).startsWith('local-'));
   if (!first) { UI.hasMore = false; return; }
   UI.loadingOlder = true;
   showOlderLoading(true);
   try {
-    const data = await api(`/api/chats/${chat.id}/messages?limit=50&before=${first.createdAt}`);
+    const url = `/api/chats/${chat.id}/messages?limit=50&before=${first.createdAt}`
+      + `&beforeId=${encodeURIComponent(first.id)}`;
+    const data = await api(url);
     const older = (data.messages || []).filter((m) => !msgs.some((x) => x.id === m.id));
     S.more[chat.id] = !!data.hasMore && older.length > 0;
     UI.hasMore = S.more[chat.id];
@@ -974,6 +1040,7 @@ $('btnCloseVo').addEventListener('click', () => {
 /* ================= socket ================= */
 function connectSocket() {
   if (S.socket) S.socket.disconnect();
+  S.everConnected = false;
   const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   const socket = io({
     auth: { token: S.token },
@@ -982,6 +1049,18 @@ function connectSocket() {
     ...(isLocalhost ? {} : { transports: ['websocket'] }),
   });
   S.socket = socket;
+
+  socket.on('connect', () => {
+    $('connBar')?.classList.add('hidden');
+    // koneksi pertama diserahkan ke startApp(); koneksi ulang perlu disinkronkan
+    if (S.everConnected) void resyncAfterReconnect();
+    S.everConnected = true;
+  });
+
+  socket.on('disconnect', () => {
+    if (!S.token) return; // bukan putusnya koneksi — pengguna memang sudah keluar
+    $('connBar')?.classList.remove('hidden');
+  });
 
   socket.on('connect_error', (err) => {
     // hanya penolakan otentikasi eksplisit (auth:...) yang mengeluarkan user;
@@ -1127,6 +1206,8 @@ function connectSocket() {
   socket.on('call:incoming', onCallIncoming);
   socket.on('call:signal', onCallSignal);
   socket.on('call:ended', onCallEnded);
+  socket.on('call:missed', onCallMissed);
+  socket.on('call:log', onCallLog);
 }
 
 /* ================= notifikasi (melayang + sistem + push offline) ================= */
@@ -1180,21 +1261,23 @@ function notify(m) {
   if (!m || !S.me || m.senderId === S.me.id) return;
   const payload = buildNotifPayload(m);
   const visible = document.visibilityState === 'visible';
-  const reading = visible && S.activeChatId === m.chatId && document.hasFocus();
+  const focused = visible && document.hasFocus();
+  const reading = focused && S.activeChatId === m.chatId;
   // riwayat pusat notifikasi selalu dicatat; yang sedang dibaca langsung ditandai
   ncAdd({ kind: 'message', title: payload.title, body: payload.body, chatId: payload.chatId, messageId: payload.messageId, icon: payload.icon, at: m.createdAt || Date.now(), read: reading });
-  if (!visible) {
-    if (NOTIF.sound) notifSound();
-    void showSystemNotif(payload);
-    return;
-  }
   if (reading) { if (NOTIF.sound) beep('notif'); return; }
+  if (NOTIF.sound) notifSound();
+  if (!visible) { void showSystemNotif(payload); return; }
   showNotifCard(payload);
+  // jendela terbuka tapi sedang tidak fokus -> notifikasi sistem ala WhatsApp
+  if (!focused) void showSystemNotif(payload);
 }
 
 // notifikasi push dari service worker (aplikasi tertutup / tab tersembunyi)
 function notifyFromPush(data) {
-  if (!data || !data.chatId) return;
+  if (!data) return;
+  if (data.type === 'call') { onCallPush(data); return; }
+  if (!data.chatId) return;
   if (data.messageId && seenRecently(data.messageId)) return;
   ncAdd({ kind: 'message', title: data.title, body: data.body, chatId: data.chatId, messageId: data.messageId, icon: data.icon, at: Date.now() });
   const visible = document.visibilityState === 'visible';
@@ -1411,11 +1494,13 @@ function ncAdd(item) {
     body: String(item.body || '').slice(0, 200),
     chatId: item.chatId || null,
     messageId: item.messageId || null,
+    ref: item.ref || null,
     icon: item.icon || null,
     at: item.at || Date.now(),
     read: !!item.read,
   };
   if (entry.messageId && NC.items.some((i) => i.messageId === entry.messageId)) return;
+  if (entry.ref && NC.items.some((i) => i.ref === entry.ref)) return;
   NC.items.unshift(entry);
   if (NC.items.length > NC.max) NC.items.length = NC.max;
   ncSave();
@@ -1443,7 +1528,7 @@ function ncRenderBell() {
 function ncItemHtml(i) {
   const face = i.icon
     ? `<img src="${esc(i.icon)}" alt="">`
-    : `<span>${esc(i.kind === 'status' ? '◉' : i.kind === 'system' ? '★' : (i.title || '?').charAt(0).toUpperCase())}</span>`;
+    : `<span>${esc(i.kind === 'status' ? '◉' : i.kind === 'system' ? '★' : i.kind === 'call' ? '☎' : (i.title || '?').charAt(0).toUpperCase())}</span>`;
   return `
   <button type="button" class="nc-item${i.read ? '' : ' unread'}" data-nc="${esc(i.id)}">
     <span class="nc-ico avatar">${face}</span>
@@ -1577,14 +1662,28 @@ function updateComposerButtons() {
 
 function sendViaSocket(payload, localId) {
   beep('out');
+  // bubble optimis supaya pesan langsung terlihat — penting saat koneksi
+  // sedang pulih, socket.io menahan emit sampai tersambung lagi
+  let tempId = localId || null;
+  if (!tempId && payload.type === 'text' && payload.chatId) {
+    tempId = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const tmp = {
+      id: tempId, chatId: payload.chatId, senderId: S.me.id, type: 'text',
+      body: payload.body || '', createdAt: Date.now(), status: 'sending',
+    };
+    const box0 = S.messages[payload.chatId] || (S.messages[payload.chatId] = []);
+    box0.push(tmp);
+    if (S.activeChatId === payload.chatId) { appendMessage(tmp); scrollToBottom(false); }
+    renderChatList();
+  }
   S.socket.emit('message:send', payload, (res) => {
     if (!res?.ok) {
       toast(res?.error || 'Gagal mengirim pesan');
-      if (localId && S.messages[payload.chatId]) removeLocalMessage(payload.chatId, localId);
+      if (tempId && S.messages[payload.chatId]) removeLocalMessage(payload.chatId, tempId);
       return;
     }
     const arr = S.messages[payload.chatId] || (S.messages[payload.chatId] = []);
-    if (localId) removeLocalMessage(payload.chatId, localId);
+    if (tempId) removeLocalMessage(payload.chatId, tempId);
     if (res.message && !arr.some((x) => x.id === res.message.id)) arr.push(res.message);
     if (res.message && payload.chatId === S.activeChatId) {
       upsertMessage(res.message); // perbarui panel secara selektif
@@ -3875,6 +3974,8 @@ function armConnectTimeout(call) {
 
 function onCallIncoming({ callId, kind, from }) {
   if (!callId || !from || !from.id) return;
+  // dering yang sama dikirim ulang saat perangkat kembali daring: jangan dobel
+  if (S.call && S.call.callId === callId) return;
   if (S.call) { // sudah sibuk -> tolak otomatis
     S.socket?.emit('call:reject', { to: from.id, callId });
     return;
@@ -3889,6 +3990,17 @@ function onCallIncoming({ callId, kind, from }) {
   setAvatar($('inCallerAvatar'), from);
   $('incomingCall').classList.remove('hidden');
   if (NOTIF.sound) beep('notif');
+  try { navigator.vibrate && navigator.vibrate([400, 200, 400, 200, 400]); } catch { /* getar tidak tersedia */ }
+  // layar terbuka tanpa fokus tetap memberi tahu sistem ala WhatsApp
+  if (document.visibilityState !== 'visible' || !document.hasFocus()) {
+    void showSystemNotif({
+      title: cleanKind === 'video' ? 'Panggilan video masuk' : 'Panggilan suara masuk',
+      body: from.name,
+      tag: `call-${callId}`,
+      icon: from.avatar || null,
+      chatId: null,
+    });
+  }
 }
 
 $('btnRejectCall').addEventListener('click', () => {
@@ -4108,6 +4220,82 @@ function onCallEnded({ callId, reason }) {
   else if (reason === 'timeout') toast('Panggilan tidak dijawab');
   else toast('Panggilan diakhiri');
   closeCall();
+}
+
+function chatIdForPeer(peerId) {
+  if (!peerId) return null;
+  const chat = S.chats.find((c) => c.type !== 'group' && c.peer && c.peer.id === peerId);
+  return chat ? chat.id : null;
+}
+
+function callNotifVisible() {
+  return document.visibilityState === 'visible' && document.hasFocus();
+}
+
+/* Panggilan tak terjawab (masuk) — notifikasi ala WhatsApp:
+   lewat socket saat daring, lewat push saat luring, disinkronkan saat aplikasi dibuka */
+function onCallMissed(data) {
+  if (!data || !data.callId) return;
+  const chatId = data.chatId || chatIdForPeer(data.from && data.from.id);
+  ncAdd({
+    kind: 'call',
+    title: data.title || 'Panggilan tak terjawab',
+    body: data.body || (data.from ? data.from.name : ''),
+    chatId,
+    icon: data.icon || (data.from ? data.from.avatar : null),
+    at: data.at || Date.now(),
+    ref: `call-${data.callId}`,
+  });
+  if (NOTIF.sound) notifSound();
+  try { navigator.vibrate && navigator.vibrate([70, 40, 70]); } catch { /* getar tidak tersedia */ }
+  if (!callNotifVisible()) {
+    void showSystemNotif({ ...data, chatId, tag: data.tag || `call-${data.callId}` });
+  }
+}
+
+/* Riwayat panggilan keluar (tidak dijawab / ditolak) masuk pusat notifikasi */
+function onCallLog(data) {
+  if (!data || !data.callId) return;
+  ncAdd({
+    kind: 'call',
+    title: data.title || 'Panggilan',
+    body: data.body || '',
+    chatId: data.chatId || chatIdForPeer(data.peerId),
+    icon: data.icon || null,
+    at: data.at || Date.now(),
+    ref: `calllog-${data.callId}`,
+  });
+}
+
+/* Notifikasi push bertipe panggilan dari service worker */
+function onCallPush(data) {
+  if (!data) return;
+  if (data.action === 'ring' && data.callId && data.from) {
+    onCallIncoming({ callId: data.callId, kind: data.kind, from: data.from });
+    return;
+  }
+  if (data.action === 'missed' && data.callId) onCallMissed(data);
+}
+
+/* Tarik riwayat panggilan tak terjawab sekali saat aplikasi dibuka supaya
+   notifikasi yang terlewat (aplikasi tertutup) tetap muncul di Pusat Notifikasi */
+async function syncMissedCalls() {
+  try {
+    const since = Date.now() - 7 * 86_400_000;
+    const data = await api(`/api/calls?since=${since}`);
+    for (const c of data.calls || []) {
+      if (!c || !c.id) continue;
+      ncAdd({
+        kind: 'call',
+        title: c.direction === 'incoming' ? 'Panggilan tak terjawab' : 'Panggilan tidak dijawab',
+        body: `${c.peer ? c.peer.name : 'Kontak'} • ${c.kind === 'video' ? 'Video' : 'Suara'}`,
+        chatId: c.chatId || chatIdForPeer(c.peer && c.peer.id),
+        icon: c.peer ? c.peer.avatar : null,
+        at: c.at,
+        ref: `call-${c.id}`,
+      });
+    }
+  } catch { /* riwayat pelengkap, bukan kewajiban */ }
 }
 
 function openCallUI(call) {

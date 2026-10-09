@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node test/crop.js && node test/e2e.js",
+    "test": "node test/crop.js && node test/calls.js && node test/e2e.js",
     "test:crop": "node test/crop.js",
+    "test:calls": "node test/calls.js",
     "test:bots": "node test/bot-reply.js"
   },
   "keywords": [
