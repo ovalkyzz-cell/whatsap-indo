@@ -20,7 +20,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
 | Bot premium | **69 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 60 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi, Parse NIK, Tracking Paket, NGL, NGL Spam) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
-| Cek bug admin | **Server mini admin** terpisah (`npm run admin` → `http://127.0.0.1:3200`): 8 pemeriksaan nyata (sintaks, dependensi, database, server, referensi frontend, unit test, **alur panggilan/VC sungguhan**, berkas rahasia) dengan status **centang hijau = normal** / **merah = perlu diperbaiki**, plus tombol **Perbaiki Sekali Klik** yang memperbaiki lalu memeriksa ulang sampai hijau |
+| Cek bug admin | **Panel admin pemeriksa bug menempel di aplikasi**: buka `https://<domain>/admin` (terkunci: kunci `ADMIN_KEY` atau sesi akun admin) — 5 pemeriksaan berjalan di server produksi + 4 pemeriksaan berat yang hanya bisa dijalankan di mesin server (ditandai abu-abu); di lokal `npm run admin` (port 3200) menjalankan **semua 9 pemeriksaan nyata** (sintaks, dependensi, database, server, referensi frontend, panel terkunci, unit test, **alur panggilan/VC sungguhan**, berkas rahasia) dengan status **centang hijau = normal** / **merah = perlu diperbaiki**, plus tombol **Perbaiki Sekali Klik** yang memperbaiki lalu memeriksa ulang sampai hijau |
 | Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **69 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 4 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup), **Mingguan Rp10.000** (limit 200/hari), **Bulanan Rp25.000** (tanpa limit), **Permanen Rp50.000** (100 tahun); admin bisa mengubah nama, durasi, harga, limit, bot eksklusif & status permanen |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
@@ -45,7 +45,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
-npm run admin      # server mini admin (cek bug + perbaikan satu klik) di http://127.0.0.1:3200
+npm run admin      # server mini admin terpisah di http://127.0.0.1:3200 (panel yang sama juga ada di /admin)
 npm test           # crop + calls + callflow + e2e (server harus berjalan)
 npm run test:crop  # geometri pemotong foto saja (tanpa server)
 npm run test:calls # unit test mesin panggilan (dering, kirim-ulang, tak terjawab)
@@ -60,6 +60,9 @@ Variabel lingkungan opsional:
   supaya sesi pengguna tidak hilang saat server restart)
 - `ADMIN_EMAILS` — daftar email admin dipisah koma (selain `ovalkyzz@gmail.com`); akun dengan
   email ini otomatis **aktif** tanpa persetujuan dan berhak memakai panel admin
+- `ADMIN_KEY` — kunci rahasia panel pemeriksa bug (`https://<domain>/admin`); dipakai lewat
+  header `x-admin-key` atau `?key=`. Tanpa kunci pun panel tetap terkunci — hanya akun admin
+  yang bisa membukanya lewat sesi aplikasi
 - `MAZVAL_API_KEY` — **wajib** untuk bot: API key api-mazval yang dipakai seluruh bot
   (tanpa ini bot membalas dengan pesan konfigurasi belum lengkap). **Pengecualian:
   Generator Gambar** (`brat`/`brathd`/`smeme`) tetap menghasilkan gambar sungguhan lewat
@@ -112,34 +115,56 @@ ditolak → tak terjawab), notifikasi, PWA & keamanan **lolos semua**.
 Static check pendukung: `eslint` (tanpa error) dan audit `id` DOM
 (280 id di `index.html`, tanpa duplikat, tanpa `$()` yang mengacu ke id tak ada).
 
-## Server mini admin: cek bug + perbaikan satu klik
+## Panel admin: cek bug + perbaikan satu klik
 
-`npm run admin` menjalankan server terpisah (default `http://127.0.0.1:3200`,
-port/host bisa diubah dengan `ADMIN_PORT`/`ADMIN_HOST`, kunci opsional
-`ADMIN_KEY=...` lalu akses dengan `?key=`). Dashboard-nya menampilkan **centang
-hijau** bila seluruh pemeriksaan normal dan **tanda merah** bila ada masalah —
-semua pemeriksaan dijalankan **nyata di mesin**, bukan simulasi.
+Panel pemeriksa bug **menempel pada aplikasi** sehingga bisa dibuka langsung dari
+domain produksi:
 
-| # | Pemeriksaan | Yang diuji | Perbaikan otomatis |
-|---|---|---|---|
-| 1 | Sintaks JavaScript | `node --check` pada 21 berkas sumber | — (lapor lokasi berkas) |
-| 2 | Dependensi | `require` seluruh isi `package.json` | `npm install` |
-| 3 | Database & skema | `integrity_check`, tabel, kolom `calls`, baris macet | migrasi + bersihkan baris panggilan/pesan macet + `REINDEX` & `wal_checkpoint` |
-| 4 | Server aplikasi | `/`, `manifest.json`, `sw.js`, `/api/health` menjawab | restart lewat `pm2` lalu tunggu sampai sehat |
-| 5 | Referensi frontend | id DOM duplikat & `$()` yang menunjuk id tak ada | — (lapor `app.js:baris`) |
-| 6 | Unit test | `test/crop.js` + `test/calls.js` | — |
-| 7 | Alur panggilan/VC | `test/callflow.js`: undangan, dering, jawab, offer/answer/ICE, tutup, tak terjawab, penerima luring, penolakan — lewat **Socket.IO sungguhan** | perbaiki database + restart server |
-| 8 | Berkas rahasia git | `.env`/kunci tidak ikut ter-commit | `git rm --cached` + perbarui `.gitignore` |
+```
+https://whatsapp-mazval.zone.id/admin     # atau https://whatsap-indo.vercel.app/admin
+```
+
+**Terproteksi.** Semua endpoint data & perbaikan menolak siapa pun yang bukan admin.
+Dua jalur masuk:
+
+1. **Kunci `ADMIN_KEY`** — set sebagai variabel lingkungan, lalu kirim lewat header
+   `x-admin-key` (halaman punya kolom "Kunci Admin") atau `?key=...`
+2. **Sesi akun admin** — bila sudah login di aplikasi dengan akun admin
+   (`ovalkyzz@gmail.com` / `ADMIN_EMAILS` / `role=admin`), panel otomatis memakai
+   token dari `localStorage` (`wa_token`) pada origin yang sama.
+
+**Adaptif terhadap lingkungan.** Di server produksi (serverless) pemeriksaan yang
+butuh berkas sumber, `git`, atau `pm2` ditandai **abu-abu (dilewati)** — bukan merah —
+dan tetap bisa dijalankan penuh dari mesin server:
+
+```bash
+npm run admin     # http://127.0.0.1:3200  ->  semua 9 pemeriksaan
+```
+
+| # | Pemeriksaan | Yang diuji | Di domain | Perbaikan otomatis |
+|---|---|---|---|---|
+| 1 | Database & skema | koneksi, tabel, kolom `calls`, dering/panggilan macet, pesan & status yatap | ✓ | migrasi + bersihkan baris macet + `REINDEX`/`wal_checkpoint` |
+| 2 | Server aplikasi | `/`, `manifest.json`, `sw.js`, `/api/health` menjawab | ✓ | — |
+| 3 | Referensi frontend | id DOM duplikat & `$()` yang menunjuk id tak ada | ✓ (diambil lewat HTTP) | — (lapor `app.js:baris`) |
+| 4 | Dependensi | modul runtime terpasang & bisa dimuat | ✓ | `npm install` (lokal) |
+| 5 | Panel admin terkunci | `ADMIN_KEY` & daftar email admin tersedia | ✓ | — (petunjuk pengaturan) |
+| 6 | Sintaks JavaScript | `node --check` pada seluruh berkas sumber | lokal saja | — (lapor lokasi berkas) |
+| 7 | Unit test | `test/crop.js` + `test/calls.js` | lokal saja | — |
+| 8 | Alur panggilan/VC | `test/callflow.js`: undangan, dering, jawab, offer/answer/ICE, tutup, tak terjawab, penerima luring, penolakan — lewat **Socket.IO sungguhan** | lokal saja | perbaiki database + restart server |
+| 9 | Berkas rahasia git | `.env`/kunci tidak ikut ter-commit | lokal saja | `git rm --cached` + perbarui `.gitignore` |
 
 Tombol **"Perbaiki Sekali Klik"** menjalankan perbaikan nyata pada pemeriksaan
 yang merah, lalu **memeriksa ulang seluruhnya** sehingga hasil akhir benar-benar
 terbukti (bukan sekadar status yang dilaporkan selesai). Contoh hasil uji nyata:
-server sengaja dimatikan + baris panggilan macet dimasukkan → 3 pemeriksaan merah
-→ satu klik → kembali 8/8 hijau.
+server sengaja dimatikan + baris panggilan macet dimasukkan → pemeriksaan merah
+→ satu klik → kembali hijau. Pemeriksaan di domain selesai dalam hitungan ratusan
+milidetik karena dijalankan paralel.
 
-Endpoint JSON-nya bisa dipakai monitor: `GET /api/status`, `POST /api/check`,
-`POST /api/fix`. Aplikasi utama sendiri menyediakan `GET /api/health`
-(tanpa autentikasi) untuk uptime monitor.
+Endpoint JSON (semua butuh autentikasi):
+`GET /admin/api/status`, `POST /admin/api/check`, `POST /admin/api/fix`.
+Server terpisah `npm run admin` menyediakan jalur yang sama di root
+(`/api/status`, `/api/check`, `/api/fix`) plus `/admin`. Aplikasi utama sendiri
+menyediakan `GET /api/health` (tanpa autentikasi) untuk uptime monitor.
 
 ## Arsitektur
 
@@ -157,7 +182,9 @@ server/
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
   bratimg.js   # generator gambar lokal bot Generator Gambar (SVG -> sharp -> PNG brattxt-*.png)
 admin/
-  server.js     # server mini admin: 8 pemeriksaan nyata + perbaikan satu klik + dashboard hijau/merah
+  checks.js     # mesin pemeriksaan & perbaikan (adaptif: lokal penuh / serverless ringan)
+  panel.js      # router panel: guard ADMIN_KEY + sesi admin, rate limit, dashboard hijau/merah
+  server.js     # server terpisah (npm run admin) yang memasang panel yang sama di port 3200
 public/
   index.html   # shell SPA (auth, chat, drawer, pusat notifikasi, modal panggilan)
   css/style.css

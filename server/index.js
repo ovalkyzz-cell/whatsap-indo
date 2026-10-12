@@ -17,6 +17,7 @@ const bots = require('./bots');
 const referral = require('./referral');
 const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile } = require('./upload');
+const { createAdminPanel } = require('../admin/panel');
 
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
@@ -1541,6 +1542,9 @@ async function pushNotify(userIds, payload) {
 }
 
 // ---------- static frontend ----------
+// panel admin pemeriksa bug menempel di aplikasi (https://<domain>/admin)
+// sehingga pemeriksaan bisa dijalankan langsung dari domain produksi
+app.use('/admin', createAdminPanel());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint tidak ditemukan' }));
