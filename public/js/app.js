@@ -12,6 +12,7 @@ const S = {
   everConnected: false, // socket pernah tersambung (untuk deteksi reconnect)
   typing: {},     // chatId -> { userId: timeoutId }
   pendingFile: null,
+  pendingFileUrl: null, // object URL pratinjau lampiran (di-revoke saat dibersihkan)
   viewOncePending: false, // lampiran berikutnya = foto sekali lihat
   peerCache: {},  // userId -> user
   statusFeed: [], // hasil /api/status (per pengguna)
@@ -132,6 +133,7 @@ function showApp() {
 }
 
 function logout(callServer = true, message) {
+  if (rec && !rec.done) stopRecording(false); // jangan tinggalkan mikrofon menyala
   if (S.call) {
     try { S.socket?.emit('call:hangup', { to: S.call.peer.id, callId: S.call.callId }); } catch { /* noop */ }
     closeCall();
@@ -452,11 +454,12 @@ function updateChatStatus() {
   const chat = currentChat();
   if (!chat) return;
   const peer = chat.peer;
-  // bot tidak bisa dipanggil: tombol panggilan disembunyikan di header chat
+  // bot & grup tidak punya jalur panggilan 1-ke-1: tombol disembunyikan
   const botPeer = !!(peer && peer.isBot);
+  const hideCall = botPeer || chat.type === 'group';
   for (const id of ['btnCallVoice', 'btnCallVideo']) {
     const el = $(id);
-    if (el) el.style.display = botPeer ? 'none' : '';
+    if (el) el.style.display = hideCall ? 'none' : '';
   }
   const t = S.typing[chat.id];
   if (t && Object.keys(t).length) {
@@ -1266,9 +1269,13 @@ function notify(m) {
   // riwayat pusat notifikasi selalu dicatat; yang sedang dibaca langsung ditandai
   ncAdd({ kind: 'message', title: payload.title, body: payload.body, chatId: payload.chatId, messageId: payload.messageId, icon: payload.icon, at: m.createdAt || Date.now(), read: reading });
   if (reading) { if (NOTIF.sound) beep('notif'); return; }
-  if (NOTIF.sound) notifSound();
-  if (!visible) { void showSystemNotif(payload); return; }
-  showNotifCard(payload);
+  if (!visible) {
+    // luring: bunyikan di sini (showNotifCard tidak dipanggil)
+    if (NOTIF.sound) notifSound();
+    void showSystemNotif(payload);
+    return;
+  }
+  showNotifCard(payload); // sudah membunyikan notifikasi sendiri — jangan dobel
   // jendela terbuka tapi sedang tidak fokus -> notifikasi sistem ala WhatsApp
   if (!focused) void showSystemNotif(payload);
 }
@@ -1778,8 +1785,7 @@ async function uploadAndSend(file, text, chatId, opts = {}) {
       media: meta,
       viewOnce: !!opts.viewOnce,
       duration: opts.duration || 0,
-    }, localId);
-    beep('out');
+    }, localId); // beep('out') sudah dibunyikan di dalam sendViaSocket
   } catch (err) {
     toast(err.message);
     removeLocalMessage(chatId, localId);
@@ -1832,7 +1838,9 @@ $('fileInput').addEventListener('change', () => {
   const info = $('attachInfo');
   let preview = '';
   if (file.type.startsWith('image/')) {
-    preview = `<img src="${URL.createObjectURL(file)}" alt="">`;
+    if (S.pendingFileUrl) URL.revokeObjectURL(S.pendingFileUrl);
+    S.pendingFileUrl = URL.createObjectURL(file);
+    preview = `<img src="${S.pendingFileUrl}" alt="">`;
   }
   info.innerHTML = `<strong>${esc(file.name)}</strong><small>${esc(fmtSize(file.size))} • ${S.viewOncePending ? 'sekali lihat • ' : ''}siap dikirim</small>`;
   const box = $('attachPreview');
@@ -1847,6 +1855,7 @@ $('btnCancelAttach').addEventListener('click', clearAttachPreview);
 function clearAttachPreview() {
   S.pendingFile = null;
   S.viewOncePending = false;
+  if (S.pendingFileUrl) { URL.revokeObjectURL(S.pendingFileUrl); S.pendingFileUrl = null; }
   $('attachPreview').classList.add('hidden');
   $('attachPreview').classList.remove('view-once');
   $('fileInput').value = '';
@@ -3923,6 +3932,7 @@ $('btnCallVideo').addEventListener('click', () => startCall('video'));
 
 function startCall(kind) {
   const chat = currentChat();
+  if (chat && chat.type === 'group') { toast('Panggilan hanya tersedia di chat pribadi'); return; }
   if (!chat || !chat.peer) { toast('Pilih chat terlebih dahulu'); return; }
   if (chat.peer.isBot) { toast('Bot tidak bisa dipanggil'); return; }
   if (S.call) { toast('Sedang dalam panggilan lain'); return; }
@@ -4118,6 +4128,7 @@ async function createPeer(call) {
 
   pc.ontrack = (e) => {
     if (S.call !== call || !e.streams || !e.streams[0]) return;
+    clearTimeout(call.ringTimer); // jalur media terbentuk: dering tak boleh mematikan panggilan
     if (!$('remoteVideo').srcObject) $('remoteVideo').srcObject = e.streams[0];
     $('remoteVideo').style.display = 'block';
     // panggilan suara: avatar tetap tampil; video: avatar hilang saat video tiba
@@ -4140,6 +4151,7 @@ async function createPeer(call) {
     const st = pc.connectionState;
     if (st === 'connected') {
       clearTimeout(call.dropTimer);
+      clearTimeout(call.ringTimer);
       setCallState('Tersambung');
       if (!call.startedAt) startCallTimer();
     } else if (st === 'failed') {
@@ -4187,6 +4199,7 @@ async function handleSignal(signal) {
       setCallState('Menunggu koneksi...');
       armConnectTimeout(call);
     } else if (signal.type === 'answer') {
+      clearTimeout(call.ringTimer); // penerima sudah menjawab: masa dering selesai
       await call.pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
       await flushCandidates(call);
       setCallState('Menunggu koneksi...');
@@ -4339,6 +4352,9 @@ function closeCall() {
   clearTimeout(call.ringTimer);
   clearTimeout(call.connectTimer);
   clearTimeout(call.dropTimer);
+  call.pendingSignals.length = 0;
+  // rantai proses sinyal lama tidak boleh menahan offer/ICE panggilan berikutnya
+  drainChain = Promise.resolve();
   if (call.localStream) call.localStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
   if (call.pc) {
     try {
@@ -4357,6 +4373,16 @@ function closeCall() {
   $('callAvatarFallback').style.display = 'flex';
   S.call = null;
 }
+
+/* Purna tugas halaman: tutup panggilan & perekam supaya mikrofon tidak tetap
+   menyala dan panggilan lawan tidak ditinggal menggantung sampai sapu bersih. */
+window.addEventListener('pagehide', () => {
+  if (rec && !rec.done) stopRecording(false);
+  const call = S.call;
+  if (!call) return;
+  try { S.socket?.emit('call:hangup', { to: call.peer.id, callId: call.callId }); } catch { /* noop */ }
+  closeCall();
+});
 
 $('btnToggleMic').addEventListener('click', () => {
   const call = S.call;

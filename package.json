@@ -7,9 +7,11 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node test/crop.js && node test/calls.js && node test/e2e.js",
+    "admin": "node admin/server.js",
+    "test": "node test/crop.js && node test/calls.js && node test/callflow.js && node test/e2e.js",
     "test:crop": "node test/crop.js",
     "test:calls": "node test/calls.js",
+    "test:callflow": "node test/callflow.js",
     "test:bots": "node test/bot-reply.js"
   },
   "keywords": [

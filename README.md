@@ -20,6 +20,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Centang biru | Badge resmi (segel biru) ala WhatsApp di nama, header chat, profil & info kontak |
 | Bot premium | **69 bot khusus admin & pengguna premium** (premium aktif via `POST /api/admin/premium`) — API dari api-mazval: *Verif AM Prem*, *Generate NFToken*, *AI*, *Downloader*, *Email Generator*, *Tools* + 60 bot generik (Cuaca, Gempa, Jadwal Sholat, Al-Quran, Tafsir Mimpi, Kurs & Kripto, Cek Nomor, Stalk GitHub, Stalk Sosmed, Quotes & Pantun, Tebak-Tebakan, Meme Random, Waifu, Cari Anime & Game, Pencarian Web, Cari Media, Stiker, Screenshot Web, QR Code, Kode Pos & Wilayah, Jadwal Bola, Generator Gambar, Security Domain, Cari NPM, OCR Gambar, Suara MyInstants, Font Keren, Cari Repo, Pencarian Lahelu, Terjemah, Cek IP, Stalk Twitter/X, Stalk Channel, Cari Gambar, Cari Pinterest, Cari Game, Bard Google, Copilot, Claude Opus, GPT-OSS 120B, GPT Klasik, GLM Flash, Phi-2, Deep AI, Public AI, Epsilon AI, PowerBrain, Jeeves AI, AI Realtime, AI Studi, AI Gambar, AI Seni, AI Agama, AI Eksplorasi, Wilayah Indonesia, Simbol Provinsi, Parse NIK, Tracking Paket, NGL, NGL Spam) |
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
+| Cek bug admin | **Server mini admin** terpisah (`npm run admin` → `http://127.0.0.1:3200`): 8 pemeriksaan nyata (sintaks, dependensi, database, server, referensi frontend, unit test, **alur panggilan/VC sungguhan**, berkas rahasia) dengan status **centang hijau = normal** / **merah = perlu diperbaiki**, plus tombol **Perbaiki Sekali Klik** yang memperbaiki lalu memeriksa ulang sampai hijau |
 | Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **69 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 4 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup), **Mingguan Rp10.000** (limit 200/hari), **Bulanan Rp25.000** (tanpa limit), **Permanen Rp50.000** (100 tahun); admin bisa mengubah nama, durasi, harga, limit, bot eksklusif & status permanen |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
@@ -44,9 +45,11 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 npm install
 npm start          # http://localhost:3000
 npm run dev        # auto-reload (node --watch)
-npm test           # crop + calls + e2e (server harus berjalan)
+npm run admin      # server mini admin (cek bug + perbaikan satu klik) di http://127.0.0.1:3200
+npm test           # crop + calls + callflow + e2e (server harus berjalan)
 npm run test:crop  # geometri pemotong foto saja (tanpa server)
 npm run test:calls # unit test mesin panggilan (dering, kirim-ulang, tak terjawab)
+npm run test:callflow # uji alur panggilan/VC nyata lewat Socket.IO (server harus berjalan)
 npm run test:bots  # unit test balasan 69 bot (API dimock, tanpa jaringan)
 ```
 
@@ -97,7 +100,8 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 |---|---|
 | `npm run test:crop` | **22 passed, 0 failed** |
 | `npm run test:calls` | **26 passed, 0 failed** |
-| `npm run test` (e2e) | **313 passed, 15 failed** |
+| `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
+| `npm test` (e2e) | **313 passed, 15 failed** |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
 `MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
@@ -107,6 +111,35 @@ ditolak → tak terjawab), notifikasi, PWA & keamanan **lolos semua**.
 
 Static check pendukung: `eslint` (tanpa error) dan audit `id` DOM
 (280 id di `index.html`, tanpa duplikat, tanpa `$()` yang mengacu ke id tak ada).
+
+## Server mini admin: cek bug + perbaikan satu klik
+
+`npm run admin` menjalankan server terpisah (default `http://127.0.0.1:3200`,
+port/host bisa diubah dengan `ADMIN_PORT`/`ADMIN_HOST`, kunci opsional
+`ADMIN_KEY=...` lalu akses dengan `?key=`). Dashboard-nya menampilkan **centang
+hijau** bila seluruh pemeriksaan normal dan **tanda merah** bila ada masalah —
+semua pemeriksaan dijalankan **nyata di mesin**, bukan simulasi.
+
+| # | Pemeriksaan | Yang diuji | Perbaikan otomatis |
+|---|---|---|---|
+| 1 | Sintaks JavaScript | `node --check` pada 21 berkas sumber | — (lapor lokasi berkas) |
+| 2 | Dependensi | `require` seluruh isi `package.json` | `npm install` |
+| 3 | Database & skema | `integrity_check`, tabel, kolom `calls`, baris macet | migrasi + bersihkan baris panggilan/pesan macet + `REINDEX` & `wal_checkpoint` |
+| 4 | Server aplikasi | `/`, `manifest.json`, `sw.js`, `/api/health` menjawab | restart lewat `pm2` lalu tunggu sampai sehat |
+| 5 | Referensi frontend | id DOM duplikat & `$()` yang menunjuk id tak ada | — (lapor `app.js:baris`) |
+| 6 | Unit test | `test/crop.js` + `test/calls.js` | — |
+| 7 | Alur panggilan/VC | `test/callflow.js`: undangan, dering, jawab, offer/answer/ICE, tutup, tak terjawab, penerima luring, penolakan — lewat **Socket.IO sungguhan** | perbaiki database + restart server |
+| 8 | Berkas rahasia git | `.env`/kunci tidak ikut ter-commit | `git rm --cached` + perbarui `.gitignore` |
+
+Tombol **"Perbaiki Sekali Klik"** menjalankan perbaikan nyata pada pemeriksaan
+yang merah, lalu **memeriksa ulang seluruhnya** sehingga hasil akhir benar-benar
+terbukti (bukan sekadar status yang dilaporkan selesai). Contoh hasil uji nyata:
+server sengaja dimatikan + baris panggilan macet dimasukkan → 3 pemeriksaan merah
+→ satu klik → kembali 8/8 hijau.
+
+Endpoint JSON-nya bisa dipakai monitor: `GET /api/status`, `POST /api/check`,
+`POST /api/fix`. Aplikasi utama sendiri menyediakan `GET /api/health`
+(tanpa autentikasi) untuk uptime monitor.
 
 ## Arsitektur
 
@@ -123,6 +156,8 @@ server/
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
   bratimg.js   # generator gambar lokal bot Generator Gambar (SVG -> sharp -> PNG brattxt-*.png)
+admin/
+  server.js     # server mini admin: 8 pemeriksaan nyata + perbaikan satu klik + dashboard hijau/merah
 public/
   index.html   # shell SPA (auth, chat, drawer, pusat notifikasi, modal panggilan)
   css/style.css
@@ -130,6 +165,11 @@ public/
 test/
   crop.js        # 22 assert geometri pemotong foto: rasio bebas/terkunci, clamp zoom
                  # & geser, koordinat ekspor, jangkar sudut, zoom ke titik (tanpa browser)
+  calls.js       # 26 assert unit mesin panggilan: dering, kirim-ulang, tak terjawab,
+                 # riwayat, pembersih panggilan aktif macet, retensi
+  callflow.js    # 29 assert alur panggilan/VC nyata lewat Socket.IO: undangan, dering,
+                 # jawab, offer/answer/ICE, tutup, timeout palsu, tak terjawab,
+                 # penerima luring -> kirim ulang dering, penolakan bot/sibuk/ditolak
   e2e.js       # e2e: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot

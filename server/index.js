@@ -32,6 +32,17 @@ const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch
 
 app.use(express.json({ limit: '1mb' }));
 
+// Di belakang proxy (Vercel/nginx) req.ip harus diambil dari X-Forwarded-For —
+// tanpa ini semua pengguna berbagi satu kuota rate-limit login (60/menit) dan
+// alamat IP di log monitoring jadi milik proxy. Lokal tanpa proxy tetap off.
+const trustProxyEnv = String(process.env.TRUST_PROXY ?? '').toLowerCase();
+app.set(
+  'trust proxy',
+  trustProxyEnv
+    ? !['0', 'false', 'no', 'off'].includes(trustProxyEnv)
+    : !!process.env.VERCEL
+);
+
 // File yang aman ditampilkan inline; sisanya dipaksa unduh (mencegah XSS
 // lewat file HTML/SVG buatan pengguna pada origin yang sama).
 const INLINE_SAFE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|opus|aac|flac|pdf|txt|csv)$/i;
@@ -384,6 +395,17 @@ async function botAccess(user) {
     admin: auth.isAdmin(user),
   };
 }
+
+// kesehatan ringan tanpa autentikasi — dipakai uptime monitor & server mini admin
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    dialect: db.dialect,
+    uptime: Math.round(process.uptime()),
+    time: Date.now(),
+    version: '1.0.0',
+  });
+});
 
 app.get('/api/plans', auth.requireAuth, ah(async (req, res) => {
   const [plans, access, invite] = await Promise.all([
@@ -837,7 +859,7 @@ app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
   }
   const before = req.query.before ? Number(req.query.before) : Date.now();
   const beforeId = String(req.query.beforeId || '');
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
   // kursor keyset (created_at, id): pesan yang berbagi milidetik yang sama
   // dengan batas halaman tidak lagi terlewat saat menggulir ke atas
   const rows = beforeId
@@ -1560,9 +1582,13 @@ async function broadcastPresence(userId) {
 // kehilangan dering (seperti WhatsApp); hanya pemanggil yang pergi yang membatalkan
 async function cleanupCalls(userId) {
   const mine = await calls.listActiveForUser(userId);
+  // masih ada perangkat lain yang tersambung? dering keluar tidak boleh dibatalkan
+  // hanya karena satu tab ditutup (panggilan berjalan normal di tab lain)
+  const stillOnline = presence.isLocal(userId) || (await presence.hasRemote(userId));
   for (const call of mine) {
     if (call.state === 'ringing') {
       if (call.caller_id !== userId) continue; // penerima offline: dering dibiarkan sampai batas waktu
+      if (stillOnline) continue;
       const removed = await calls.remove(call.id);
       if (removed) await emitToUser(call.callee_id, 'call:ended', { callId: call.id, reason: 'cancelled' });
       continue;
@@ -1779,6 +1805,9 @@ io.on('connection', (socket) => {
         const targetId = String(to || '');
         const id = String(callId || '');
         if (!id) return reply({ ok: false, error: 'Permintaan panggilan tidak valid' });
+        if (!floodGuard(`call:${user.id}`, 10, 60_000)) {
+          return reply({ ok: false, error: 'Terlalu sering menelepon. Mohon tunggu sebentar.' });
+        }
         if (!targetId || targetId === user.id) return reply({ ok: false, error: 'Tidak dapat menelepon pengguna ini' });
         const target = await db.get('SELECT id, is_bot FROM users WHERE id = ?', targetId);
         if (!target) return reply({ ok: false, error: 'Pengguna tidak ditemukan' });
@@ -1856,7 +1885,7 @@ io.on('connection', (socket) => {
         if (String(to || '') && String(to) !== targetId) return; // tujuan harus pesertanya sendiri
         if (!signal || typeof signal !== 'object') return;
         if (!['offer', 'answer', 'candidate'].includes(signal.type)) return;
-        if (signal.type === 'answer') await calls.setState(id, 'active');
+        if (signal.type === 'answer') await calls.activate(id);
         await emitToUser(targetId, 'call:signal', {
           callId: id,
           from: publicCaller(user, targetId),
@@ -1895,10 +1924,19 @@ io.on('connection', (socket) => {
         if (!call || (call.caller_id !== user.id && call.callee_id !== user.id)) return;
         const timedOut = reason === 'timeout';
         const peerId = callPeerId(call, user.id);
-        const changed = await calls.finish(id, timedOut ? 'missed' : 'ended');
-        await emitToUser(peerId, 'call:ended', { callId: id, reason: timedOut ? 'timeout' : 'ended' });
-        await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: 'ended' });
-        if (changed && timedOut) {
+        // alasan "timeout" dari klien hanya berlaku selama panggilan masih
+        // berdering — panggilan yang sudah terhubung ditutup biasa, bukan missed
+        let missed = false;
+        if (timedOut) {
+          missed = await calls.markMissedIfRinging(id);
+          if (!missed) await calls.finish(id, 'ended');
+        } else {
+          await calls.finish(id, 'ended');
+        }
+        const outReason = missed ? 'timeout' : 'ended';
+        await emitToUser(peerId, 'call:ended', { callId: id, reason: outReason });
+        await emitToUserExcept(user.id, socket.id, 'call:ended', { callId: id, reason: outReason });
+        if (missed) {
           await notifyMissedCall(call);
           await notifyCallOutcome(call, 'timeout');
         }
@@ -2122,6 +2160,10 @@ async function handleSend(user, payload) {
   const now = Date.now();
   const mediaUrl = cleanType === 'text' ? null : media?.url || null;
   if (cleanType !== 'text' && !mediaUrl) throw new Error('Media tidak ditemukan');
+  // URL media dari klien dipercaya apa adanya -> wajib lolos validasi yang sama
+  // dengan avatar/status supaya skema berbahaya (javascript:, data:, domain luar)
+  // tidak pernah tersimpan lalu dirender sebagai tautan di layar semua anggota
+  if (mediaUrl && !validChatUrl(mediaUrl)) throw new Error('Media tidak valid. Unggah ulang berkasnya.');
 
   const cleanViewOnce = cleanType === 'image' && !!viewOnce ? 1 : 0;
   const cleanDuration = Math.max(0, Math.min(3_600_000, Math.round(Number(duration) || 0)));

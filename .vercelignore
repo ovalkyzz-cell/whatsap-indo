@@ -9,3 +9,4 @@ test
 .env
 .env.*
 .DS_Store
+admin

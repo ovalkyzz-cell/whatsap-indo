@@ -285,13 +285,30 @@ async function serializeChats(rows, viewerId) {
 }
 
 async function touchRead(chatId, userId) {
+  const now = Date.now();
   await db.run(
     `UPDATE message_status SET status = 'read', at = ?
      WHERE user_id = ? AND status != 'read'
        AND message_id IN (SELECT id FROM messages WHERE chat_id = ?)`,
-    Date.now(),
+    now,
     userId,
     chatId
+  );
+  // Penerima yang sedang luring tidak pernah mendapat baris saat pesan dikirim,
+  // padahal angka belum-dibaca & centang biru dihitung lewat keberadaan baris
+  // 'read' -> buat barisnya sekarang supaya benar-benar terhapus/dilaporkan.
+  await db.run(
+    `INSERT INTO message_status (message_id, user_id, status, at)
+     SELECT id, ?, 'read', ? FROM messages
+      WHERE chat_id = ? AND sender_id <> ? AND deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM message_status s
+                        WHERE s.message_id = messages.id AND s.user_id = ?)
+     ON CONFLICT (message_id, user_id) DO NOTHING`,
+    userId,
+    now,
+    chatId,
+    userId,
+    userId
   );
 }
 

@@ -66,6 +66,31 @@ async function finish(id, state) {
   return res.changes > 0;
 }
 
+/* Penandaan "tak terjawab" hanya sah selama panggilan masih berdering —
+   alasan timeout datang dari klien dan tidak boleh menimpa panggilan yang
+   sudah terhubung (lihat server/index.js call:hangup). */
+async function markMissedIfRinging(id) {
+  const res = await db.run(
+    `UPDATE calls SET state = 'missed', updated_at = ?
+      WHERE id = ? AND state = 'ringing'`,
+    Date.now(),
+    id
+  );
+  return res.changes > 0;
+}
+
+/* Sinyal answer mengubah state hanya bila panggilan masih layak diaktifkan —
+   jawaban yang terlambat tidak bisa menghidupkan kembali panggilan missed. */
+async function activate(id) {
+  const res = await db.run(
+    `UPDATE calls SET state = 'active', updated_at = ?
+      WHERE id = ? AND state IN ('ringing', 'accepted')`,
+    Date.now(),
+    id
+  );
+  return res.changes > 0;
+}
+
 async function remove(id) {
   const res = await db.run('DELETE FROM calls WHERE id = ?', id);
   return res.changes > 0;
@@ -173,6 +198,8 @@ module.exports = {
   setState,
   accept,
   finish,
+  markMissedIfRinging,
+  activate,
   remove,
   listForUser,
   listActiveForUser,
