@@ -37,6 +37,9 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Notifikasi | Nada pesan + **notifikasi sistem saat tab tidak aktif** (tetap terlihat walau tab sedang terbuka) + **Pusat Notifikasi** (lonceng dengan badge, riwayat notifikasi, tandai sudah dibaca, otomatis terisi lagi saat aplikasi dibuka) + **notifikasi panggilan tak terjawab** + **bilah koneksi** "Menghubungkan kembali…" saat socket terputus |
 | Profil | Nama, status, foto profil dengan **pemotong rasio bebas** — geser, cubit/scroll untuk zoom, tarik sudut untuk ubah bentuk, preset *Bebas / 1:1 / 3:4 / 4:3 / 16:9 / 9:16* (berlaku untuk foto profil, foto grup & foto bot) |
 | Responsif | Layout mobile (sidebar/chat bergantian) dan desktop ala WhatsApp Web |
+| Balasan | **Usap bubble pesan ke kanan** (touch/mouse) untuk membalas — indikator ikon muncul mengikuti jari, bar kutipan di atas input dengan tombol batal, kutipan pengirim + isi tampil di bubble, ketuk kutipan untuk **lompat ke pesan asli** (sorot berkedip). Kolom `reply_to` + `reply_preview` (snapshot) di database, divalidasi server: hanya pesan dalam chat yang sama |
+| Gesture back | **Usap dari tepi kiri layar ke kanan** untuk kembali (rasa native/iOS): dari percakapan ke daftar chat, atau menutup foto sekali lihat yang sedang terbuka — bubble mengikuti jari, lepas di ambang 72px = kembali, selain itu snap-back. Tombol **‹ (ikon back)** di action bar atas percakapan berfungsi penuh di mobile |
+| Foto sekali lihat | Lampiran khusus gambar (lampiran → *Foto sekali lihat*): penerima hanya boleh mengambil medianya **satu kali** lewat gerbang `/api/messages/media/:id` (permintaan kedua → 410), bubble terkunci *Buka foto sekali lihat*, penanda *sudah dibuka* tersinkron ke pengirim lewat `message:viewed`. Penutup rapi satu jalur: **tombol X**, **Esc**, dan **usap tepi kiri** — semuanya melepas `src` gambar |
 | Scroll | Momentum halus (`-webkit-overflow-scrolling: touch`), `overscroll-behavior: contain` di tiap kontainer daftar/pesan/drawer, tanpa pull-to-refresh saat dipakai sebagai APK, dan `:hover` dibatasi ke perangkat tetikus supaya baris tidak menempel miring di layar sentuh |
 
 ## Menjalankan
@@ -104,13 +107,14 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:crop` | **22 passed, 0 failed** |
 | `npm run test:calls` | **26 passed, 0 failed** |
 | `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
-| `npm test` (e2e) | **313 passed, 15 failed** |
+| `npm test` (e2e) | **325 passed, 17 failed** |
 
-15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
+17 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
 `MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
-Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model). Seluruh uji
-autentikasi, sesi, chat, grup, admin, media, panggilan (luring → kirim-ulang →
-ditolak → tak terjawab), notifikasi, PWA & keamanan **lolos semua**.
+Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model, Email Generator).
+Seluruh uji autentikasi, sesi, chat, grup, admin, media, **balasan (reply)**,
+panggilan (luring → kirim-ulang → ditolak → tak terjawab), notifikasi, PWA &
+keamanan **lolos semua**.
 
 Static check pendukung: `eslint` (tanpa error) dan audit `id` DOM
 (280 id di `index.html`, tanpa duplikat, tanpa `$()` yang mengacu ke id tak ada).

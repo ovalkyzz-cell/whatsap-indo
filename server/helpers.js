@@ -114,6 +114,10 @@ function serializeMessage(row, status, opts = {}) {
     : viewOnce
       ? (consumed ? null : `/api/messages/media/${row.id}`)
       : row.media_url;
+  let replyPreview = null;
+  if (row.reply_preview) {
+    try { replyPreview = JSON.parse(row.reply_preview); } catch { replyPreview = null; }
+  }
   return {
     id: row.id,
     chatId: row.chat_id,
@@ -129,6 +133,8 @@ function serializeMessage(row, status, opts = {}) {
     duration: Number(row.duration) || 0,
     viewOnce,
     opened: consumed,
+    replyTo: row.reply_to || null,
+    replyPreview,
     createdAt: row.created_at,
     deleted: !!row.deleted_at,
     status: status || 'sent',

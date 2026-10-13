@@ -247,6 +247,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     && /\.menu-list\s*\{[^}]*overflow-y:\s*auto/.test(styleText),
   'seluruh isi drawer punya overflow-y sehingga konten panjang bisa digulir');
 
+  // balasan (usap bubble ke kanan) + gesture tepi back + foto sekali lihat
+  ok(html.includes('id="replyBar"') && html.includes('id="btnCancelReply"') && html.includes('id="ic-reply"')
+    && html.includes('id="replyBarName"') && html.includes('id="replyBarPreview"'),
+    'markup bar balasan & sprite ikon reply tersedia');
+  ok(jsText.includes('function setReply') && jsText.includes('function clearReply')
+    && jsText.includes('function bindSwipeReply') && jsText.includes('bindSwipeReply()')
+    && jsText.includes('function replyPreviewHtml') && jsText.includes("data-jump"),
+    'gesture usap bubble ke kanan untuk balas terpasang di app.js');
+  ok(jsText.includes('replyTo') && jsText.includes('replyPreview'),
+    'kirim pesan & bubble optimis membawa replyTo/replyPreview');
+  ok(jsText.includes('function closeChat') && jsText.includes('function bindEdgeBack')
+    && jsText.includes('bindEdgeBack()') && jsText.includes("btnBack').addEventListener"),
+    'tombol back action bar + gesture tepi kiri terpasang');
+  ok(jsText.includes('function closeViewOnce') && jsText.includes("btnCloseVo').addEventListener")
+    && /function closeViewOnce[\s\S]{0,420}removeAttribute\('src'\)/.test(jsText),
+    'tombol X foto sekali lihat menutup & melepas src');
+  ok(styleText.includes('.reply-bar') && styleText.includes('.reply-quote')
+    && styleText.includes('.msg.swiping') && styleText.includes('touch-action: pan-y')
+    && styleText.includes('.msg.flash'),
+    'style.css punya gaya bar balasan, kutipan, gesture usap & sorot lompat');
+  const dbSrc9 = fs.readFileSync(require('path').join(__dirname, '..', 'server', 'db.js'), 'utf8');
+  ok(dbSrc9.includes("'reply_to'") && dbSrc9.includes("'reply_preview'"),
+    'migrasi database memuat kolom reply_to & reply_preview');
+
   // siap dipasang sebagai APK (Android) maupun aplikasi desktop
   const mf = await (await fetch(BASE + '/manifest.json')).json();
   ok(mf.display === 'standalone' && Array.isArray(mf.display_override)
@@ -506,6 +530,53 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const rmVo = await api(`/api/chats/${chatId}/messages`, { token: tokB });
   const voInB = rmVo.data.messages.find((m) => m.id === voMsg.id);
   ok(voInB && voInB.opened === true && voInB.mediaUrl === null, 'receiver sees consumed state');
+
+  console.log('\n[15b] Balasan (reply)');
+  const bBase = waitEvent(sockB, 'message:new');
+  let baseAck = null;
+  sockA2.emit('message:send', { chatId, type: 'text', body: `Dasar balasan ${stamp}` }, (r) => { baseAck = r; });
+  const baseMsg = await bBase;
+  await sleep(80);
+  ok(baseAck?.ok === true && !!baseMsg.id, 'pesan dasar untuk dibalas terkirim');
+
+  const bRep = waitEvent(sockB, 'message:new');
+  let repAck = null;
+  sockA2.emit('message:send', { chatId, type: 'text', body: `Ini balasan ${stamp}`, replyTo: baseMsg.id }, (r) => { repAck = r; });
+  const repMsg = await bRep;
+  await sleep(80);
+  ok(repAck?.ok === true && repAck.message.replyTo === baseMsg.id, 'replyTo tersimpan & di-ack');
+  ok(repMsg.replyTo === baseMsg.id, 'penerima melihat replyTo');
+  ok(repMsg.replyPreview && typeof repMsg.replyPreview === 'object'
+    && String(repMsg.replyPreview.body).includes('Dasar balasan')
+    && repMsg.replyPreview.senderId === userA.id,
+    'replyPreview memuat snapshot nama pengirim & isi pesan asli');
+
+  let badRepAck = null;
+  sockA2.emit('message:send', { chatId, type: 'text', body: 'Balasan palsu', replyTo: 'id-tidak-ada' }, (r) => { badRepAck = r; });
+  await sleep(200);
+  ok(badRepAck?.ok === false && /tidak ditemukan/i.test(badRepAck.error || ''),
+    'replyTo ke pesan yang tidak ada ditolak');
+
+  // balasan ke pesan di chat lain (bukan anggota chat tsb) juga ditolak
+  const admUserR = await api(`/api/users/search?q=${encodeURIComponent(ADMIN_EMAIL)}`, { token: tokB });
+  const admUser = (admUserR.data.users || [])[0];
+  if (admUser) {
+    const otherChat = await api('/api/chats/direct', {
+      method: 'POST', token: tokB, body: { peerId: admUser.id },
+    });
+    if (otherChat.status === 201 && otherChat.data?.chat?.id) {
+      const otherId = otherChat.data.chat.id;
+      let crossAck = null;
+      sockA2.emit('message:send', { chatId: otherId, type: 'text', body: 'Silang chat', replyTo: baseMsg.id }, (r) => { crossAck = r; });
+      await sleep(200);
+      ok(crossAck?.ok === false, 'replyTo dari chat lain ditolak');
+    }
+  }
+
+  const repList = await api(`/api/chats/${chatId}/messages`, { token: tokB });
+  const storedRep = repList.data.messages.find((m) => m.id === repMsg.id);
+  ok(storedRep && storedRep.replyTo === baseMsg.id && storedRep.replyPreview?.body?.includes('Dasar balasan'),
+    'riwayat pesan memuat balasan lengkap setelah reload');
 
   console.log('\n[16] Anti spam / anti flood');
   let dup1 = null;
@@ -1061,20 +1132,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(chatDown.status === 201, 'admin membuka chat bot Downloader');
   const dChat = chatDown.data.chat.id;
 
-  const downMenuWait = waitEvent(botSock, 'message:new', 12000);
+  const downMenuWait = waitEvent(botSock, 'message:new', 12000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: dChat, type: 'text', body: 'menu' });
   const downMenu = await downMenuWait;
   ok(downMenu && downMenu.senderId === 'bot-down' && /DOWNLOADER/.test(downMenu.body),
     'bot Downloader membalas menu profesional');
 
-  const downErrWait = waitEvent(botSock, 'message:new', 12000);
+  const downErrWait = waitEvent(botSock, 'message:new', 12000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: dChat, type: 'text', body: 'bukan tautan' });
   const downErr = await downErrWait;
   ok(downErr && /Tautan tidak ditemukan/.test(downErr.body),
     'bot Downloader menolak input tanpa tautan dengan rapi');
 
   // unduhan video bisa ratusan MB -> beri waktu stream ke server lebih longgar
-  const downMediaWait = waitEvent(botSock, 'message:new', 180000);
+  const downMediaWait = waitEvent(botSock, 'message:new', 180000).catch(() => null);
   await emitAck(botSock, 'message:send', {
     chatId: dChat,
     type: 'text',
@@ -1089,7 +1160,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(downMedia && /Judul|Tautan unduh|Tautan sumber/.test(downMedia.body || ''),
     'bot Downloader tetap menyertakan judul & tautan');
 
-  const downBareWait = waitEvent(botSock, 'message:new', 180000);
+  const downBareWait = waitEvent(botSock, 'message:new', 180000).catch(() => null);
   await emitAck(botSock, 'message:send', {
     chatId: dChat,
     type: 'text',

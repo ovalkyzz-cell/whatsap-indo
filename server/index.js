@@ -2116,7 +2116,7 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
 }
 
 async function handleSend(user, payload) {
-  const { chatId, type = 'text', body = '', media, viewOnce, duration } = payload || {};
+  const { chatId, type = 'text', body = '', media, viewOnce, duration, replyTo } = payload || {};
   if (!chatId || !(await helpers.isMember(chatId, user.id))) {
     throw new Error('Bukan anggota chat ini');
   }
@@ -2172,12 +2172,30 @@ async function handleSend(user, payload) {
   const cleanViewOnce = cleanType === 'image' && !!viewOnce ? 1 : 0;
   const cleanDuration = Math.max(0, Math.min(3_600_000, Math.round(Number(duration) || 0)));
 
+  // balasan: hanya boleh menunjuk pesan yang sama-sama ada di chat ini
+  let cleanReplyTo = null;
+  let cleanReplyPreview = null;
+  if (replyTo) {
+    const target = await db.get('SELECT * FROM messages WHERE id = ? AND chat_id = ?', String(replyTo), chatId);
+    if (!target) throw new Error('Pesan yang dibalas tidak ditemukan');
+    const targetSender = await db.get('SELECT name FROM users WHERE id = ?', target.sender_id);
+    cleanReplyTo = target.id;
+    cleanReplyPreview = JSON.stringify({
+      senderId: target.sender_id,
+      senderName: targetSender ? targetSender.name : null,
+      type: target.deleted_at ? 'text' : target.type,
+      body: target.deleted_at ? '' : String(target.body || '').slice(0, 160),
+      viewOnce: !target.deleted_at && !!target.view_once,
+      deleted: !!target.deleted_at,
+    });
+  }
+
   // potong kuota tepat sebelum pesan disimpan (habis -> token undangan -> ditolak)
   if (botPeer) await consumeBotQuota(user);
 
   await db.run(
-    `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, view_once, duration, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, view_once, duration, reply_to, reply_preview, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     chatId,
     user.id,
@@ -2189,6 +2207,8 @@ async function handleSend(user, payload) {
     media?.mime || null,
     cleanViewOnce,
     cleanDuration,
+    cleanReplyTo,
+    cleanReplyPreview,
     now
   );
 

@@ -61,6 +61,12 @@
         <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round" />
       </symbol>
+      <symbol id="ic-reply" viewBox="0 0 24 24">
+        <path d="M10 8.5 4.5 14 10 19.5" fill="none" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M4.8 14H15a4.5 4.5 0 0 0 4.5-4.5V6" fill="none" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
       <symbol id="ic-user" viewBox="0 0 24 24">
         <circle cx="12" cy="8.2" r="3.7" fill="none" stroke="currentColor" stroke-width="1.7" />
         <path d="M4.9 19.6c1.2-3.4 4-5.4 7.1-5.4s5.9 2 7.1 5.4" fill="none" stroke="currentColor"
@@ -408,7 +414,9 @@
 
       <div class="chat-active hidden" id="chatActive">
         <header class="chat-header">
-          <button class="icon-btn back-btn" id="btnBack" title="Kembali">‹</button>
+          <button class="icon-btn back-btn" id="btnBack" title="Kembali ke daftar chat" aria-label="Kembali ke daftar chat">
+            <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+          </button>
           <div class="avatar" id="chatAvatar"><span>?</span></div>
           <div class="chat-title" id="chatTitleBox">
             <strong id="chatName">—</strong>
@@ -436,6 +444,18 @@
         </button>
 
         <footer class="composer">
+          <div class="reply-bar hidden" id="replyBar">
+            <div class="reply-bar-quote">
+              <svg viewBox="0 0 24 24" class="ico"><use href="#ic-reply" /></svg>
+              <div class="reply-bar-text">
+                <strong id="replyBarName">—</strong>
+                <small id="replyBarPreview">—</small>
+              </div>
+            </div>
+            <button class="icon-btn" id="btnCancelReply" title="Batalkan balasan" aria-label="Batalkan balasan">
+              <svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg>
+            </button>
+          </div>
           <button class="icon-btn" id="btnAttach" title="Lampirkan file"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-attach" /></svg></button>
           <div class="attach-menu hidden" id="attachMenu">
             <button data-kind="image"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-image" /></svg> Foto</button>

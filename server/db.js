@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS messages (
   opened_at  BIGINT,
   opened_by  TEXT,
   duration   INTEGER NOT NULL DEFAULT 0,
+  reply_to     TEXT,
+  reply_preview TEXT,
   created_at BIGINT NOT NULL,
   deleted_at BIGINT
 );
@@ -289,6 +291,8 @@ CREATE TABLE IF NOT EXISTS messages (
   opened_at  INTEGER,
   opened_by  TEXT,
   duration   INTEGER NOT NULL DEFAULT 0,
+  reply_to     TEXT,
+  reply_preview TEXT,
   created_at INTEGER NOT NULL,
   deleted_at INTEGER
 );
@@ -420,6 +424,8 @@ const TABLE_MIGRATIONS = {
     ['opened_at', 'BIGINT', 'INTEGER'],
     ['opened_by', 'TEXT', 'TEXT'],
     ['duration', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['reply_to', 'TEXT', 'TEXT'],
+    ['reply_preview', 'TEXT', 'TEXT'],
   ],
 };
 

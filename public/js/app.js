@@ -14,6 +14,7 @@ const S = {
   pendingFile: null,
   pendingFileUrl: null, // object URL pratinjau lampiran (di-revoke saat dibersihkan)
   viewOncePending: false, // lampiran berikutnya = foto sekali lihat
+  replyTo: null,        // pesan yang sedang dibalas (objek pesan)
   peerCache: {},  // userId -> user
   statusFeed: [], // hasil /api/status (per pengguna)
   groupDraft: { name: '', members: [] },
@@ -412,6 +413,7 @@ async function openChat(chatId) {
   const chat = S.chats.find((c) => c.id === chatId);
   if (!chat) return;
   S.activeChatId = chatId;
+  clearReply(); // bar balasan tidak boleh ikut pindah chat
   $('appView').classList.add('chat-open');
   $('chatEmpty').classList.add('hidden');
   $('chatActive').classList.remove('hidden');
@@ -772,6 +774,28 @@ function dropMatchingLocal(m) {
   }
 }
 
+function replyPreviewHtml(m) {
+  const rp = m.replyPreview;
+  if (!m.replyTo || !rp) return '';
+  const mine = rp.senderId === (S.me && S.me.id);
+  const name = mine ? 'Anda' : (rp.senderName || 'Pengirim');
+  let body;
+  if (rp.deleted) body = '🚫 Pesan dihapus';
+  else if (rp.viewOnce) body = '📷 Foto sekali lihat';
+  else if (rp.type === 'image') body = '📷 Foto';
+  else if (rp.type === 'video') body = '🎬 Video';
+  else if (rp.type === 'audio') body = '🎤 Pesan suara';
+  else if (rp.type === 'file') body = '📎 Berkas';
+  else body = String(rp.body || '').slice(0, 140) || 'Pesan';
+  return `<button type="button" class="reply-quote" data-jump="${esc(m.replyTo)}" title="Ke pesan asli">
+    <span class="rq-bar" aria-hidden="true"></span>
+    <span class="rq-text">
+      <strong>${esc(name)}</strong>
+      <small>${esc(body)}</small>
+    </span>
+  </button>`;
+}
+
 function messageHtml(m, chat, opts = {}) {
   const out = m.senderId === S.me.id;
   const sender = out
@@ -781,25 +805,28 @@ function messageHtml(m, chat, opts = {}) {
 
   if (m.deleted) {
     inner = `<div class="deleted">🚫 Pesan dihapus</div>`;
-  } else if (m.viewOnce) {
-    inner += m.opened
-      ? `<div class="vo-bubble opened">👁️ Foto sekali lihat sudah dibuka</div>`
-      : `<button type="button" class="vo-bubble" data-vo="${esc(m.id)}"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-lock" /></svg>Buka foto sekali lihat</button>`;
-    if (m.body) inner += renderMsgBody(m.body);
   } else {
-    if (m.type === 'image' && m.mediaUrl) {
-      inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy"></a></div>`;
-    } else if (m.type === 'video' && m.mediaUrl) {
-      inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata"></video></div>`;
-    } else if (m.type === 'audio' && m.mediaUrl) {
-      inner += audioPlayerHtml(m);
-    } else if (m.type === 'file' && m.mediaUrl) {
-      inner += `<a class="msg-file" href="${esc(m.mediaUrl)}" download="${esc(m.mediaName || 'file')}">
-        <span class="file-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg></span>
-        <span class="msg-file-info"><strong>${esc(m.mediaName || 'file')}</strong><small>${esc(fmtSize(m.mediaSize))}</small></span>
-      </a>`;
+    inner += replyPreviewHtml(m);
+    if (m.viewOnce) {
+      inner += m.opened
+        ? `<div class="vo-bubble opened">👁️ Foto sekali lihat sudah dibuka</div>`
+        : `<button type="button" class="vo-bubble" data-vo="${esc(m.id)}"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-lock" /></svg>Buka foto sekali lihat</button>`;
+      if (m.body) inner += renderMsgBody(m.body);
+    } else {
+      if (m.type === 'image' && m.mediaUrl) {
+        inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy"></a></div>`;
+      } else if (m.type === 'video' && m.mediaUrl) {
+        inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata"></video></div>`;
+      } else if (m.type === 'audio' && m.mediaUrl) {
+        inner += audioPlayerHtml(m);
+      } else if (m.type === 'file' && m.mediaUrl) {
+        inner += `<a class="msg-file" href="${esc(m.mediaUrl)}" download="${esc(m.mediaName || 'file')}">
+          <span class="file-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg></span>
+          <span class="msg-file-info"><strong>${esc(m.mediaName || 'file')}</strong><small>${esc(fmtSize(m.mediaSize))}</small></span>
+        </a>`;
+      }
+      if (m.body) inner += renderMsgBody(m.body);
     }
-    if (m.body) inner += renderMsgBody(m.body);
   }
 
   const ticks = out && !m.deleted ? tickHtml(m.status) : '';
@@ -825,9 +852,15 @@ function messageHtml(m, chat, opts = {}) {
 /* ---------- aksi pesan: satu listener delegasi (ringan & cepat) ---------- */
 function bindMessageActions() {
   $('messages').addEventListener('click', onMessagesClick);
+  bindSwipeReply();
 }
 
 async function onMessagesClick(e) {
+  const jumpBtn = e.target.closest('[data-jump]');
+  if (jumpBtn) {
+    jumpToMessage(jumpBtn.dataset.jump);
+    return;
+  }
   const copyBtn = e.target.closest('[data-copy]');
   if (copyBtn) {
     const wrap = copyBtn.closest('.code-block, .numcard');
@@ -855,6 +888,125 @@ async function onMessagesClick(e) {
   if (voBtn) { openViewOnce(voBtn.dataset.vo); return; }
   const playBtn = e.target.closest('.ap-play');
   if (playBtn) toggleAudioPlayer(playBtn.closest('.audio-player'));
+}
+
+/* ---------- balasan (usap bubble ke kanan) ---------- */
+function setReply(m) {
+  if (!m || m.deleted) return;
+  S.replyTo = m;
+  const rp = m.replyPreview || {
+    senderId: m.senderId,
+    senderName: m.senderId === (S.me && S.me.id) ? 'Anda' : null,
+    type: m.type,
+    body: m.body || '',
+    viewOnce: !!m.viewOnce,
+    deleted: false,
+  };
+  const mine = rp.senderId === (S.me && S.me.id);
+  $('replyBarName').textContent = mine ? 'Anda' : (rp.senderName || (currentChat()?.type === 'group' ? 'Anggota' : (currentChat()?.peer?.name || 'Pengirim')));
+  let preview;
+  if (rp.deleted) preview = '🚫 Pesan dihapus';
+  else if (rp.viewOnce) preview = '📷 Foto sekali lihat';
+  else if (rp.type === 'image') preview = '📷 Foto';
+  else if (rp.type === 'video') preview = '🎬 Video';
+  else if (rp.type === 'audio') preview = '🎤 Pesan suara';
+  else if (rp.type === 'file') preview = '📎 Berkas';
+  else preview = String(rp.body || '').slice(0, 120) || 'Pesan';
+  $('replyBarPreview').textContent = preview;
+  $('replyBar').classList.remove('hidden');
+  $('messageInput').focus();
+}
+
+function clearReply() {
+  S.replyTo = null;
+  const bar = $('replyBar');
+  if (bar) bar.classList.add('hidden');
+}
+
+$('btnCancelReply').addEventListener('click', () => {
+  clearReply();
+  $('messageInput').focus();
+});
+
+// lompat ke pesan asli kutipan (bila masih ada di panel)
+function jumpToMessage(id) {
+  const node = msgNode(id);
+  if (!node) { toast('Pesan asli tidak ada di daftar ini'); return; }
+  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  node.classList.add('flash');
+  setTimeout(() => node.classList.remove('flash'), 1100);
+}
+
+// gesture usap bubble ke kanan -> balas (touch & mouse)
+function bindSwipeReply() {
+  const box = $('messages');
+  if (!box) return;
+  let msg = null, startX = 0, startY = 0, pulling = false, decided = false, lastDx = 0;
+
+  const resetSwipe = () => {
+    if (msg) {
+      msg.classList.remove('swiping');
+      msg.style.transform = '';
+      msg.style.transition = '';
+    }
+    box.classList.remove('swiping-any');
+    msg = null; pulling = false; decided = false; lastDx = 0;
+  };
+
+  const onDown = (e) => {
+    if (e.target.closest('button, a, video, audio, input, textarea')) return;
+    const target = e.target.closest('.msg');
+    if (!target || !target.dataset.msg) return;
+    const p = e.touches ? e.touches[0] : e;
+    // tepi kiri khusus gesture "back" (bindEdgeBack) — jangan berebut
+    if (p.clientX <= 30) return;
+    msg = target;
+    startX = p.clientX; startY = p.clientY;
+    pulling = false; decided = false; lastDx = 0;
+  };
+
+  const onMove = (e) => {
+    if (!msg) return;
+    const p = e.touches ? e.touches[0] : e;
+    const dx = p.clientX - startX;
+    const dy = p.clientY - startY;
+    if (!decided) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      decided = true;
+      // hanya tarikan horizontal dominan ke KANAN yang memicu balasan
+      if (!(dx > 0 && dx > Math.abs(dy) * 1.25)) { resetSwipe(); return; }
+      pulling = true;
+      msg.classList.add('swiping');
+      box.classList.add('swiping-any');
+      msg.style.transition = 'none';
+    }
+    if (!pulling) return;
+    if (e.cancelable && e.touches) e.preventDefault();
+    const d = Math.max(0, Math.min(104, dx));
+    lastDx = d;
+    msg.style.transform = `translateX(${d}px)`;
+  };
+
+  const onUp = () => {
+    if (!msg) return;
+    const node = msg;
+    const fired = pulling && lastDx >= 60;
+    if (pulling) {
+      node.style.transition = 'transform .18s cubic-bezier(.22, 1, .36, 1)';
+      node.style.transform = '';
+    }
+    if (fired) {
+      const m = (S.messages[S.activeChatId] || []).find((x) => x.id === node.dataset.msg);
+      if (m && !m.deleted) setReply(m);
+      else if (m && m.deleted) toast('Pesan sudah dihapus');
+    }
+    resetSwipe();
+  };
+
+  box.addEventListener('touchstart', onDown, { passive: true });
+  box.addEventListener('touchmove', onMove, { passive: false });
+  box.addEventListener('touchend', onUp);
+  box.addEventListener('touchcancel', resetSwipe);
 }
 
 /* ---------- scroll: lancar, tanpa lompat ---------- */
@@ -1034,11 +1186,7 @@ function openViewOnce(messageId) {
   viewer.classList.remove('hidden');
 }
 
-$('btnCloseVo').addEventListener('click', () => {
-  $('voViewer').classList.add('hidden');
-  const img = $('voImage');
-  img.removeAttribute('src');
-});
+$('btnCloseVo').addEventListener('click', () => closeViewOnce());
 
 /* ================= socket ================= */
 function connectSocket() {
@@ -1639,24 +1787,27 @@ async function sendMessage() {
   if (!chatId) return;
   const ta = $('messageInput');
   const text = ta.value.trim();
+  const reply = S.replyTo;
 
   if (S.pendingFile) {
     const file = S.pendingFile;
     const viewOnce = S.viewOncePending;
     S.pendingFile = null;
     clearAttachPreview();
-    await uploadAndSend(file, text, chatId, { viewOnce });
+    await uploadAndSend(file, text, chatId, { viewOnce, replyTo: reply });
     ta.value = '';
     ta.style.height = 'auto';
     updateComposerButtons();
+    clearReply();
     return;
   }
 
-  if (!text) return;
+  if (!text) { if (reply) toast('Ketik pesan untuk membalas'); return; }
   ta.value = '';
   ta.style.height = 'auto';
   updateComposerButtons();
-  sendViaSocket({ chatId, type: 'text', body: text });
+  sendViaSocket({ chatId, type: 'text', body: text, replyTo: reply ? reply.id : undefined });
+  clearReply();
 }
 
 function updateComposerButtons() {
@@ -1674,9 +1825,19 @@ function sendViaSocket(payload, localId) {
   let tempId = localId || null;
   if (!tempId && payload.type === 'text' && payload.chatId) {
     tempId = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const rep = payload.replyTo
+      ? (S.messages[payload.chatId] || []).find((x) => x.id === payload.replyTo)
+      : null;
     const tmp = {
       id: tempId, chatId: payload.chatId, senderId: S.me.id, type: 'text',
       body: payload.body || '', createdAt: Date.now(), status: 'sending',
+      replyTo: payload.replyTo || null,
+      replyPreview: rep ? {
+        senderId: rep.senderId,
+        senderName: rep.senderId === S.me.id ? 'Anda' : (rep.senderName || null),
+        type: rep.type, body: String(rep.body || '').slice(0, 140),
+        viewOnce: !!rep.viewOnce, deleted: !!rep.deleted,
+      } : null,
     };
     const box0 = S.messages[payload.chatId] || (S.messages[payload.chatId] = []);
     box0.push(tmp);
@@ -1752,12 +1913,20 @@ async function uploadFile(file, onProgress = () => {}) {
 
 async function uploadAndSend(file, text, chatId, opts = {}) {
   const localId = 'local-' + Date.now();
+  const rep = opts.replyTo || null;
   const tmp = {
     id: localId, chatId, senderId: S.me.id,
     type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'file',
     body: text || '', mediaUrl: null, mediaName: file.name, mediaSize: file.size,
     mime: file.type, createdAt: Date.now(), status: 'sending', _progress: 0,
     viewOnce: !!opts.viewOnce, duration: opts.duration || 0,
+    replyTo: rep ? rep.id : null,
+    replyPreview: rep ? {
+      senderId: rep.senderId,
+      senderName: rep.senderId === (S.me && S.me.id) ? 'Anda' : (rep.senderName || null),
+      type: rep.type, body: String(rep.body || '').slice(0, 140),
+      viewOnce: !!rep.viewOnce, deleted: !!rep.deleted,
+    } : null,
   };
   if (!S.messages[chatId]) S.messages[chatId] = [];
   S.messages[chatId].push(tmp);
@@ -1785,6 +1954,7 @@ async function uploadAndSend(file, text, chatId, opts = {}) {
       media: meta,
       viewOnce: !!opts.viewOnce,
       duration: opts.duration || 0,
+      replyTo: rep ? rep.id : undefined,
     }, localId); // beep('out') sudah dibunyikan di dalam sendViaSocket
   } catch (err) {
     toast(err.message);
@@ -4404,20 +4574,129 @@ $('btnToggleCam').addEventListener('click', () => {
 });
 
 /* ================= misc ui ================= */
-$('btnBack').addEventListener('click', () => {
-  $('appView').classList.remove('chat-open');
+// kembali ke daftar chat (tombol ‹ di action bar atas percakapan & gesture tepi)
+function closeChat(opts = {}) {
+  clearReply();
+  const view = $('appView');
+  if (opts.animate && window.matchMedia('(max-width: 760px)').matches) {
+    view.style.transition = 'transform .2s ease';
+    view.style.transform = 'translateX(24px)';
+    view.style.opacity = '.55';
+    setTimeout(() => {
+      view.style.transition = '';
+      view.style.transform = '';
+      view.style.opacity = '';
+    }, 210);
+  } else {
+    view.style.transition = '';
+    view.style.transform = '';
+    view.style.opacity = '';
+  }
+  view.classList.remove('chat-open');
   S.activeChatId = null;
   $('chatActive').classList.add('hidden');
   $('chatEmpty').classList.remove('hidden');
   renderChatList();
-});
+}
+$('btnBack').addEventListener('click', () => closeChat());
+
+// tutup foto sekali lewat satu jalur (tombol X, Esc, gesture tepi)
+function closeViewOnce() {
+  const viewer = $('voViewer');
+  if (!viewer || viewer.classList.contains('hidden')) return false;
+  viewer.classList.add('hidden');
+  const img = $('voImage');
+  if (img) {
+    img.onload = null;
+    img.onerror = null;
+    img.removeAttribute('src');
+  }
+  return true;
+}
+
+// gesture tepi: usap dari kiri ke kanan untuk kembali (rasa iOS/native)
+function bindEdgeBack() {
+  let st = null;
+  const view = () => $('appView');
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    if (t.clientX > 26) return; // hanya dari tepi kiri
+    const voOpen = $('voViewer') && !$('voViewer').classList.contains('hidden');
+    const storyOpen = $('storyViewer') && !$('storyViewer').classList.contains('hidden');
+    const drawerOpen = DRAWERS.some((d) => !$(d).classList.contains('hidden'))
+      || ($('scrim') && !$('scrim').classList.contains('hidden'));
+    // drawer/panel lain sedang menutupi layar -> gesture tepi dibiarkan untuk mereka
+    if (drawerOpen && !voOpen && !storyOpen) return;
+    if (!view().classList.contains('chat-open') && !voOpen) return;
+    st = { x: t.clientX, y: t.clientY, active: false, dx: 0 };
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!st) return;
+    const t = e.touches[0];
+    const dx = t.clientX - st.x;
+    const dy = Math.abs(t.clientY - st.y);
+    if (!st.active) {
+      // tentukan arah setelah jarak cukup; geser ke kanan dominan -> aktif
+      if (dx > 14 && dx > dy * 1.2) st.active = true;
+      else if (dx < -8 || dy > 16) { st = null; return; }
+      else return;
+    }
+    if (e.cancelable) e.preventDefault();
+    st.dx = dx;
+    const v = view();
+    const over = $('voViewer') && !$('voViewer').classList.contains('hidden');
+    const d = Math.max(0, Math.min(window.innerWidth * 0.85, dx));
+    if (over) $('voViewer').style.transform = `translateX(${d}px)`;
+    else {
+      v.style.transition = 'none';
+      v.style.transform = `translateX(${d}px)`;
+    }
+  }, { passive: false });
+  const finish = () => {
+    if (!st) return;
+    const fired = st.active && st.dx >= 72;
+    const over = $('voViewer') && !$('voViewer').classList.contains('hidden');
+    const v = view();
+    if (over) {
+      const el = $('voViewer');
+      el.style.transition = 'transform .18s ease, opacity .18s ease';
+      if (fired) { el.style.transform = 'translateX(100%)'; el.style.opacity = '0'; }
+      setTimeout(() => {
+        el.style.transition = '';
+        el.style.transform = '';
+        el.style.opacity = '';
+        if (fired) closeViewOnce();
+      }, fired ? 190 : 0);
+    } else if (v.classList.contains('chat-open')) {
+      v.style.transition = 'transform .18s ease';
+      v.style.transform = fired ? 'translateX(100%)' : '';
+      if (fired) {
+        setTimeout(() => {
+          v.style.transition = '';
+          v.style.transform = '';
+          closeChat();
+        }, 185);
+      } else {
+        setTimeout(() => { v.style.transition = ''; }, 190);
+      }
+    }
+    st = null;
+  };
+  document.addEventListener('touchend', finish);
+  document.addEventListener('touchcancel', finish);
+}
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    // hierarki tutup: overlay foto -> drawer -> menu lampiran -> story -> chat
+    if (closeViewOnce()) return;
+    if (!$('storyViewer').classList.contains('hidden')) { closeStory(); return; }
+    const anyDrawer = DRAWERS.some((d) => !$(d).classList.contains('hidden'));
     closeDrawers();
-    $('attachMenu').classList.add('hidden');
-    $('voViewer').classList.add('hidden');
-    if (!$('storyViewer').classList.contains('hidden')) closeStory();
+    if (anyDrawer) return;
+    if (!$('attachMenu').classList.contains('hidden')) { $('attachMenu').classList.add('hidden'); return; }
+    if ($('appView').classList.contains('chat-open') && window.matchMedia('(max-width: 760px)').matches) closeChat();
   }
 });
 
@@ -5068,6 +5347,7 @@ $('btnRecSend').addEventListener('click', () => stopRecording(true));
 (async function init() {
   bindMessageActions(); // satu listener delegasi untuk semua tombol pesan
   bindMessagesScroll();  // scroll + tombol "ke pesan terbaru"
+  bindEdgeBack();        // gesture tepi kiri -> kembali
   void loadHomeBg();
   void registerSW();
   const deepChat = new URLSearchParams(location.search).get('chat');
