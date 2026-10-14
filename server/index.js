@@ -516,6 +516,40 @@ app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   });
 }));
 
+// daftar kontak: direktori pengguna terdaftar (nama + email), bisa dicari & berhalaman
+app.get('/api/contacts', auth.requireAuth, ah(async (req, res) => {
+  if (!floodGuard(`contacts:${req.user.id}`, 300, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu sering memuat kontak. Coba lagi sebentar lagi.' });
+  }
+  const q = String(req.query.q || '').trim();
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 40));
+  const like = `%${q}%`;
+  const where = q
+    ? 'WHERE id <> ? AND (LOWER(email) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))'
+    : 'WHERE id <> ?';
+  const params = q ? [req.user.id, like, like] : [req.user.id];
+  const rows = await db.all(
+    `SELECT * FROM users ${where} ORDER BY LOWER(name) LIMIT ? OFFSET ?`,
+    ...params,
+    limit + 1,
+    offset
+  );
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  // bot internal hanya terlihat oleh admin & premium yang paketnya mencakupnya
+  const canSeeBots = canUseBots(req.user);
+  const excluded = canSeeBots ? await excludedBots(req.user) : new Set();
+  const visible = page.filter((r) => !(bots.isBot(r) && (!canSeeBots || excluded.has(r.id))));
+  const online = await presence.onlineSet(visible.map((r) => r.id));
+  res.json({
+    users: visible.map((r) =>
+      helpers.serializeUser(r, req.user.id, { online: online.has(r.id), premium: false })
+    ),
+    hasMore,
+  });
+}));
+
 // kontak CS/admin: selalu bisa dihubungi — lolos privasi email & pencarian diri sendiri,
 // supaya tombol "Hubungi Admin / CS" selalu membuka chat otomatis
 app.get('/api/cs', auth.requireAuth, ah(async (req, res) => {

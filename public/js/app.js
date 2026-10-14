@@ -2134,7 +2134,7 @@ function clearAttachPreview() {
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
   'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer', 'botCatDrawer',
-  'planDrawer', 'inviteDrawer', 'aboutDrawer', 'storageDrawer'];
+  'planDrawer', 'inviteDrawer', 'aboutDrawer', 'storageDrawer', 'themeDrawer', 'contactsDrawer'];
 
 function openDrawer(id, withScrim = true) {
   DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
@@ -2202,21 +2202,42 @@ async function startDirect(peerId) {
   } catch (err) { toast(err.message); }
 }
 
-/* ================= tema: terang / gelap ================= */
+/* ================= tema: mode +10 warna (aksen) ================= */
+const THEME_ACCENTS = [
+  { id: 'teal',   name: 'Teal',   grad: '#00a884,#008069' },
+  { id: 'biru',   name: 'Biru',   grad: '#1b8fd4,#1565c0' },
+  { id: 'ungu',   name: 'Ungu',   grad: '#7c5cff,#6438e0' },
+  { id: 'nila',   name: 'Nila',   grad: '#5b54e6,#4338ca' },
+  { id: 'toska',  name: 'Toska',  grad: '#0891b2,#0e7490' },
+  { id: 'hijau',  name: 'Hijau',  grad: '#16a34a,#15803d' },
+  { id: 'mawar',  name: 'Mawar',  grad: '#e11d48,#be123c' },
+  { id: 'oranye', name: 'Oranye', grad: '#ea580c,#c2410c' },
+  { id: 'emas',   name: 'Emas',   grad: '#d97706,#b45309' },
+  { id: 'batu',   name: 'Batu',   grad: '#475569,#334155' },
+];
+
 function themeNow() {
   return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function accentNow() {
+  return document.documentElement.getAttribute('data-accent') || 'teal';
+}
+function accentName(id) {
+  const a = THEME_ACCENTS.find((x) => x.id === id);
+  return a ? a.name : 'Teal';
 }
 
 function renderTheme() {
   const t = themeNow();
-  const title = $('themeTitle');
   const label = $('themeLabel');
   const ico = $('themeIco');
-  if (title) title.textContent = t === 'dark' ? 'Mode Terang' : 'Mode Gelap';
-  if (label) label.textContent = t === 'dark' ? 'Mode gelap aktif — ketuk untuk mode terang'
-    : 'Mode terang aktif — ketuk untuk mode gelap';
+  if (label) label.textContent = `${t === 'dark' ? 'Mode gelap' : 'Mode terang'} · Warna ${accentName(accentNow())}`;
   const use = ico && ico.querySelector('use');
   if (use) use.setAttribute('href', t === 'dark' ? '#ic-sun' : '#ic-moon');
+  const toggle = $('themeModeToggle');
+  if (toggle) toggle.checked = t === 'dark';
+  const desc = $('tmModeDesc');
+  if (desc) desc.textContent = t === 'dark' ? 'Mode gelap aktif' : 'Mode terang aktif';
 }
 
 function applyTheme(t) {
@@ -2226,9 +2247,130 @@ function applyTheme(t) {
   renderTheme();
 }
 
-function toggleTheme() { applyTheme(themeNow() === 'dark' ? 'light' : 'dark'); }
+function applyAccent(id) {
+  const accent = THEME_ACCENTS.some((a) => a.id === id) ? id : 'teal';
+  document.documentElement.setAttribute('data-accent', accent);
+  try { localStorage.setItem('wa_accent', accent); } catch (e) { /* storage diblokir */ }
+  document.querySelectorAll('.theme-swatch').forEach((s) => s.classList.toggle('active', s.dataset.accent === accent));
+  renderTheme();
+}
 
-renderTheme();
+function buildThemeGrid() {
+  const grid = $('themeGrid');
+  if (!grid) return;
+  grid.innerHTML = THEME_ACCENTS.map((a) => `
+    <button class="theme-swatch" data-accent="${a.id}" title="${a.name}" style="background:linear-gradient(145deg, ${a.grad})" aria-label="Warna ${a.name}">
+      <span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+      <span class="name">${a.name}</span>
+    </button>`).join('');
+  grid.querySelectorAll('.theme-swatch').forEach((sw) => {
+    sw.addEventListener('click', () => applyAccent(sw.dataset.accent));
+  });
+}
+
+function openThemeDrawer() {
+  buildThemeGrid();
+  applyAccent(accentNow());
+  renderTheme();
+  openDrawer('themeDrawer');
+}
+
+/* muat tema tersimpan lalu bangun pemilih warna */
+(function initTheme() {
+  let savedTheme = 'light';
+  let savedAccent = 'teal';
+  try {
+    savedTheme = localStorage.getItem('wa_theme') || 'light';
+    savedAccent = localStorage.getItem('wa_accent') || 'teal';
+  } catch (e) { /* storage diblokir */ }
+  applyTheme(savedTheme);
+  applyAccent(savedAccent);
+})();
+
+const themeModeEl = $('themeModeToggle');
+if (themeModeEl) themeModeEl.addEventListener('change', () => applyTheme(themeModeEl.checked ? 'dark' : 'light'));
+const btnCloseTheme = $('btnCloseTheme');
+if (btnCloseTheme) btnCloseTheme.addEventListener('click', closeDrawers);
+
+/* ================= kontak: daftar kontak & email tersimpan ================= */
+let contactsOffset = 0;
+let contactsHasMore = false;
+let contactsQuery = '';
+let contactsLoading = false;
+let contactsSearchTimer;
+
+function contactRow(u) {
+  const email = u.email || 'Email disembunyikan';
+  return `
+    <div class="chat-item" data-cuser="${u.id}">
+      <div class="avatar"></div>
+      <div class="chat-item-body">
+        <div class="chat-item-top"><strong>${esc(u.name)}${badge(u.verified)}</strong></div>
+        <div class="chat-item-bottom"><div class="chat-item-preview">${esc(email)}</div></div>
+      </div>
+    </div>`;
+}
+
+async function loadContacts(reset) {
+  if (contactsLoading) return;
+  if (reset) { contactsOffset = 0; contactsHasMore = true; }
+  if (!contactsHasMore && !reset) return;
+  contactsLoading = true;
+  const list = $('contactsList');
+  const moreBtn = $('contactsMore');
+  if (reset) list.innerHTML = '<div class="empty-state">Memuat kontak...</div>';
+  try {
+    const q = encodeURIComponent(contactsQuery);
+    const data = await api(`/api/contacts?q=${q}&offset=${contactsOffset}&limit=40`);
+    const users = data.users || [];
+    contactsHasMore = !!data.hasMore;
+    contactsOffset += users.length;
+    if (reset && !users.length) {
+      list.innerHTML = '<div class="empty-state">Belum ada kontak lain yang terdaftar.</div>';
+    } else {
+      if (reset) list.innerHTML = '';
+      list.insertAdjacentHTML('beforeend', users.map(contactRow).join(''));
+      users.forEach((u) => {
+        const el = list.querySelector(`[data-cuser="${u.id}"] .avatar`);
+        if (el) setAvatar(el, u);
+      });
+      list.querySelectorAll('[data-cuser]').forEach((el) => {
+        if (el.dataset.bound) return;
+        el.dataset.bound = '1';
+        el.addEventListener('click', () => startDirect(el.dataset.cuser));
+      });
+    }
+    if (moreBtn) moreBtn.classList.toggle('hidden', !contactsHasMore);
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
+  } finally {
+    contactsLoading = false;
+  }
+}
+
+function openContacts() {
+  openDrawer('contactsDrawer');
+  contactsQuery = '';
+  const inp = $('contactsSearch');
+  if (inp) inp.value = '';
+  loadContacts(true);
+  if (inp) inp.focus();
+}
+
+(function initContactsUI() {
+  const inp = $('contactsSearch');
+  if (inp) inp.addEventListener('input', () => {
+    clearTimeout(contactsSearchTimer);
+    contactsSearchTimer = setTimeout(() => {
+      contactsQuery = inp.value.trim();
+      loadContacts(true);
+    }, 320);
+  });
+  const moreBtn = $('contactsMore');
+  if (moreBtn) moreBtn.addEventListener('click', () => loadContacts(false));
+  const btnClose = $('btnCloseContacts');
+  if (btnClose) btnClose.addEventListener('click', closeDrawers);
+})();
 
 /* ================= menu drawer ================= */
 document.querySelectorAll('.menu-item').forEach((btn) => {
@@ -2240,7 +2382,8 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'invite') openInviteDrawer();
     else if (action === 'wallpaper') openWallpaper();
     else if (action === 'homebg') openHomeBg();
-    else if (action === 'theme') toggleTheme();
+    else if (action === 'theme') openThemeDrawer();
+    else if (action === 'contacts') openContacts();
     else if (action === 'privacy') openPrivacy();
     else if (action === 'bots') openBotCatalog();
     else if (action === 'admin') openAdminPanel();

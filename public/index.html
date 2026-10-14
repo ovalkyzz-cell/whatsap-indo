@@ -614,9 +614,14 @@
           <span class="mi-text"><strong>Latar Halaman Utama</strong><small>Background daftar chat milik Anda</small></span>
           <span class="mi-arrow">›</span>
         </button>
+        <button class="menu-item" data-menu="contacts" id="menuContacts">
+          <span class="mi-ico mi-ico-blue"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-users" /></svg></span>
+          <span class="mi-text"><strong>Kontak</strong><small>Daftar kontak &amp; email tersimpan</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
         <button class="menu-item" data-menu="theme" id="menuTheme">
           <span class="mi-ico" id="themeIco"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-moon" /></svg></span>
-          <span class="mi-text"><strong id="themeTitle">Mode Gelap</strong><small id="themeLabel">Mode terang aktif — ketuk untuk mode gelap</small></span>
+          <span class="mi-text"><strong>Tema &amp; Warna</strong><small id="themeLabel">Mode terang · Warna teal</small></span>
           <span class="mi-arrow">›</span>
         </button>
         <button class="menu-item" data-menu="privacy">
@@ -795,6 +800,51 @@
 
         <p class="wp-hint">Latar hanya berlaku untuk akun Anda. Video diputar tanpa suara (muted) di belakang percakapan.</p>
         <p class="wp-status hidden" id="wpStatus"></p>
+      </div>
+    </div>
+
+    <!-- ============ TEMA & WARNA ============ -->
+    <div class="drawer drawer-right hidden" id="themeDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseTheme" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Tema &amp; Warna</strong>
+      </header>
+      <div class="theme-body">
+        <div class="theme-mode-row">
+          <div class="tm-text">
+            <strong>Mode Gelap</strong>
+            <small id="tmModeDesc">Mode terang aktif</small>
+          </div>
+          <label class="switch" title="Alihkan mode gelap">
+            <input type="checkbox" id="themeModeToggle" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="theme-section-label">Warna Tampilan</p>
+        <div class="theme-grid" id="themeGrid"></div>
+        <p class="theme-hint">Pilih salah satu dari 10 warna profesional premium. Berlaku seketika &amp; diingat untuk akun Anda.</p>
+      </div>
+    </div>
+
+    <!-- ============ KONTAK ============ -->
+    <div class="drawer drawer-right hidden" id="contactsDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseContacts" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Kontak</strong>
+        <span class="contacts-badge" id="contactsBadge"></span>
+      </header>
+      <div class="contacts-body">
+        <div class="search-wrap">
+          <input type="search" id="contactsSearch" placeholder="Cari nama atau email kontak..." />
+        </div>
+        <div class="chat-list" id="contactsList">
+          <div class="empty-state">Memuat kontak...</div>
+        </div>
+        <button class="btn-ghost contacts-more hidden" id="contactsMore">Muat lebih banyak</button>
       </div>
     </div>
 
