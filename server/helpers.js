@@ -202,7 +202,7 @@ function serializeUser(row, viewerId, opts = {}) {
 async function loadChatBundle(rows, viewerId) {
   const bundle = {
     peers: new Map(), last: new Map(), unread: new Map(), statuses: new Map(),
-    counts: new Map(), roles: new Map(), viewerId,
+    counts: new Map(), roles: new Map(), archived: new Map(), viewerId,
   };
   const chatIds = rows.map((r) => r.id);
   if (!chatIds.length) return bundle;
@@ -226,11 +226,14 @@ async function loadChatBundle(rows, viewerId) {
   for (const row of countRows) bundle.counts.set(row.chat_id, Number(row.n));
 
   const roleRows = await db.all(
-    `SELECT chat_id, role FROM chat_members WHERE chat_id IN (${ids}) AND user_id = ?`,
+    `SELECT chat_id, role, archived FROM chat_members WHERE chat_id IN (${ids}) AND user_id = ?`,
     ...chatIds,
     viewerId
   );
-  for (const row of roleRows) bundle.roles.set(row.chat_id, row.role);
+  for (const row of roleRows) {
+    bundle.roles.set(row.chat_id, row.role);
+    bundle.archived.set(row.chat_id, !!row.archived);
+  }
 
   const lastRows = await db.all(
     `SELECT m.* FROM messages m
@@ -279,6 +282,7 @@ function buildChat(row, bundle, online) {
       : null,
     lastMessage: last ? serializeMessage(last, bundle.statuses.get(last.id) || 'sent') : null,
     unread: bundle.unread.get(row.id) || 0,
+    archived: !!bundle.archived.get(row.id),
     createdAt: row.created_at,
   };
 }

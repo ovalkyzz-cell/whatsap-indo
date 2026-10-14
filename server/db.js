@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS chat_members (
   chat_id  TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role     TEXT NOT NULL DEFAULT 'member',
+  archived SMALLINT NOT NULL DEFAULT 0,
   joined_at BIGINT NOT NULL,
   PRIMARY KEY (chat_id, user_id)
 );
@@ -275,6 +276,7 @@ CREATE TABLE IF NOT EXISTS chat_members (
   chat_id  TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role     TEXT NOT NULL DEFAULT 'member',
+  archived INTEGER NOT NULL DEFAULT 0,
   joined_at INTEGER NOT NULL,
   PRIMARY KEY (chat_id, user_id)
 );
@@ -420,6 +422,9 @@ const TABLE_MIGRATIONS = {
   chats: [
     ['avatar', 'TEXT', 'TEXT'],
     ['created_by', 'TEXT', 'TEXT'],
+  ],
+  chat_members: [
+    ['archived', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   calls: [
     ['answered_at', 'BIGINT', 'INTEGER'],

@@ -13,7 +13,7 @@ const S = {
   typing: {},     // chatId -> { userId: timeoutId }
   pendingFile: null,
   pendingFileUrl: null, // object URL pratinjau lampiran (di-revoke saat dibersihkan)
-  viewOncePending: false, // lampiran berikutnya = foto sekali lihat
+  viewOncePending: false, // lampiran berikutnya = foto/video sekali lihat
   replyTo: null,        // pesan yang sedang dibalas (objek pesan)
   peerCache: {},  // userId -> user
   statusFeed: [], // hasil /api/status (per pengguna)
@@ -32,6 +32,7 @@ const UI = {
   newWhileUp: 0,       // pesan baru masuk ketika sedang membaca ke atas
   raf: 0,              // frame pending untuk listener scroll
   chatsRaf: 0,         // frame pending untuk render daftar chat
+  archivedOpen: false, // panel "Arsip" di daftar chat sedang dibuka
 };
 
 /* ================= helpers ================= */
@@ -350,22 +351,13 @@ function renderChatList() {
 function renderChatListNow() {
   const q = $('searchInput').value.trim().toLowerCase();
   const scope = S.chats.filter((c) => (sideTab === 'groups' ? c.type === 'group' : true));
-  const list = scope.filter((c) => {
+  const matches = scope.filter((c) => {
     if (!q) return true;
     return chatTitle(c).toLowerCase().includes(q) || (c.peer?.email || '').toLowerCase().includes(q);
   });
   const el = $('chatList');
-  if (!list.length) {
-    const empty = q
-      ? 'Tidak ada hasil'
-      : sideTab === 'groups'
-        ? 'Belum ada grup. Tekan "Buat grup" di atas untuk memulai.'
-        : 'Belum ada chat. Tekan ✏️ untuk chat baru.';
-    el.innerHTML = `<div class="empty-state">${empty}</div>`;
-    updateNavBadges();
-    return;
-  }
-  el.innerHTML = list.map((c) => {
+
+  const itemHtml = (c) => {
     const last = c.lastMessage;
     const time = last ? fmtListTime(last.createdAt) : '';
     const mine = last && last.senderId === S.me.id;
@@ -385,19 +377,81 @@ function renderChatListNow() {
           ${c.unread ? `<span class="unread-badge">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
         </div>
       </div>
+      <button class="chat-item-arch" type="button" data-arch="${esc(c.id)}" title="${c.archived ? 'Keluarkan dari arsip' : 'Arsipkan chat'}">
+        <svg viewBox="0 0 24 24" class="ico"><use href="#ic-archive" /></svg>
+      </button>
     </div>`;
-  }).join('');
+  };
 
-  list.forEach((c) => {
-    const av = el.querySelector(`.chat-item[data-chat="${c.id}"] .avatar`);
-    if (av) setAvatar(av, c.type === 'group' ? { name: c.name, avatar: c.avatar } : c.peer);
-  });
+  const wire = (container) => {
+    container.querySelectorAll('.chat-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('[data-arch]')) return;
+        openChat(item.dataset.chat);
+      });
+    });
+    container.querySelectorAll('[data-arch]').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); toggleArchive(btn.dataset.arch); });
+    });
+    container.querySelectorAll('.chat-item').forEach((item) => {
+      const c = S.chats.find((x) => x.id === item.dataset.chat);
+      const av = item.querySelector('.avatar');
+      if (c && av) setAvatar(av, c.type === 'group' ? { name: c.name, avatar: c.avatar } : c.peer);
+    });
+  };
 
-  el.querySelectorAll('.chat-item').forEach((item) => {
-    item.addEventListener('click', () => openChat(item.dataset.chat));
-  });
+  if (!matches.length) {
+    const empty = q
+      ? 'Tidak ada hasil'
+      : sideTab === 'groups'
+        ? 'Belum ada grup. Tekan "Buat grup" di atas untuk memulai.'
+        : 'Belum ada chat. Tekan ✏️ untuk chat baru.';
+    el.innerHTML = `<div class="empty-state">${empty}</div>`;
+    updateNavBadges();
+    return;
+  }
 
+  // pencarian: semua hasil (termasuk yang diarsipkan) ditampilkan datar
+  if (q) {
+    el.innerHTML = matches.map(itemHtml).join('');
+    wire(el);
+    updateNavBadges();
+    return;
+  }
+
+  const archived = matches.filter((c) => c.archived);
+  const main = matches.filter((c) => !c.archived);
+  let html = '';
+  if (archived.length) {
+    html += `
+    <button class="arch-bar ${UI.archivedOpen ? 'open' : ''}" id="archBar" type="button">
+      <svg viewBox="0 0 24 24" class="ico"><use href="#ic-archive" /></svg>
+      <span>Arsip</span>
+      <span class="arch-count">${archived.length}</span>
+    </button>`;
+    if (UI.archivedOpen) html += archived.map(itemHtml).join('');
+  }
+  html += main.map(itemHtml).join('');
+  el.innerHTML = html;
+  wire(el);
+  const archBar = $('archBar');
+  if (archBar) archBar.addEventListener('click', () => { UI.archivedOpen = !UI.archivedOpen; renderChatList(); });
   updateNavBadges();
+}
+
+async function toggleArchive(chatId) {
+  const c = S.chats.find((x) => x.id === chatId);
+  if (!c) return;
+  const next = !c.archived;
+  try {
+    await api(`/api/chats/${chatId}/archive`, { method: 'POST', body: { archived: next } });
+    c.archived = next;
+    if (next) UI.archivedOpen = true; // langsung terlihat di panel arsip
+    toast(next ? 'Chat diarsipkan' : 'Chat dikeluarkan dari arsip');
+    renderChatList();
+  } catch (err) {
+    toast(err.message || 'Gagal mengubah arsip');
+  }
 }
 
 function tickHtml(status) {
@@ -781,7 +835,7 @@ function replyPreviewHtml(m) {
   const name = mine ? 'Anda' : (rp.senderName || 'Pengirim');
   let body;
   if (rp.deleted) body = '🚫 Pesan dihapus';
-  else if (rp.viewOnce) body = '📷 Foto sekali lihat';
+  else if (rp.viewOnce) body = `📷 ${rp.type === 'video' ? 'Video' : 'Foto'} sekali lihat`;
   else if (rp.type === 'image') body = '📷 Foto';
   else if (rp.type === 'video') body = '🎬 Video';
   else if (rp.type === 'audio') body = '🎤 Pesan suara';
@@ -808,9 +862,10 @@ function messageHtml(m, chat, opts = {}) {
   } else {
     inner += replyPreviewHtml(m);
     if (m.viewOnce) {
+      const voLabel = m.type === 'video' ? 'Video' : 'Foto';
       inner += m.opened
-        ? `<div class="vo-bubble opened">👁️ Foto sekali lihat sudah dibuka</div>`
-        : `<button type="button" class="vo-bubble" data-vo="${esc(m.id)}"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-lock" /></svg>Buka foto sekali lihat</button>`;
+        ? `<div class="vo-bubble opened">👁️ ${voLabel} sekali lihat sudah dibuka</div>`
+        : `<button type="button" class="vo-bubble" data-vo="${esc(m.id)}"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-lock" /></svg>Buka ${voLabel.toLowerCase()} sekali lihat</button>`;
       if (m.body) inner += renderMsgBody(m.body);
     } else {
       if (m.type === 'image' && m.mediaUrl) {
@@ -906,7 +961,7 @@ function setReply(m) {
   $('replyBarName').textContent = mine ? 'Anda' : (rp.senderName || (currentChat()?.type === 'group' ? 'Anggota' : (currentChat()?.peer?.name || 'Pengirim')));
   let preview;
   if (rp.deleted) preview = '🚫 Pesan dihapus';
-  else if (rp.viewOnce) preview = '📷 Foto sekali lihat';
+  else if (rp.viewOnce) preview = `📷 ${rp.type === 'video' ? 'Video' : 'Foto'} sekali lihat`;
   else if (rp.type === 'image') preview = '📷 Foto';
   else if (rp.type === 'video') preview = '🎬 Video';
   else if (rp.type === 'audio') preview = '🎤 Pesan suara';
@@ -1165,25 +1220,65 @@ function toggleAudioPlayer(wrap) {
   audio.play().catch(() => { stopAudio(); toast('Gagal memutar pesan suara'); });
 }
 
-/* ---------- foto sekali lihat ---------- */
-function openViewOnce(messageId) {
+/* ---------- foto/video sekali lihat ----------
+   Server menjaga "sekali lihat" secara atomik lewat /api/messages/media/:id
+   (penerima pertama menang; sisanya 410). <img>/<video> biasa tidak mengirim
+   header Authorization, jadi media diambil lewat fetch ber-token lalu
+   ditampilkan sebagai blob URL — hanya sekali, sesuai aturan server. */
+let voBlobUrl = null;
+
+function releaseVoBlob() {
+  if (voBlobUrl) { URL.revokeObjectURL(voBlobUrl); voBlobUrl = null; }
+}
+
+async function openViewOnce(messageId) {
   const arr = S.messages[S.activeChatId] || [];
   const m = arr.find((x) => x.id === messageId);
-  if (!m || !m.mediaUrl) { toast('Foto sekali lihat sudah dibuka'); return; }
+  if (!m || !m.mediaUrl) { toast('Media sekali lihat sudah dibuka'); return; }
+  const isVideo = m.type === 'video';
+  const label = isVideo ? 'Video' : 'Foto';
   const viewer = $('voViewer');
-  const img = $('voImage');
-  img.onload = () => {
-    // server menandai "sudah dibuka" saat berkas pertama kali diminta
-    m.opened = true;
-    patchMessage(m);
-  };
-  img.onerror = () => {
-    m.opened = true;
-    patchMessage(m);
-    toast('Foto sekali lihat sudah dibuka');
-  };
-  img.src = m.mediaUrl;
+  const stage = $('voStage');
+  const note = $('voNote');
+  releaseVoBlob();
+  stage.innerHTML = `<div class="vo-loading">Memuat ${label.toLowerCase()}…</div>`;
+  note.textContent = `${label} ini hanya bisa dilihat satu kali.`;
   viewer.classList.remove('hidden');
+
+  try {
+    const r = await fetch(m.mediaUrl, { headers: { Authorization: `Bearer ${S.token}` } });
+    if (!r.ok) {
+      // 410 = sudah dikonsumsi penerima lain -> tandai; error lain biarkan tombol agar bisa coba lagi
+      if (r.status === 410) { m.opened = true; patchMessage(m); }
+      stage.innerHTML = `<div class="vo-gone">${r.status === 410 ? '⏱' : '⚠️'} ${r.status === 410 ? `${label} sekali lihat sudah dibuka.` : 'Gagal memuat media.'}</div>`;
+      note.textContent = '';
+      return;
+    }
+    const blob = await r.blob();
+    voBlobUrl = URL.createObjectURL(blob);
+    if (isVideo) {
+      const v = document.createElement('video');
+      v.className = 'vo-video';
+      v.src = voBlobUrl;
+      v.controls = true;
+      v.autoplay = true;
+      v.playsInline = true;
+      v.setAttribute('playsinline', '');
+      stage.appendChild(v);
+    } else {
+      const img = document.createElement('img');
+      img.className = 'vo-img';
+      img.alt = label;
+      img.src = voBlobUrl;
+      stage.appendChild(img);
+    }
+    // server sudah menandai opened_at pada pengambilan pertama -> sinkronkan UI
+    m.opened = true;
+    patchMessage(m);
+  } catch {
+    stage.innerHTML = `<div class="vo-gone">⚠️ Gagal memuat media. Periksa koneksi lalu coba lagi.</div>`;
+    note.textContent = '';
+  }
 }
 
 $('btnCloseVo').addEventListener('click', () => closeViewOnce());
@@ -1246,6 +1341,7 @@ function connectSocket() {
     const chat = S.chats.find((c) => c.id === m.chatId);
     if (chat) {
       chat.lastMessage = m;
+      chat.archived = false; // server mengeluarkan chat dari arsip saat ada pesan baru
       if (m.senderId !== S.me.id && S.activeChatId !== m.chatId) chat.unread = (chat.unread || 0) + 1;
       S.chats.sort((a, b) => (b.lastMessage?.createdAt || b.createdAt) - (a.lastMessage?.createdAt || a.createdAt));
     }
@@ -1394,7 +1490,7 @@ function buildNotifPayload(m) {
   const kind = { image: '📷 Foto', video: '🎬 Video', audio: '🎵 Pesan suara', file: '📄 File' }[m.type];
   let body;
   if (m.deleted) body = 'Pesan dihapus';
-  else if (m.viewOnce) body = '📷 Foto sekali lihat';
+  else if (m.viewOnce) body = `📷 ${m.type === 'video' ? 'Video' : 'Foto'} sekali lihat`;
   else if (m.body) body = kind ? `${kind} • ${m.body}` : m.body;
   else body = kind || 'Pesan baru';
   return {
@@ -1979,7 +2075,7 @@ $('attachMenu').querySelectorAll('button').forEach((b) => {
     const input = $('fileInput');
     if (kind === 'viewonce') {
       S.viewOncePending = true;
-      input.accept = 'image/*';
+      input.accept = 'image/*,video/*';
       input.value = '';
       input.click();
       return;
@@ -1999,23 +2095,27 @@ $('fileInput').addEventListener('change', () => {
     S.viewOncePending = false;
     return;
   }
-  if (S.viewOncePending && !file.type.startsWith('image/')) {
-    toast('Foto sekali lihat hanya untuk gambar');
+  const isImage = file.type.startsWith('image/');
+  const isVideo = file.type.startsWith('video/');
+  if (S.viewOncePending && !isImage && !isVideo) {
+    toast('Sekali lihat hanya untuk gambar atau video');
     S.viewOncePending = false;
     return;
   }
   S.pendingFile = file;
   const info = $('attachInfo');
   let preview = '';
-  if (file.type.startsWith('image/')) {
+  if (isImage || isVideo) {
     if (S.pendingFileUrl) URL.revokeObjectURL(S.pendingFileUrl);
     S.pendingFileUrl = URL.createObjectURL(file);
-    preview = `<img src="${S.pendingFileUrl}" alt="">`;
+    preview = isVideo
+      ? `<video src="${S.pendingFileUrl}" muted playsinline></video>`
+      : `<img src="${S.pendingFileUrl}" alt="">`;
   }
   info.innerHTML = `<strong>${esc(file.name)}</strong><small>${esc(fmtSize(file.size))} • ${S.viewOncePending ? 'sekali lihat • ' : ''}siap dikirim</small>`;
   const box = $('attachPreview');
-  const oldImg = box.querySelector('img');
-  if (oldImg) oldImg.remove();
+  const oldMedia = box.querySelector('img, video');
+  if (oldMedia) oldMedia.remove();
   box.insertAdjacentHTML('afterbegin', preview);
   box.classList.toggle('view-once', S.viewOncePending);
   box.classList.remove('hidden');
@@ -4889,17 +4989,17 @@ function closeChat(opts = {}) {
 }
 $('btnBack').addEventListener('click', () => closeChat());
 
-// tutup foto sekali lewat satu jalur (tombol X, Esc, gesture tepi)
+// tutup foto/video sekali lewat satu jalur (tombol X, Esc, gesture tepi)
 function closeViewOnce() {
   const viewer = $('voViewer');
   if (!viewer || viewer.classList.contains('hidden')) return false;
-  viewer.classList.add('hidden');
-  const img = $('voImage');
-  if (img) {
-    img.onload = null;
-    img.onerror = null;
-    img.removeAttribute('src');
+  releaseVoBlob();
+  const stage = $('voStage');
+  if (stage) {
+    stage.querySelectorAll('video').forEach((v) => { try { v.pause(); } catch { /* abaikan */ } });
+    stage.innerHTML = '';
   }
+  viewer.classList.add('hidden');
   return true;
 }
 

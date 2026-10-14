@@ -261,8 +261,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     && jsText.includes('bindEdgeBack()') && jsText.includes("btnBack').addEventListener"),
     'tombol back action bar + gesture tepi kiri terpasang');
   ok(jsText.includes('function closeViewOnce') && jsText.includes("btnCloseVo').addEventListener")
-    && /function closeViewOnce[\s\S]{0,420}removeAttribute\('src'\)/.test(jsText),
-    'tombol X foto sekali lihat menutup & melepas src');
+    && jsText.includes('function releaseVoBlob') && jsText.includes('revokeObjectURL'),
+    'tombol X foto/video sekali lihat menutup & melepas blob media');
   ok(styleText.includes('.reply-bar') && styleText.includes('.reply-quote')
     && styleText.includes('.msg.swiping') && styleText.includes('touch-action: pan-y')
     && styleText.includes('.msg.flash'),
@@ -617,18 +617,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     'overview admin (statistik + paket)');
 
   const grant1 = await api('/api/admin/premium', {
-    method: 'POST', token: tokAdm, body: { email: userA.email, plan: 'mingguan' },
+    method: 'POST', token: tokAdm, body: { email: userA.email, plan: 'bulanan' },
   });
   ok(grant1.status === 200 && grant1.data.user.premiumActive === true && grant1.data.user.verified === true,
     'premium diberikan lewat email');
   const meA2 = await api('/api/auth/me', { token: tokA });
-  ok(meA2.data.user.verified === true && meA2.data.user.premium.active === true && meA2.data.user.premium.plan === 'mingguan',
+  ok(meA2.data.user.verified === true && meA2.data.user.premium.active === true && meA2.data.user.premium.plan === 'bulanan',
     'centang biru premium aktif di akun');
   const meB2 = await api('/api/auth/me', { token: tokB });
   ok(meB2.data.user.verified === false && meB2.data.user.premium.active === false, 'non-premium tanpa centang biru');
 
   const listU = await api(`/api/admin/users?q=${encodeURIComponent(userA.email)}`, { token: tokAdm });
-  ok(listU.status === 200 && listU.data.users.length === 1 && listU.data.users[0].plan === 'mingguan',
+  ok(listU.status === 200 && listU.data.users.length === 1 && listU.data.users[0].plan === 'bulanan',
     'daftar pengguna admin mencari lewat email');
 
   const setPlans = await api('/api/admin/settings', {

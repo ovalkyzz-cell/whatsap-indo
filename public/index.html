@@ -286,6 +286,12 @@
           fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"
           transform="rotate(133.5 12 12)" />
       </symbol>
+      <symbol id="ic-archive" viewBox="0 0 24 24">
+        <rect x="3.2" y="4.4" width="17.6" height="4.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M4.8 8.8v9.4a1.4 1.4 0 0 0 1.4 1.4h11.6a1.4 1.4 0 0 0 1.4-1.4V8.8" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M10 12.6h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </symbol>
     </defs>
   </svg>
 
@@ -462,7 +468,7 @@
             <button data-kind="video"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg> Video</button>
             <button data-kind="audio"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-audio" /></svg> Audio</button>
             <button data-kind="file"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg> Dokumen</button>
-            <button data-kind="viewonce"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-viewonce" /></svg> Foto sekali lihat</button>
+            <button data-kind="viewonce"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-viewonce" /></svg> Sekali lihat</button>
           </div>
           <input type="file" id="fileInput" class="hidden" />
           <div class="attach-preview hidden" id="attachPreview">
@@ -1097,8 +1103,8 @@
   <!-- ============ FOTO SEKALI LIHAT ============ -->
   <div class="vo-viewer hidden" id="voViewer">
     <button class="icon-btn vo-close" id="btnCloseVo" title="Tutup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-close" /></svg></button>
-    <img id="voImage" alt="Foto sekali lihat" />
-    <p class="vo-note">Foto ini hanya bisa dilihat satu kali.</p>
+    <div class="vo-stage" id="voStage"></div>
+    <p class="vo-note" id="voNote">Media ini hanya bisa dilihat satu kali.</p>
   </div>
 
   <!-- ============ POTONG FOTO (RASIO BEBAS) ============ -->

@@ -911,6 +911,21 @@ app.post('/api/chats/:id/read', auth.requireAuth, ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// arsip chat: per pengguna (hanya menyembunyikan dari daftar utama, tidak menghapus)
+app.post('/api/chats/:id/archive', auth.requireAuth, ah(async (req, res) => {
+  if (!(await helpers.isMember(req.params.id, req.user.id))) {
+    return res.status(403).json({ error: 'Bukan anggota chat ini' });
+  }
+  const archived = !!req.body?.archived;
+  await db.run(
+    'UPDATE chat_members SET archived = ? WHERE chat_id = ? AND user_id = ?',
+    archived ? 1 : 0,
+    req.params.id,
+    req.user.id
+  );
+  res.json({ ok: true, chatId: req.params.id, archived });
+}));
+
 app.post('/api/chats/:id/typing', auth.requireAuth, ah(async (req, res) => {
   if (!(await helpers.isMember(req.params.id, req.user.id))) {
     return res.status(403).json({ error: 'Bukan anggota chat ini' });
@@ -2213,7 +2228,7 @@ async function handleSend(user, payload) {
   // tidak pernah tersimpan lalu dirender sebagai tautan di layar semua anggota
   if (mediaUrl && !validChatUrl(mediaUrl)) throw new Error('Media tidak valid. Unggah ulang berkasnya.');
 
-  const cleanViewOnce = cleanType === 'image' && !!viewOnce ? 1 : 0;
+  const cleanViewOnce = (cleanType === 'image' || cleanType === 'video') && !!viewOnce ? 1 : 0;
   const cleanDuration = Math.max(0, Math.min(3_600_000, Math.round(Number(duration) || 0)));
 
   // balasan: hanya boleh menunjuk pesan yang sama-sama ada di chat ini
@@ -2278,6 +2293,13 @@ async function handleSend(user, payload) {
   const row = await db.get('SELECT * FROM messages WHERE id = ?', id);
   const message = (await helpers.serializeMessages([row], user.id))[0];
   const members = await helpers.getChatMemberIds(chatId);
+
+  // chat yang diarsipkan penerima otomatis muncul lagi saat ada pesan baru
+  await db.run(
+    'UPDATE chat_members SET archived = 0 WHERE chat_id = ? AND archived = 1 AND user_id <> ?',
+    chatId,
+    user.id
+  );
 
   const deliveredTo = [];
   for (const uid of members) {
