@@ -83,6 +83,17 @@ function fmtSize(bytes) {
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
 }
 
+/* Fallback media: bila foto/video gagal dimuat (file hilang/rusak), tampilkan
+   placeholder rapi "media tidak tersedia" alih-alih ikon rusak. */
+function mediaBroken(el) {
+  const box = (el && el.closest && (el.closest('.msg-media') || el.closest('.st-thumb') || el.closest('.st-thumb-video'))) || (el && el.parentElement);
+  if (box && !box.classList.contains('media-broken')) {
+    box.classList.add('media-broken');
+    const label = (el && el.tagName === 'VIDEO') ? 'Video tidak tersedia' : 'Media tidak tersedia';
+    box.innerHTML = `<span class="media-broken-ico"><svg viewBox="0 0 24 24"><use href="#ic-${el && el.tagName === 'VIDEO' ? 'video' : 'image'}" /></svg></span><span class="media-broken-txt">${label}</span>`;
+  }
+}
+
 /* ================= API ================= */
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -870,9 +881,9 @@ function messageHtml(m, chat, opts = {}) {
       if (m.body) inner += renderMsgBody(m.body);
     } else {
       if (m.type === 'image' && m.mediaUrl) {
-        inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy"></a></div>`;
+        inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy" onerror="mediaBroken(this)"></a></div>`;
       } else if (m.type === 'video' && m.mediaUrl) {
-        inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata"></video></div>`;
+        inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata" onerror="mediaBroken(this)"></video></div>`;
       } else if (m.type === 'audio' && m.mediaUrl) {
         inner += audioPlayerHtml(m);
       } else if (m.type === 'file' && m.mediaUrl) {
@@ -2982,9 +2993,9 @@ function renderStorage(data) {
     ? `<div class="st-grid">${shown.map((it) => `
         <div class="st-card st-${it.type}" data-st-id="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}">
           ${it.type === 'image'
-            ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="">`
+            ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="" onerror="mediaBroken(this)">`
             : it.type === 'video'
-              ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
+              ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata" onerror="mediaBroken(this)"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
               : `<div class="st-thumb st-thumb-file"><svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'audio' ? 'mic' : 'doc'}" /></svg></div>`}
           <div class="st-meta">
             <span class="st-name" title="${esc(it.name || 'Media')}">${esc(it.name || (it.type === 'image' ? 'Foto' : it.type === 'video' ? 'Video' : it.type === 'audio' ? 'Audio' : 'File'))}</span>

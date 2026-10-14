@@ -290,6 +290,15 @@ input, textarea { font: inherit; }
 .msg-media { border-radius: 6px; overflow: hidden; margin-bottom: 4px; max-width: 100%; }
 .msg-media img, .msg-media video { max-width: 330px; max-height: 380px; width: auto; display: block; border-radius: 6px; background: #000; }
 .msg-media video { min-width: 260px; }
+.msg-media.media-broken, .st-thumb.media-broken, .st-thumb-video.media-broken {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 120px; min-width: 140px; padding: 16px;
+  background: rgba(var(--wa-accent-rgb), .06); border: 1px dashed rgba(var(--wa-accent-rgb), .3);
+  border-radius: 12px; color: var(--wa-text-2); text-align: center;
+}
+.msg-media.media-broken img, .msg-media.media-broken video { display: none; }
+.media-broken-ico svg { width: 32px; height: 32px; stroke: currentColor; opacity: .7; }
+.media-broken-txt { font-size: 12px; font-weight: 500; }
 .msg-file {
   display: flex; align-items: center; gap: 10px; background: var(--wa-overlay);
   padding: 10px; border-radius: 8px; text-decoration: none; color: var(--wa-text);
