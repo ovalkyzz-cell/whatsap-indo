@@ -2614,7 +2614,7 @@ function renderStorage(data) {
     ? `<div class="st-grid">${shown.map((it) => `
         <div class="st-card st-${it.type}" data-st-id="${esc(it.id)}">
           ${it.type === 'image'
-            ? `<img class="st-thumb" loading="lazy" src="${esc(it.url)}" alt="">`
+            ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="">`
             : it.type === 'video'
               ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
               : `<div class="st-thumb st-thumb-file"><svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'audio' ? 'mic' : 'doc'}" /></svg></div>`}
@@ -2640,7 +2640,14 @@ function renderStorage(data) {
     });
   });
   body.querySelectorAll('[data-st-del]').forEach((btn) => {
-    btn.addEventListener('click', () => void deleteStorageItem(btn.dataset.stDel, btn));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); void deleteStorageItem(btn.dataset.stDel, btn); });
+  });
+  // ketuk kartu (di luar tombol hapus) -> buka viewer lihat/tonton media
+  body.querySelectorAll('.st-card').forEach((card, i) => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('[data-st-del]')) return;
+      openStViewer(shown, i);
+    });
   });
 }
 
@@ -2656,6 +2663,119 @@ async function deleteStorageItem(id, btn) {
     if (btn) btn.classList.remove('busy');
   }
 }
+
+/* ================= viewer media penyimpanan =================
+   Lihat foto / tonton video / putar audio / buka file langsung dari daftar.
+   Hemat RAM: hanya SATU media yang hidup di DOM; video & audio streaming
+   (preload="metadata", tanpa unduh penuh); saat tutup/ganti, src dilepas
+   & dipanggil load() agar buffer dilepas kembali ke sistem. */
+let stvItems = [], stvIdx = 0;
+
+const STV_LABEL = { image: 'Foto', video: 'Video', audio: 'Audio', file: 'File' };
+
+function openStViewer(items, idx) {
+  if (!items || !items.length) return;
+  stvItems = items;
+  stvIdx = Math.min(Math.max(0, idx | 0), items.length - 1);
+  $('stViewer').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  renderStv();
+}
+
+function releaseStvMedia() {
+  const stage = $('stvStage');
+  if (!stage) return;
+  stage.querySelectorAll('img,video,audio').forEach((el) => {
+    try { if (el.pause) el.pause(); } catch { /* abaikan */ }
+    el.removeAttribute('src');
+    try { el.load(); } catch { /* abaikan */ }
+  });
+  stage.innerHTML = '';
+}
+
+function closeStViewer() {
+  releaseStvMedia();
+  $('stViewer').classList.add('hidden');
+  document.body.style.overflow = '';
+  stvItems = []; stvIdx = 0;
+}
+
+function stvGo(delta) {
+  if (stvItems.length < 2) return;
+  stvIdx = (stvIdx + delta + stvItems.length) % stvItems.length;
+  renderStv();
+}
+
+function renderStv() {
+  const it = stvItems[stvIdx];
+  if (!it) { closeStViewer(); return; }
+  const label = it.name || (STV_LABEL[it.type] || 'Media');
+  $('stvName').textContent = label;
+  $('stvSub').textContent = `${STV_LABEL[it.type] || 'Media'} · ${fmtBytes(it.size)} · ${fmtDate(it.at)}`;
+  $('stvCount').textContent = `${stvIdx + 1} / ${stvItems.length}`;
+
+  // lepaskan media sebelumnya (hanya satu yang hidup -> hemat RAM)
+  releaseStvMedia();
+  const stage = $('stvStage');
+
+  if (it.type === 'image') {
+    const img = document.createElement('img');
+    img.className = 'stv-img';
+    img.decoding = 'async';
+    img.alt = label;
+    img.src = it.url;
+    stage.appendChild(img);
+  } else if (it.type === 'video') {
+    const v = document.createElement('video');
+    v.className = 'stv-video';
+    v.controls = true;
+    v.preload = 'metadata'; // streaming: cukup metadata, tak unduh penuh ke RAM
+    v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.src = it.url;
+    stage.appendChild(v);
+  } else if (it.type === 'audio') {
+    const a = document.createElement('audio');
+    a.className = 'stv-audio';
+    a.controls = true;
+    a.preload = 'metadata';
+    a.src = it.url;
+    stage.appendChild(a);
+  } else {
+    const box = document.createElement('div');
+    box.className = 'stv-file';
+    box.innerHTML = `
+      <span class="stv-file-ico"><svg viewBox="0 0 24 24"><use href="#ic-doc" /></svg></span>
+      <b>${esc(label)}</b>
+      <small>${fmtBytes(it.size)} · ${fmtDate(it.at)}${it.mime ? ` · ${esc(it.mime)}` : ''}</small>`;
+    stage.appendChild(box);
+  }
+
+  const open = $('stvOpen');
+  if (it.type === 'file' || it.type === 'audio') {
+    open.href = it.url;
+    open.setAttribute('download', label);
+    open.classList.remove('hidden');
+  } else {
+    open.classList.add('hidden');
+  }
+
+  const many = stvItems.length > 1;
+  $('btnStvPrev').style.visibility = many ? 'visible' : 'hidden';
+  $('btnStvNext').style.visibility = many ? 'visible' : 'hidden';
+}
+
+$('btnStvClose').addEventListener('click', closeStViewer);
+$('btnStvPrev').addEventListener('click', () => stvGo(-1));
+$('btnStvNext').addEventListener('click', () => stvGo(1));
+$('stvStage').addEventListener('click', (e) => { if (e.target === $('stvStage')) closeStViewer(); });
+document.addEventListener('keydown', (e) => {
+  const v = $('stViewer');
+  if (!v || v.classList.contains('hidden')) return;
+  if (e.key === 'Escape') closeStViewer();
+  else if (e.key === 'ArrowLeft') stvGo(-1);
+  else if (e.key === 'ArrowRight') stvGo(1);
+});
 
 /* ================= hubungi admin / CS ================= */
 async function chatWithAdmin() {
