@@ -197,6 +197,20 @@ async function setTerminalLimits(input) {
   return set('terminal_limits', normalizeTerminalLimits(input));
 }
 
+/* base URL link NFToken (token digabung jadi path: base/TOKEN) — admin bisa ubah */
+const DEFAULT_NFTOKEN_LINK = 'https://alightmotion.app/activate';
+
+async function getNftokenLinkBase() {
+  const saved = await get('nftoken_link_base', null);
+  const s = String(saved || '').trim();
+  return s || DEFAULT_NFTOKEN_LINK;
+}
+
+async function setNftokenLinkBase(input) {
+  const s = String(input || '').trim().slice(0, 300);
+  return set('nftoken_link_base', s || DEFAULT_NFTOKEN_LINK);
+}
+
 module.exports = {
   DEFAULT_PLANS,
   EXCLUSIVE_BOTS,
@@ -212,4 +226,7 @@ module.exports = {
   getVapid,
   getTerminalLimits,
   setTerminalLimits,
+  DEFAULT_NFTOKEN_LINK,
+  getNftokenLinkBase,
+  setNftokenLinkBase,
 };

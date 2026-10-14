@@ -2472,3 +2472,4 @@ html[data-accent="batu"][data-theme="dark"]   { --wa-accent-text: #94a3b8; --wa-
   background: #111b21; color: #e9edef; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
 }
 .term-admin .btn-primary { padding: 9px; font-size: 13px; }
+.term-link-label input { width: 100%; }

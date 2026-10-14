@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
+const settings = require('./settings');
 const { storeBuffer } = require('./upload');
 
 const BASE = String(process.env.MAZVAL_API_BASE || 'https://api-mazval.zone.id').replace(/\/+$/, '');
@@ -465,6 +466,14 @@ async function nftokenReply(raw) {
   const country = items[0] && items[0].country;
 
   const failed = Number(outer && outer.failed) || 0;
+  // link gabungan token (base bisa diatur admin): base/TOKEN
+  const linkBase = (await settings.getNftokenLinkBase()).replace(/\/+$/, '');
+  const withLink = tokens.map((t, i) => ({
+    no: i + 1,
+    token: t,
+    link: `${linkBase}/${t}`,
+    ...(items[i] && items[i].expiry ? { expires: items[i].expiry } : {}),
+  }));
   const payload = {
     success: true,
     count: tokens.length,
@@ -472,11 +481,9 @@ async function nftokenReply(raw) {
     ...(expiry ? { expires: expiry } : {}),
     ...(plan ? { plan } : {}),
     ...(country ? { country } : {}),
-    tokens: items.map((item, i) => {
-      const entry = { no: i + 1, token: tokens[i] };
-      if (item.expiry) entry.expires = item.expiry;
-      return entry;
-    }),
+    link_base: linkBase,
+    tokens: withLink,
+    links: withLink.map((x) => x.link),
     generated_at: new Date().toISOString(),
   };
   return [
@@ -484,9 +491,12 @@ async function nftokenReply(raw) {
     '',
     jsonFence(payload),
     '',
+    'Link aktif (token sudah digabung):',
+    ...withLink.map((x) => `  ${x.no}. ${x.link}`),
+    '',
     failed ? `Ringkasan : ${tokens.length} sukses · ${failed} gagal` : `Ringkasan : ${tokens.length} token siap dipakai.`,
     '',
-    'Salin JSON di atas lewat tombol Copy, lalu tempel token di aplikasi Alight Motion.',
+    'Salin link atau token di atas, lalu buka/tempel di aplikasi Alight Motion.',
     'Balas "menu" bila butuh perintah lain.',
   ].join('\n');
 }

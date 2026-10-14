@@ -1041,13 +1041,21 @@ const TERMINAL_HELP = [
 app.get('/api/terminal/access', auth.requireAuth, ah(async (req, res) => {
   const q = await terminalQuota(req.user);
   const limits = await settings.getTerminalLimits();
-  res.json({ ...q, limits });
+  const nftokenLink = await settings.getNftokenLinkBase();
+  res.json({ ...q, limits, nftokenLink });
 }));
 
 app.post('/api/terminal/limits', auth.requireAuth, ah(async (req, res) => {
   if (!auth.isAdmin(req.user)) return res.status(403).json({ error: 'Hanya admin yang bisa mengatur limit' });
   const saved = await settings.setTerminalLimits(req.body || {});
   res.json({ ok: true, limits: saved });
+}));
+
+// admin mengatur base URL link NFToken (token digabung jadi path: base/TOKEN)
+app.post('/api/terminal/nftoken-link', auth.requireAuth, ah(async (req, res) => {
+  if (!auth.isAdmin(req.user)) return res.status(403).json({ error: 'Hanya admin yang bisa mengatur link NFToken' });
+  const base = await settings.setNftokenLinkBase(req.body?.base);
+  res.json({ ok: true, base });
 }));
 
 app.post('/api/terminal/run', auth.requireAuth, ah(async (req, res) => {

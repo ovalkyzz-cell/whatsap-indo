@@ -2402,6 +2402,10 @@ function termRenderQuota() {
     if (p) p.value = q.limits.permanen;
     if (b) b.value = q.limits.bisnis;
   }
+  if (q && q.isAdmin) {
+    const lb = $('termLinkBase');
+    if (lb && q.nftokenLink) lb.value = q.nftokenLink;
+  }
 }
 
 function termAppend(kind, text) {
@@ -2476,13 +2480,18 @@ function openTerminal() {
   if (save) save.addEventListener('click', async () => {
     const permanen = Number(($('termLimPerm') || {}).value);
     const bisnis = Number(($('termLimBiz') || {}).value);
+    const base = String(($('termLinkBase') || {}).value || '').trim();
     try {
       const data = await api('/api/terminal/limits', { method: 'POST', body: { permanen, bisnis } });
       if (data && data.limits) {
         termAccess = { ...(termAccess || {}), limits: data.limits };
-        termRenderQuota();
-        toast('Limit terminal disimpan.');
       }
+      if (base) {
+        const lb = await api('/api/terminal/nftoken-link', { method: 'POST', body: { base } });
+        if (lb && lb.base) termAccess = { ...(termAccess || {}), nftokenLink: lb.base };
+      }
+      termRenderQuota();
+      toast('Pengaturan terminal disimpan.');
     } catch (e) { toast(e.message); }
   });
 })();
