@@ -2360,7 +2360,7 @@ function renderPlans(data) {
         const isCurrent = me.active && me.planId === p.id;
         const feats = planFeatures(p, botTotal, exclusiveIds);
         return `
-        <article class="plan-card ${isCurrent ? 'is-current' : ''} ${p.id === popularId ? 'is-popular' : ''}" style="--i:${i}">
+        <article class="plan-card plan-${esc(p.id)} ${isCurrent ? 'is-current' : ''} ${p.id === popularId ? 'is-popular' : ''}" style="--i:${i}">
           ${p.id === popularId ? '<span class="plan-tag">PALING LARIS</span>' : ''}
           <span class="plan-shine"></span>
           <div class="plan-head">
