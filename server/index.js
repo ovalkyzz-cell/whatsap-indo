@@ -17,7 +17,7 @@ const settings = require('./settings');
 const bots = require('./bots');
 const referral = require('./referral');
 const webpush = require('web-push');
-const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile } = require('./upload');
+const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile, storedFileExists } = require('./upload');
 const { createAdminPanel } = require('../admin/panel');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -454,6 +454,11 @@ app.get('/api/me/storage/media', auth.requireAuth, ah(async (req, res) => {
 app.post('/api/storage/files', auth.requireAuth, ah(async (req, res) => {
   const url = String(req.body?.url || '');
   if (!validChatUrl(url)) return res.status(400).json({ error: 'URL file tidak valid' });
+  // pastikan file benar-benar ada di penyimpanan sebelum dicatat tersimpan
+  // (tolak referensi hantu — yang tercatat wajib nyata & awet)
+  if (!(await storedFileExists(url))) {
+    return res.status(400).json({ error: 'File tidak ditemukan di penyimpanan — unggah ulang filenya' });
+  }
   const result = await storage.saveFile(req.user, {
     url,
     name: req.body?.name,

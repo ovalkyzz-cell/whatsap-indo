@@ -347,4 +347,28 @@ async function storeRemoteFile(url, kind, opts) {
   }
 }
 
-module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob, storeBuffer, storeRemoteFile };
+module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob, storeBuffer, storeRemoteFile, storedFileExists };
+
+/* Verifikasi bahwa file tersimpan benar-benar ADA di penyimpanan.
+   Dipakai saat mendaftarkan file ke storage (POST /api/storage/files) agar
+   tak pernah mencatat referensi hantu — hanya file yang nyata tercatat
+   "tersimpan". Lokal: cek fisik di uploads/; hosting: HEAD ke Blob. */
+async function storedFileExists(url) {
+  const s = String(url || '');
+  if (s.startsWith('/uploads/')) {
+    if (!fsWritable) return false;
+    const name = s.slice('/uploads/'.length);
+    if (!/^[\w.\-]+$/.test(name)) return false;
+    try {
+      const st = await fs.promises.stat(path.join(UPLOAD_DIR, name));
+      return st.isFile();
+    } catch { return false; }
+  }
+  if (/^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\//.test(s)) {
+    try {
+      const r = await fetch(s, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
+      return r.ok;
+    } catch { return false; }
+  }
+  return false;
+}

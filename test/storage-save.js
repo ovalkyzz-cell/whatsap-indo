@@ -76,6 +76,11 @@ async function upload(token, buf, name, mime) {
   const bad = await api('/api/storage/files', { method: 'POST', token: tok, body: { url: 'https://evil.contoh.com/x.jpg', name: 'x', size: 10, mime: 'image/jpeg', type: 'image' } });
   ok(bad.status === 400, 'URL palsu ditolak (400)');
 
+  // referensi hantu: lolos validChatUrl tapi file tak ada di penyimpanan
+  // -> wajib ditolak agar tak pernah tercatat "tersimpan" (safeguard durabilitas)
+  const ghost = await api('/api/storage/files', { method: 'POST', token: tok, body: { url: '/uploads/tidak-pernah-ada-999.jpg', name: 'hantu.jpg', size: 10, mime: 'image/jpeg', type: 'image' } });
+  ok(ghost.status === 400, 'referensi hantu (file tak ada) ditolak (400)');
+
   // hapus -> kuota dibebaskan kembali (tanpa drift)
   const del = await api(`/api/storage/files/${saved.id}`, { method: 'DELETE', token: tok });
   ok(del.status === 200 && del.data.ok, 'hapus file tersimpan');
