@@ -198,7 +198,7 @@ async function setTerminalLimits(input) {
 }
 
 /* base URL link NFToken (token digabung jadi path: base/TOKEN) — admin bisa ubah */
-const DEFAULT_NFTOKEN_LINK = 'https://alightmotion.app/activate';
+const DEFAULT_NFTOKEN_LINK = 'https://netflix.com/activate';
 
 async function getNftokenLinkBase() {
   const saved = await get('nftoken_link_base', null);

@@ -2,7 +2,7 @@
 
 /* Sembilan bot internal khusus admin:
    - Verif AM Prem : verifikasi & kirim tautan Alight Motion Premium
-   - Generate NFToken : generator NFToken Alight Motion
+   - Generate NFToken : generator NFToken Netflix (link terpisah dari Alight Motion)
    - AI : ChatGPT, Gemini, Deepseek, Claude (kode muncul sebagai blok kode)
    - Downloader : unduh video TikTok/IG/YouTube/FB/X & lainnya
    - Email Generator : email sementara, inbox, OTP & baca pesan
@@ -41,7 +41,7 @@ const BOTS = [
     id: 'bot-nftoken',
     email: 'nftoken@bot.whatsap-indo',
     name: 'Generate NFToken',
-    about: 'Generator NFToken Alight Motion. Ketik "menu".',
+    about: 'Generator NFToken Netflix. Ketik "menu".',
     reply: nftokenReply,
   },
   {
@@ -395,7 +395,7 @@ async function verifReply(raw) {
 const NFTOKEN_MENU = [
   '╭─────────────────────────────',
   '│ GENERATE NFTOKEN',
-  '│ Generator NFToken Alight Motion',
+  '│ Generator NFToken Netflix',
   '╰─────────────────────────────',
   '',
   'Perintah yang tersedia:',
@@ -496,7 +496,7 @@ async function nftokenReply(raw) {
     '',
     failed ? `Ringkasan : ${tokens.length} sukses · ${failed} gagal` : `Ringkasan : ${tokens.length} token siap dipakai.`,
     '',
-    'Salin link atau token di atas, lalu buka/tempel di aplikasi Alight Motion.',
+    'Salin link atau token di atas, lalu buka/tempel di aplikasi Netflix.',
     'Balas "menu" bila butuh perintah lain.',
   ].join('\n');
 }
