@@ -2291,6 +2291,18 @@ function planFeatures(p, botTotal, exclusiveIds) {
   return feats;
 }
 
+// simbol khas tiap paket (bukan semua bintang)
+function planIcon(id) {
+  return {
+    harian: 'sun',            // harian — matahari (setiap hari)
+    mingguan: 'calendar',     // mingguan — kalender
+    bulanan: 'star',          // bulanan — bintang (paling laris)
+    bisnis: 'shield',         // bisnis — perisai (profesional & aman)
+    'reseller-bulanan': 'users', // reseller — jaringan orang
+    permanen: 'crown',        // permanen — mahkota (milik selamanya)
+  }[id] || (id && id.startsWith('permanen') ? 'crown' : 'star');
+}
+
 function shortBotId(id) {
   return {
     'bot-verif-am': 'Verif AM',
@@ -2364,7 +2376,7 @@ function renderPlans(data) {
           ${p.id === popularId ? '<span class="plan-tag">PALING LARIS</span>' : ''}
           <span class="plan-shine"></span>
           <div class="plan-head">
-            <span class="plan-ico"><svg viewBox="0 0 24 24"><use href="#ic-${p.permanen ? 'crown' : 'star'}" /></svg></span>
+            <span class="plan-ico"><svg viewBox="0 0 24 24"><use href="#ic-${planIcon(p.id)}" /></svg></span>
             <h4>${esc(p.label)}</h4>
             <small>${p.permanen ? 'Selamanya' : `${Number(p.days) || 0} hari`}</small>
           </div>
