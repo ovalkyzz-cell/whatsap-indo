@@ -2020,6 +2020,7 @@ html[data-theme="dark"] .plan-card .plan-cta { box-shadow: 0 8px 18px rgba(0, 0,
 
 /* ================= MANAJER PENYIMPANAN ================= */
 .storage-body { overflow-y: auto; padding-bottom: 24px; }
+.storage-body.has-bulk { padding-bottom: 76px; }
 .st-upload-btn {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 6px;
@@ -2032,6 +2033,52 @@ html[data-theme="dark"] .plan-card .plan-cta { box-shadow: 0 8px 18px rgba(0, 0,
 .st-upload-btn:hover { filter: brightness(1.07); }
 .st-upload-btn:active { transform: scale(.97); }
 .st-upload-btn.busy { opacity: .65; pointer-events: none; }
+
+.st-hdr-btn {
+  margin-left: 8px; padding: 7px 12px; border: 1px solid rgba(var(--wa-accent-rgb), .4);
+  border-radius: 20px; background: transparent; color: var(--wa-accent-text, #00a884);
+  font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background .15s, color .15s;
+}
+.st-hdr-btn:hover { background: rgba(var(--wa-accent-rgb), .1); }
+.st-hdr-btn.active { background: rgb(var(--wa-accent-rgb)); color: #fff; border-color: rgb(var(--wa-accent-rgb)); }
+
+.st-tools { display: flex; justify-content: flex-end; margin: 0 14px; }
+.st-tool {
+  display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px;
+  border: none; background: transparent; color: var(--wa-danger-text, #d64545);
+  font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 8px; transition: background .15s;
+}
+.st-tool .ico { width: 14px; height: 14px; stroke: currentColor; }
+.st-tool:hover { background: rgba(214, 69, 69, .1); }
+.st-tool.busy { opacity: .6; pointer-events: none; }
+
+.st-card.selectable { cursor: pointer; }
+.st-card.selected { outline: 2px solid rgb(var(--wa-accent-rgb)); outline-offset: -2px; }
+.st-check {
+  position: absolute; top: 8px; left: 8px; z-index: 2; width: 24px; height: 24px;
+  border-radius: 50%; border: 2px solid #fff; background: rgba(0, 0, 0, .35);
+  display: flex; align-items: center; justify-content: center; transition: background .15s, border-color .15s;
+}
+.st-check svg { width: 14px; height: 14px; stroke: #fff; opacity: 0; transition: opacity .15s; }
+.st-check.on { background: rgb(var(--wa-accent-rgb)); border-color: rgb(var(--wa-accent-rgb)); }
+.st-check.on svg { opacity: 1; }
+
+.st-bulk-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; background: var(--wa-panel); border-top: 1px solid var(--wa-border, rgba(0, 0, 0, .08));
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, .08);
+}
+.st-bulk-count { font-size: 13px; font-weight: 600; }
+.st-bulk-actions { display: flex; gap: 8px; }
+.st-bulk-btn {
+  padding: 7px 12px; border: none; border-radius: 18px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; background: rgba(var(--wa-accent-rgb), .12); color: var(--wa-accent-text, #00a884);
+}
+.st-bulk-btn:disabled { opacity: .5; cursor: not-allowed; }
+.st-bulk-danger { background: #d64545; color: #fff; }
+.st-bulk-danger:disabled { background: #d64545; }
+.st-bulk-ghost { background: transparent; border: 1px solid rgba(0, 0, 0, .15); color: inherit; }
 
 .st-summary {
   margin: 14px; padding: 14px; border-radius: 16px; color: #fff;

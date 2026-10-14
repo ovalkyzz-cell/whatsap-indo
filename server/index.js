@@ -482,6 +482,57 @@ app.delete('/api/storage/files/:id', auth.requireAuth, ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// hapus MASSAL: terima daftar {id, kind} (kind: 'saved' | 'msg'), bebaskan
+// kuota tiap item. kind 'msg' ikut broadcast 'message:deleted' ke anggota chat.
+app.post('/api/storage/bulk-delete', auth.requireAuth, ah(async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: 'Tidak ada item yang dipilih' });
+  if (items.length > 1000) return res.status(400).json({ error: 'Terlalu banyak item (maks 1000)' });
+  let deleted = 0, failed = 0, freed = 0;
+  for (const raw of items) {
+    const id = String(raw && raw.id || '');
+    const kind = raw && raw.kind === 'saved' ? 'saved' : 'msg';
+    if (!id) { failed++; continue; }
+    try {
+      if (kind === 'saved') {
+        const row = await db.get('SELECT media_size FROM saved_files WHERE id = ? AND user_id = ?', id, req.user.id);
+        const r = await storage.deleteFile(req.user, id);
+        if (r.ok) { deleted++; freed += Math.max(0, Number(row && row.media_size) || 0); }
+        else failed++;
+      } else {
+        const row = await db.get('SELECT * FROM messages WHERE id = ? AND sender_id = ? AND deleted_at IS NULL', id, req.user.id);
+        if (row && row.media_url) { await softDeleteMediaMessage(row); deleted++; freed += Math.max(0, Number(row.media_size) || 0); }
+        else failed++;
+      }
+    } catch { failed++; }
+  }
+  res.json({ deleted, failed, freed });
+}));
+
+// BERSIHKAN FILE RUSAK: pindai media milik user, cek file benar-benar ada di
+// penyimpanan; yang hilang/rusak dihapus + kuotanya dibebaskan. kind 'msg'
+// ikut broadcast 'message:deleted'. (Cek Blob via HEAD, lokal via fs.stat.)
+app.post('/api/storage/cleanup', auth.requireAuth, ah(async (req, res) => {
+  const media = await storage.mediaList(req.user.id, 1000);
+  let checked = 0, removed = 0, freed = 0;
+  for (const it of media.items) {
+    checked++;
+    let exists = false;
+    try { exists = await storedFileExists(it.url); } catch { exists = false; }
+    if (exists) continue;
+    try {
+      if (it.kind === 'saved') {
+        const r = await storage.deleteFile(req.user, it.id);
+        if (r.ok) { removed++; freed += it.size; }
+      } else {
+        const row = await db.get('SELECT * FROM messages WHERE id = ? AND sender_id = ? AND deleted_at IS NULL', it.id, req.user.id);
+        if (row && row.media_url) { await softDeleteMediaMessage(row); removed++; freed += it.size; }
+      }
+    } catch { /* lanjut item berikutnya */ }
+  }
+  res.json({ checked, removed, freed });
+}));
+
 // kode undangan + statistik: makin banyak teman join, makin banyak token
 app.get('/api/referral', auth.requireAuth, ah(async (req, res) => {
   const stats = await referral.stats(req.user);
@@ -1180,13 +1231,11 @@ async function markChatRead(chatId, userId) {
   );
 }
 
-app.delete('/api/messages/:id', auth.requireAuth, ah(async (req, res) => {
-  const row = await db.get('SELECT * FROM messages WHERE id = ?', req.params.id);
-  if (!row) return res.status(404).json({ error: 'Pesan tidak ditemukan' });
-  if (row.sender_id !== req.user.id) return res.status(403).json({ error: 'Bukan pesan Anda' });
-  const deletedAt = Date.now();
-  await db.run('UPDATE messages SET deleted_at = ?, body = \'\' WHERE id = ?', deletedAt, row.id);
-  // media ikut terhapus dari catatan -> bebaskan kuota storage pengirim
+// hapus media sebuah pesan: soft-delete + bebaskan kuota + broadcast ke anggota.
+// dipakai hapus tunggal (DELETE /api/messages/:id), hapus massal & pembersihan
+// file rusak agar logikanya konsisten di satu tempat.
+async function softDeleteMediaMessage(row) {
+  await db.run('UPDATE messages SET deleted_at = ?, body = \'\' WHERE id = ?', Date.now(), row.id);
   if (row.media_url && Number(row.media_size) > 0) {
     await storage.release(row.sender_id, Number(row.media_size));
   }
@@ -1194,6 +1243,13 @@ app.delete('/api/messages/:id', auth.requireAuth, ah(async (req, res) => {
   const payload = (await helpers.serializeMessages([fresh], null))[0];
   const members = await helpers.getChatMemberIds(row.chat_id);
   await emitToUsers(members, 'message:deleted', payload);
+}
+
+app.delete('/api/messages/:id', auth.requireAuth, ah(async (req, res) => {
+  const row = await db.get('SELECT * FROM messages WHERE id = ?', req.params.id);
+  if (!row) return res.status(404).json({ error: 'Pesan tidak ditemukan' });
+  if (row.sender_id !== req.user.id) return res.status(403).json({ error: 'Bukan pesan Anda' });
+  await softDeleteMediaMessage(row);
   res.json({ ok: true });
 }));
 

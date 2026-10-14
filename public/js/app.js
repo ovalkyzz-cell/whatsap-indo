@@ -2929,9 +2929,15 @@ $('btnCloseInvite').addEventListener('click', closeDrawers);
 $('btnCloseStorage').addEventListener('click', closeDrawers);
 
 let storageFilter = 'all';
+let stSelectMode = false;
+let stSelected = new Set(); // kunci "kind:id"
+let stLastData = null;
+
+const stKey = (it) => `${it.kind || 'msg'}:${it.id}`;
 
 async function openStorageDrawer() {
   openDrawer('storageDrawer');
+  exitStSelectMode(true); // selalu reset mode pilih saat (buka ulang) drawer
   const body = $('storageBody');
   body.innerHTML = '<div class="bc-loading">Memuat penyimpanan…</div>';
   try {
@@ -2958,6 +2964,7 @@ const ST_TABS = [
 ];
 
 function renderStorage(data) {
+  stLastData = data;
   const body = $('storageBody');
   const usage = data.usage || {};
   const items = data.items || [];
@@ -2973,6 +2980,11 @@ function renderStorage(data) {
       </div>
       <div class="st-bar"><i style="width:${percent}%"></i></div>
       <small>${usage.unlimited ? 'Akun admin — tanpa batas storage.' : `Sisa ${fmtBytes(usage.left || 0)}. Hapus media lama untuk membebaskan ruang.`}</small>
+    </div>
+    <div class="st-tools">
+      <button type="button" class="st-tool" id="btnStClean" title="Pindai & hapus media yang file-nya rusak/hilang, bebaskan kuotanya">
+        <svg viewBox="0 0 24 24" class="ico"><use href="#ic-trash" /></svg> Bersihkan file rusak
+      </button>
     </div>
     <div class="st-breakdown">
       ${['image', 'video', 'audio', 'file'].map((k) => `
@@ -2990,21 +3002,27 @@ function renderStorage(data) {
     </div>`;
 
   const grid = shown.length
-    ? `<div class="st-grid">${shown.map((it) => `
-        <div class="st-card st-${it.type}" data-st-id="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}">
-          ${it.type === 'image'
-            ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="" onerror="mediaBroken(this)">`
-            : it.type === 'video'
-              ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata" onerror="mediaBroken(this)"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
-              : `<div class="st-thumb st-thumb-file"><svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'audio' ? 'mic' : 'doc'}" /></svg></div>`}
+    ? `<div class="st-grid">${shown.map((it) => {
+        const key = stKey(it);
+        const sel = stSelected.has(key);
+        const thumb = it.type === 'image'
+          ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="" onerror="mediaBroken(this)">`
+          : it.type === 'video'
+            ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata" onerror="mediaBroken(this)"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
+            : `<div class="st-thumb st-thumb-file"><svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'audio' ? 'mic' : 'doc'}" /></svg></div>`;
+        return `
+        <div class="st-card st-${it.type} ${stSelectMode ? 'selectable' : ''} ${sel ? 'selected' : ''}" data-st-id="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}" data-st-key="${esc(key)}">
+          ${stSelectMode ? `<span class="st-check ${sel ? 'on' : ''}"><svg viewBox="0 0 24 24"><use href="#ic-check" /></svg></span>` : ''}
+          ${thumb}
           <div class="st-meta">
             <span class="st-name" title="${esc(it.name || 'Media')}">${esc(it.name || (it.type === 'image' ? 'Foto' : it.type === 'video' ? 'Video' : it.type === 'audio' ? 'Audio' : 'File'))}</span>
             <span class="st-sub">${fmtBytes(it.size)} · ${fmtDate(it.at)}</span>
           </div>
-          <button class="st-del" type="button" data-st-del="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}" title="Hapus & bebaskan storage">
+          ${!stSelectMode ? `<button class="st-del" type="button" data-st-del="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}" title="Hapus & bebaskan storage">
             <svg viewBox="0 0 24 24"><use href="#ic-trash" /></svg>
-          </button>
-        </div>`).join('')}</div>`
+          </button>` : ''}
+        </div>`;
+      }).join('')}</div>`
     : `<div class="st-empty">
         <svg viewBox="0 0 24 24"><use href="#ic-image" /></svg>
         <p>Belum ada ${storageFilter === 'all' ? 'media' : ST_TABS.find((t) => t.id === storageFilter).label.toLowerCase()} tersimpan.</p>
@@ -3015,19 +3033,110 @@ function renderStorage(data) {
   body.querySelectorAll('[data-st-filter]').forEach((btn) => {
     btn.addEventListener('click', () => {
       storageFilter = btn.dataset.stFilter;
-      renderStorage(data);
+      renderStorage(data); // mode pilih & seleksi tetap (state di luar render)
     });
   });
   body.querySelectorAll('[data-st-del]').forEach((btn) => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); void deleteStorageItem(btn.dataset.stDel, btn, btn.dataset.stKind); });
   });
-  // ketuk kartu (di luar tombol hapus) -> buka viewer lihat/tonton media
+  // aksi "Bersihkan file rusak" (dirender, selalu tersedia)
+  const cleanBtn = $('btnStClean');
+  if (cleanBtn) cleanBtn.addEventListener('click', () => void cleanBrokenStorage(cleanBtn));
+  // ketuk kartu: mode pilih -> toggle seleksi; normal -> buka viewer
   body.querySelectorAll('.st-card').forEach((card, i) => {
     card.addEventListener('click', (e) => {
       if (e.target.closest('[data-st-del]')) return;
+      if (stSelectMode) { toggleStSelect(card.dataset.stKey); return; }
       openStViewer(shown, i);
     });
   });
+  updateStBulkBar();
+}
+
+/* ---------- mode pilih & hapus massal ---------- */
+function toggleStSelect(key) {
+  if (stSelected.has(key)) stSelected.delete(key); else stSelected.add(key);
+  const on = stSelected.has(key);
+  const card = document.querySelector(`.st-card[data-st-key="${key}"]`);
+  if (card) { card.classList.toggle('selected', on); const c = card.querySelector('.st-check'); if (c) c.classList.toggle('on', on); }
+  updateStBulkBar();
+}
+
+function updateStBulkBar() {
+  const bar = $('stBulkBar');
+  if (!bar) return;
+  bar.classList.toggle('hidden', !stSelectMode);
+  const body = $('storageBody');
+  if (body) body.classList.toggle('has-bulk', stSelectMode); // beri ruang bar di bawah
+  const count = $('stBulkCount');
+  if (count) count.textContent = `${stSelected.size} dipilih`;
+  const delBtn = $('btnStBulkDelete');
+  if (delBtn) delBtn.disabled = stSelected.size === 0;
+}
+
+function enterStSelectMode() {
+  stSelectMode = true;
+  const b = $('btnStSelect');
+  if (b) { b.classList.add('active'); b.textContent = 'Selesai'; }
+  if (stLastData) renderStorage(stLastData);
+}
+
+function exitStSelectMode(skipRender) {
+  stSelectMode = false;
+  stSelected.clear();
+  const b = $('btnStSelect');
+  if (b) { b.classList.remove('active'); b.textContent = 'Pilih'; }
+  updateStBulkBar();
+  if (!skipRender && stLastData) renderStorage(stLastData);
+}
+
+$('btnStSelect').addEventListener('click', () => {
+  if (stSelectMode) exitStSelectMode(); else enterStSelectMode();
+});
+
+$('btnStSelectAll').addEventListener('click', () => {
+  if (!stLastData) return;
+  const items = stLastData.items || [];
+  const shown = storageFilter === 'all' ? items : items.filter((it) => it.type === storageFilter);
+  const allSel = shown.length > 0 && shown.every((it) => stSelected.has(stKey(it)));
+  shown.forEach((it) => { if (allSel) stSelected.delete(stKey(it)); else stSelected.add(stKey(it)); });
+  renderStorage(stLastData);
+});
+
+$('btnStBulkDelete').addEventListener('click', async () => {
+  if (!stSelected.size) return;
+  if (!confirm(`Hapus ${stSelected.size} media terpilih? Kuota storage akan dibebaskan.`)) return;
+  const btn = $('btnStBulkDelete');
+  if (btn) btn.disabled = true;
+  try {
+    const items = [...stSelected].map((k) => {
+      const idx = k.indexOf(':');
+      return { kind: k.slice(0, idx), id: k.slice(idx + 1) };
+    });
+    const r = await api('/api/storage/bulk-delete', { method: 'POST', body: { items } });
+    toast(`${r.deleted} media dihapus — ${fmtBytes(r.freed || 0)} dibebaskan`);
+    exitStSelectMode(true);
+    openStorageDrawer();
+  } catch (err) {
+    toast(err.message || 'Gagal menghapus media');
+    if (btn) btn.disabled = false;
+  }
+});
+
+$('btnStCancel').addEventListener('click', () => exitStSelectMode());
+
+async function cleanBrokenStorage(btn) {
+  if (!confirm('Pindai & hapus semua media yang file-nya rusak/hilang? Kuota akan dibebaskan.')) return;
+  if (btn) btn.classList.add('busy');
+  try {
+    const r = await api('/api/storage/cleanup', { method: 'POST', body: {} });
+    if (r.removed) toast(`${r.removed} media rusak dihapus — ${fmtBytes(r.freed || 0)} dibebaskan`);
+    else toast(`Tidak ada media rusak (diperiksa ${r.checked})`);
+    openStorageDrawer();
+  } catch (err) {
+    toast(err.message || 'Gagal membersihkan');
+    if (btn) btn.classList.remove('busy');
+  }
 }
 
 async function deleteStorageItem(id, btn, kind) {

@@ -13,7 +13,8 @@
     "test:calls": "node test/calls.js",
     "test:callflow": "node test/callflow.js",
     "test:bots": "node test/bot-reply.js",
-    "test:storage-save": "node test/storage-save.js"
+    "test:storage-save": "node test/storage-save.js",
+    "test:storage-manage": "node test/storage-manage.js"
   },
   "keywords": [
     "whatsapp-clone",

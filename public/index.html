@@ -705,9 +705,18 @@
           <svg viewBox="0 0 24 24" class="ico"><use href="#ic-plus" /></svg>
           <span>Simpan dari Galeri</span>
         </button>
+        <button class="st-hdr-btn" id="btnStSelect" type="button" title="Pilih beberapa untuk hapus massal">Pilih</button>
         <input type="file" id="stFileInput" class="hidden" multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx" />
       </header>
       <div class="storage-body" id="storageBody"></div>
+      <div class="st-bulk-bar hidden" id="stBulkBar">
+        <span class="st-bulk-count" id="stBulkCount">0 dipilih</span>
+        <div class="st-bulk-actions">
+          <button type="button" class="st-bulk-btn" id="btnStSelectAll">Pilih Semua</button>
+          <button type="button" class="st-bulk-btn st-bulk-danger" id="btnStBulkDelete">Hapus Terpilih</button>
+          <button type="button" class="st-bulk-btn st-bulk-ghost" id="btnStCancel">Batal</button>
+        </div>
+      </div>
     </div>
 
     <!-- ============ TENTANG APLIKASI ============ -->
