@@ -439,6 +439,15 @@ app.get('/api/me/storage', auth.requireAuth, ah(async (req, res) => {
   res.json(await storage.usage(req.user));
 }));
 
+// manajer penyimpanan: daftar foto/video/file milik pengguna + total per jenis
+app.get('/api/me/storage/media', auth.requireAuth, ah(async (req, res) => {
+  const [usage, media] = await Promise.all([
+    storage.usage(req.user),
+    storage.mediaList(req.user.id, Number(req.query.limit) || 300),
+  ]);
+  res.json({ usage, ...media });
+}));
+
 // kode undangan + statistik: makin banyak teman join, makin banyak token
 app.get('/api/referral', auth.requireAuth, ah(async (req, res) => {
   const stats = await referral.stats(req.user);
@@ -1320,10 +1329,13 @@ app.post('/api/admin/premium', auth.requireAuth, requireAdmin, ah(async (req, re
   const until = plan.permanent
     ? Date.now() + 100 * 365 * 24 * 3600 * 1000
     : base + plan.days * 24 * 3600 * 1000;
+  // centang biru hanya untuk paket berhak (bulanan/bisnis/reseller/permanen)
+  const verified = auth.planGrantsVerified(plan.id) ? 1 : 0;
   await db.run(
-    'UPDATE users SET premium_plan = ?, premium_until = ?, verified = 1 WHERE id = ?',
+    'UPDATE users SET premium_plan = ?, premium_until = ?, verified = ? WHERE id = ?',
     plan.id,
     until,
+    verified,
     user.id
   );
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', user.id);

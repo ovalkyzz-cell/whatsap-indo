@@ -2034,7 +2034,7 @@ function clearAttachPreview() {
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
   'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer', 'botCatDrawer',
-  'planDrawer', 'inviteDrawer', 'aboutDrawer'];
+  'planDrawer', 'inviteDrawer', 'aboutDrawer', 'storageDrawer'];
 
 function openDrawer(id, withScrim = true) {
   DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
@@ -2136,6 +2136,7 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     const action = btn.dataset.menu;
     if (action === 'profile') openProfile();
     else if (action === 'plans') openPlanDrawer();
+    else if (action === 'storage') openStorageDrawer();
     else if (action === 'invite') openInviteDrawer();
     else if (action === 'wallpaper') openWallpaper();
     else if (action === 'homebg') openHomeBg();
@@ -2266,6 +2267,9 @@ function fmtBytes(b) {
   return `${Math.max(1, Math.round(n / 1000))} KB`;
 }
 
+// paket yang berhak centang biru (Harian & Mingguan tidak)
+const VERIFIED_PLANS = new Set(['bulanan', 'bisnis', 'reseller-bulanan', 'permanen']);
+
 // daftar fitur sebuah paket (ok=false = batasan yang mengurangi akses)
 function planFeatures(p, botTotal, exclusiveIds) {
   const excluded = Array.isArray(p.excluded) ? p.excluded : [];
@@ -2280,7 +2284,9 @@ function planFeatures(p, botTotal, exclusiveIds) {
   if (Number(p.dailyLimit) > 0) feats.push({ ok: true, text: `Limit ${p.dailyLimit} pesan bot / hari` });
   else feats.push({ ok: true, text: 'Pesan bot tanpa limit harian' });
   feats.push({ ok: true, text: p.permanen ? 'Masa aktif selamanya' : `${Number(p.days) || 0} hari masa aktif` });
-  feats.push({ ok: true, text: 'Centang biru terverifikasi' });
+  // centang biru hanya untuk paket berhak
+  if (VERIFIED_PLANS.has(p.id)) feats.push({ ok: true, text: 'Centang biru terverifikasi' });
+  else feats.push({ ok: false, text: 'Tanpa centang biru' });
   feats.push({ ok: true, text: 'Kirim foto, video & file hingga 2GB' });
   // kuota storage nyata per paket
   if (Number(p.storageLimit) > 0) {
@@ -2536,6 +2542,120 @@ function renderInvite(data) {
 }
 
 $('btnCloseInvite').addEventListener('click', closeDrawers);
+
+/* ================= manajer penyimpanan =================
+   Menampilkan foto, video, audio & file yang benar-benar tersimpan di storage
+   milik pengguna (sumber kebenaran: pesan media aktif), lengkap dengan ukuran,
+   total per jenis & total paket. Bisa dihapus per item untuk membebaskan kuota. */
+$('btnCloseStorage').addEventListener('click', closeDrawers);
+
+let storageFilter = 'all';
+
+async function openStorageDrawer() {
+  openDrawer('storageDrawer');
+  const body = $('storageBody');
+  body.innerHTML = '<div class="bc-loading">Memuat penyimpanan…</div>';
+  try {
+    const data = await api('/api/me/storage/media');
+    renderStorage(data);
+  } catch (err) {
+    body.innerHTML = `
+      <div class="bc-locked">
+        <div class="bc-lock-ico"><svg viewBox="0 0 24 24"><use href="#ic-info" /></svg></div>
+        <h3>Penyimpanan belum bisa dimuat</h3>
+        <p>${esc(err.message)}</p>
+        <button class="btn-ghost" id="stRetry" type="button">Coba lagi</button>
+      </div>`;
+    $('stRetry').addEventListener('click', openStorageDrawer);
+  }
+}
+
+const ST_TABS = [
+  { id: 'all', label: 'Semua' },
+  { id: 'image', label: 'Foto' },
+  { id: 'video', label: 'Video' },
+  { id: 'audio', label: 'Audio' },
+  { id: 'file', label: 'File' },
+];
+
+function renderStorage(data) {
+  const body = $('storageBody');
+  const usage = data.usage || {};
+  const items = data.items || [];
+  const totals = data.totals || {};
+  const shown = storageFilter === 'all' ? items : items.filter((it) => it.type === storageFilter);
+
+  const percent = usage.unlimited ? 100 : Math.min(100, usage.percent || 0);
+  const head = `
+    <div class="st-summary ${usage.unlimited ? 'on' : ''} ${usage.percent >= 90 ? 'warn' : ''}">
+      <div class="st-summary-top">
+        <span><b>${fmtBytes(usage.used || 0)}</b> dari <b>${usage.unlimited ? 'tanpa batas' : fmtBytes(usage.quota || 0)}</b> terpakai</span>
+        <span class="st-summary-pct">${usage.unlimited ? '∞' : Math.round(usage.percent || 0) + '%'}</span>
+      </div>
+      <div class="st-bar"><i style="width:${percent}%"></i></div>
+      <small>${usage.unlimited ? 'Akun admin — tanpa batas storage.' : `Sisa ${fmtBytes(usage.left || 0)}. Hapus media lama untuk membebaskan ruang.`}</small>
+    </div>
+    <div class="st-breakdown">
+      ${['image', 'video', 'audio', 'file'].map((k) => `
+        <div class="st-bd-item">
+          <span class="st-bd-ico"><svg viewBox="0 0 24 24"><use href="#ic-${k === 'image' ? 'image' : k === 'video' ? 'video' : k === 'audio' ? 'mic' : 'doc'}" /></svg></span>
+          <b>${fmtBytes(totals[k] || 0)}</b>
+          <small>${ST_TABS.find((t) => t.id === k).label}</small>
+        </div>`).join('')}
+    </div>
+    <div class="st-tabs">
+      ${ST_TABS.map((t) => `
+        <button class="st-tab ${storageFilter === t.id ? 'active' : ''}" data-st-filter="${t.id}" type="button">
+          ${t.label} <span class="st-tab-n">${t.id === 'all' ? items.length : items.filter((it) => it.type === t.id).length}</span>
+        </button>`).join('')}
+    </div>`;
+
+  const grid = shown.length
+    ? `<div class="st-grid">${shown.map((it) => `
+        <div class="st-card st-${it.type}" data-st-id="${esc(it.id)}">
+          ${it.type === 'image'
+            ? `<img class="st-thumb" loading="lazy" src="${esc(it.url)}" alt="">`
+            : it.type === 'video'
+              ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
+              : `<div class="st-thumb st-thumb-file"><svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'audio' ? 'mic' : 'doc'}" /></svg></div>`}
+          <div class="st-meta">
+            <span class="st-name" title="${esc(it.name || 'Media')}">${esc(it.name || (it.type === 'image' ? 'Foto' : it.type === 'video' ? 'Video' : it.type === 'audio' ? 'Audio' : 'File'))}</span>
+            <span class="st-sub">${fmtBytes(it.size)} · ${fmtDate(it.at)}</span>
+          </div>
+          <button class="st-del" type="button" data-st-del="${esc(it.id)}" title="Hapus & bebaskan storage">
+            <svg viewBox="0 0 24 24"><use href="#ic-trash" /></svg>
+          </button>
+        </div>`).join('')}</div>`
+    : `<div class="st-empty">
+        <svg viewBox="0 0 24 24"><use href="#ic-image" /></svg>
+        <p>Belum ada ${storageFilter === 'all' ? 'media' : ST_TABS.find((t) => t.id === storageFilter).label.toLowerCase()} tersimpan.</p>
+      </div>`;
+
+  body.innerHTML = head + grid;
+
+  body.querySelectorAll('[data-st-filter]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      storageFilter = btn.dataset.stFilter;
+      renderStorage(data);
+    });
+  });
+  body.querySelectorAll('[data-st-del]').forEach((btn) => {
+    btn.addEventListener('click', () => void deleteStorageItem(btn.dataset.stDel, btn));
+  });
+}
+
+async function deleteStorageItem(id, btn) {
+  if (!confirm('Hapus media ini? Kuota storage akan dibebaskan.')) return;
+  if (btn) btn.classList.add('busy');
+  try {
+    await api(`/api/messages/${id}`, { method: 'DELETE' });
+    toast('Media dihapus — storage dibebaskan');
+    openStorageDrawer(); // muat ulang data
+  } catch (err) {
+    toast(err.message || 'Gagal menghapus media');
+    if (btn) btn.classList.remove('busy');
+  }
+}
 
 /* ================= hubungi admin / CS ================= */
 async function chatWithAdmin() {

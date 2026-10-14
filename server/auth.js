@@ -48,9 +48,18 @@ function isAdmin(row) {
   return row.role === 'admin' || ADMIN_EMAILS.includes(String(row.email || '').trim().toLowerCase());
 }
 
-// centang biru: admin, premium, atau bot resmi internal
+// paket yang berhak centang biru (Harian & Mingguan TIDAK)
+const VERIFIED_PLANS = new Set(['bulanan', 'bisnis', 'reseller-bulanan', 'permanen']);
+
+function planGrantsVerified(planId) {
+  return VERIFIED_PLANS.has(String(planId || ''));
+}
+
+// centang biru: admin, bot resmi internal, atau premium dengan paket berhak
 function verifiedOf(row) {
-  return isAdmin(row) || isPremium(row) || Number(row && row.is_bot) === 1;
+  if (isAdmin(row) || Number(row && row.is_bot) === 1) return true;
+  if (!isPremium(row)) return false;
+  return planGrantsVerified(row && row.premium_plan);
 }
 
 function publicUser(row) {
@@ -284,6 +293,7 @@ module.exports = {
   isAdmin,
   isPremium,
   verifiedOf,
+  planGrantsVerified,
   sessionCheck,
   clearSession,
   ADMIN_EMAILS,

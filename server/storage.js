@@ -112,4 +112,37 @@ async function recomputeAll() {
   return users.length;
 }
 
-module.exports = { MAX_MEDIA, quotaOf, usedOf, reserve, release, usage, recompute, recomputeAll };
+// daftar media milik satu pengguna (foto/video/file) yang masih tersimpan —
+// dipakai manajer penyimpanan; user hanya melihat berkas miliknya sendiri
+async function mediaList(userId, limit) {
+  const cap = Math.min(Math.max(1, Number(limit) || 300), 1000);
+  const rows = await db.all(
+    `SELECT id, chat_id, type, media_url, media_name, media_size, mime, created_at, view_once
+       FROM messages
+      WHERE sender_id = ? AND media_url IS NOT NULL AND deleted_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?`,
+    userId, cap
+  );
+  const items = rows.map((r) => ({
+    id: r.id,
+    chatId: r.chat_id,
+    type: ['image', 'video', 'audio', 'file'].includes(r.type) ? r.type : 'file',
+    url: r.media_url,
+    name: r.media_name || null,
+    size: Math.max(0, Number(r.media_size) || 0),
+    mime: r.mime || null,
+    at: Number(r.created_at) || 0,
+    viewOnce: !!r.view_once,
+  }));
+  const totals = { image: 0, video: 0, audio: 0, file: 0, all: 0 };
+  for (const it of items) {
+    totals[it.type] += it.size;
+    totals.all += it.size;
+  }
+  return { items, totals, count: items.length };
+}
+
+module.exports = {
+  MAX_MEDIA, quotaOf, usedOf, reserve, release, usage, recompute, recomputeAll, mediaList,
+};
