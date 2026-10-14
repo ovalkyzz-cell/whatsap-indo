@@ -173,6 +173,30 @@ async function getVapid() {
   return value;
 }
 
+/* ---------- terminal mini: limit harian per paket (diatur admin) ----------
+   Hanya paket permanen & bisnis yang memakai limit; admin tanpa limit. */
+const DEFAULT_TERMINAL_LIMITS = { permanen: 30, bisnis: 60 };
+const MAX_TERMINAL_LIMIT = 100000;
+
+function normalizeTerminalLimits(input) {
+  const out = { ...DEFAULT_TERMINAL_LIMITS };
+  if (!input || typeof input !== 'object') return out;
+  for (const key of ['permanen', 'bisnis']) {
+    if (input[key] === undefined || input[key] === null || input[key] === '') continue;
+    const n = Math.round(Number(input[key]));
+    if (Number.isFinite(n) && n >= 0 && n <= MAX_TERMINAL_LIMIT) out[key] = n;
+  }
+  return out;
+}
+
+async function getTerminalLimits() {
+  return normalizeTerminalLimits(await get('terminal_limits', null));
+}
+
+async function setTerminalLimits(input) {
+  return set('terminal_limits', normalizeTerminalLimits(input));
+}
+
 module.exports = {
   DEFAULT_PLANS,
   EXCLUSIVE_BOTS,
@@ -186,4 +210,6 @@ module.exports = {
   setHomeBg,
   validBgUrl,
   getVapid,
+  getTerminalLimits,
+  setTerminalLimits,
 };

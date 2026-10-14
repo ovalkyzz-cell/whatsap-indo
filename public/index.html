@@ -619,6 +619,11 @@
           <span class="mi-text"><strong>Kontak</strong><small>Daftar kontak &amp; email tersimpan</small></span>
           <span class="mi-arrow">›</span>
         </button>
+        <button class="menu-item" data-menu="terminal" id="menuTerminal">
+          <span class="mi-ico mi-ico-green"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-zap" /></svg></span>
+          <span class="mi-text"><strong>Terminal</strong><small>Verif AM · Parse NIK · NFToken</small></span>
+          <span class="mi-arrow">›</span>
+        </button>
         <button class="menu-item" data-menu="theme" id="menuTheme">
           <span class="mi-ico" id="themeIco"><svg viewBox="0 0 24 24" class="mi-svg"><use href="#ic-moon" /></svg></span>
           <span class="mi-text"><strong>Tema &amp; Warna</strong><small id="themeLabel">Mode terang · Warna teal</small></span>
@@ -845,6 +850,42 @@
           <div class="empty-state">Memuat kontak...</div>
         </div>
         <button class="btn-ghost contacts-more hidden" id="contactsMore">Muat lebih banyak</button>
+      </div>
+    </div>
+
+    <!-- ============ TERMINAL MINI ============ -->
+    <div class="drawer drawer-right hidden" id="terminalDrawer">
+      <header class="drawer-header">
+        <button class="icon-btn drawer-close" id="btnCloseTerminal" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
+        <strong>Terminal</strong>
+        <span class="term-quota" id="termQuota"></span>
+      </header>
+      <div class="term-body">
+        <div class="term-out" id="termOut"></div>
+        <div class="term-quick" id="termQuick">
+          <button type="button" data-cmd="menu">menu</button>
+          <button type="button" data-cmd="status">status</button>
+          <button type="button" data-cmd="nik 3175061509900001">nik</button>
+          <button type="button" data-cmd="generate">generate</button>
+          <button type="button" data-cmd="verif">verif</button>
+        </div>
+        <form class="term-input-row" id="termForm" autocomplete="off">
+          <span class="term-prompt">$</span>
+          <input type="text" id="termInput" placeholder="Ketik perintah lalu Enter..." spellcheck="false" />
+          <button type="submit" class="term-send" title="Jalankan">
+            <svg viewBox="0 0 24 24" class="ico"><use href="#ic-send" /></svg>
+          </button>
+        </form>
+        <div class="term-admin hidden" id="termAdmin">
+          <p class="term-admin-title">Atur limit harian (admin)</p>
+          <div class="term-admin-row">
+            <label>Permanen <input type="number" id="termLimPerm" min="0" max="100000" /></label>
+            <label>Bisnis <input type="number" id="termLimBiz" min="0" max="100000" /></label>
+          </div>
+          <button type="button" class="btn-primary" id="termSaveLimits">Simpan Limit</button>
+        </div>
       </div>
     </div>
 

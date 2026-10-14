@@ -195,6 +195,12 @@ CREATE TABLE IF NOT EXISTS bus (
   at            BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bus_at ON bus (at);
+CREATE TABLE IF NOT EXISTS terminal_usage (
+  user_id TEXT NOT NULL,
+  day     TEXT NOT NULL,
+  count   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
 `;
 
 const SQLITE_SCHEMA = `
@@ -377,6 +383,12 @@ CREATE TABLE IF NOT EXISTS bus (
   at            INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bus_at ON bus (at);
+CREATE TABLE IF NOT EXISTS terminal_usage (
+  user_id TEXT NOT NULL,
+  day     TEXT NOT NULL,
+  count   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
 `;
 
 // migrasi kolom per tabel (dijalankan saat boot, aman diulang)

@@ -258,6 +258,7 @@ function renderMe() {
   const isAdmin = S.me.role === 'admin';
   $('menuAdmin').classList.toggle('hidden', !isAdmin);
   $('btnOpenAdminPanel').classList.toggle('hidden', !isAdmin);
+  loadTermAccess(); // tampilkan menu Terminal bila berhak (admin/permanen/bisnis)
 }
 
 const PLAN_LABELS = { harian: 'Harian', mingguan: 'Mingguan', bulanan: 'Bulanan', permanen: 'Permanen', 'lima-hari': '5 Hari' };
@@ -2134,7 +2135,7 @@ function clearAttachPreview() {
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
   'groupDrawer', 'groupInfoDrawer', 'statusComposer', 'privacyDrawer', 'adminDrawer', 'notifDrawer', 'botCatDrawer',
-  'planDrawer', 'inviteDrawer', 'aboutDrawer', 'storageDrawer', 'themeDrawer', 'contactsDrawer'];
+  'planDrawer', 'inviteDrawer', 'aboutDrawer', 'storageDrawer', 'themeDrawer', 'contactsDrawer', 'terminalDrawer'];
 
 function openDrawer(id, withScrim = true) {
   DRAWERS.forEach((d) => $(d).classList.toggle('hidden', d !== id));
@@ -2372,6 +2373,120 @@ function openContacts() {
   if (btnClose) btnClose.addEventListener('click', closeDrawers);
 })();
 
+/* ================= terminal mini (admin / permanen / bisnis) ================= */
+let termAccess = null;
+
+async function loadTermAccess() {
+  try {
+    termAccess = await api('/api/terminal/access');
+  } catch (e) {
+    termAccess = { allowed: false };
+  }
+  const menu = $('menuTerminal');
+  if (menu) menu.classList.toggle('hidden', !(termAccess && termAccess.allowed));
+}
+
+function termRenderQuota() {
+  const q = termAccess;
+  const el = $('termQuota');
+  if (el) {
+    if (!q || !q.allowed) el.textContent = '';
+    else if (q.isAdmin) el.textContent = 'Admin · tanpa limit';
+    else el.textContent = `${q.plan} · ${q.used}/${q.limit}`;
+  }
+  const adm = $('termAdmin');
+  if (adm) adm.classList.toggle('hidden', !(q && q.isAdmin));
+  if (q && q.isAdmin && q.limits) {
+    const p = $('termLimPerm');
+    const b = $('termLimBiz');
+    if (p) p.value = q.limits.permanen;
+    if (b) b.value = q.limits.bisnis;
+  }
+}
+
+function termAppend(kind, text) {
+  const out = $('termOut');
+  if (!out) return null;
+  const div = document.createElement('div');
+  div.className = 'term-line term-' + kind;
+  div.textContent = text;
+  out.appendChild(div);
+  out.scrollTop = out.scrollHeight;
+  return div;
+}
+
+async function termRun(cmd) {
+  cmd = String(cmd || '').trim();
+  if (!cmd) return;
+  const input = $('termInput');
+  if (input) input.value = '';
+  termAppend('cmd', '$ ' + cmd);
+  if (cmd.toLowerCase() === 'clear') {
+    const out = $('termOut');
+    if (out) out.innerHTML = '';
+    return;
+  }
+  const loading = termAppend('res', '… memproses');
+  try {
+    const data = await api('/api/terminal/run', { method: 'POST', body: { cmd } });
+    if (loading) loading.remove();
+    if (data.clear) {
+      const out = $('termOut');
+      if (out) out.innerHTML = '';
+      return;
+    }
+    termAppend(data.error ? 'err' : 'res', data.error ? '✕ ' + data.error : (data.output || '(tanpa keluaran)'));
+    termAccess = data;
+    termRenderQuota();
+  } catch (e) {
+    if (loading) loading.remove();
+    termAppend('err', '✕ ' + e.message);
+    if (e.status === 429 || e.status === 403) loadTermAccess();
+  }
+}
+
+function openTerminal() {
+  openDrawer('terminalDrawer');
+  const out = $('termOut');
+  if (out && !out.childElementCount) {
+    termAppend('res', 'Terminal Mini — Whatsap Indo');
+    termAppend('res', 'Verif AM · Parse NIK · Generate NFToken');
+    termAppend('res', 'Ketik "menu" untuk daftar perintah.');
+    termAppend('res', '────────────────────────');
+  }
+  termRenderQuota();
+  if (!termAccess) loadTermAccess().then(termRenderQuota);
+  const inp = $('termInput');
+  if (inp) inp.focus();
+}
+
+(function initTerminalUI() {
+  const form = $('termForm');
+  if (form) form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    termRun(($('termInput') || {}).value);
+  });
+  const quick = $('termQuick');
+  if (quick) quick.querySelectorAll('[data-cmd]').forEach((b) => {
+    b.addEventListener('click', () => termRun(b.dataset.cmd));
+  });
+  const btnClose = $('btnCloseTerminal');
+  if (btnClose) btnClose.addEventListener('click', closeDrawers);
+  const save = $('termSaveLimits');
+  if (save) save.addEventListener('click', async () => {
+    const permanen = Number(($('termLimPerm') || {}).value);
+    const bisnis = Number(($('termLimBiz') || {}).value);
+    try {
+      const data = await api('/api/terminal/limits', { method: 'POST', body: { permanen, bisnis } });
+      if (data && data.limits) {
+        termAccess = { ...(termAccess || {}), limits: data.limits };
+        termRenderQuota();
+        toast('Limit terminal disimpan.');
+      }
+    } catch (e) { toast(e.message); }
+  });
+})();
+
 /* ================= menu drawer ================= */
 document.querySelectorAll('.menu-item').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -2384,6 +2499,7 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'homebg') openHomeBg();
     else if (action === 'theme') openThemeDrawer();
     else if (action === 'contacts') openContacts();
+    else if (action === 'terminal') openTerminal();
     else if (action === 'privacy') openPrivacy();
     else if (action === 'bots') openBotCatalog();
     else if (action === 'admin') openAdminPanel();

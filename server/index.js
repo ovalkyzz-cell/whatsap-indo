@@ -960,6 +960,146 @@ app.post('/api/chats/:id/archive', auth.requireAuth, ah(async (req, res) => {
   res.json({ ok: true, chatId: req.params.id, archived });
 }));
 
+/* ================= terminal mini (admin / permanen / bisnis) =================
+   Akses: admin tanpa limit; paket permanen & bisnis memakai limit harian
+   yang bisa diatur admin. Menjalankan verif AM, parse NIK & generate
+   NFToken lewat bot yang sama (bots.reply). */
+const TERMINAL_PLANS = ['permanen', 'bisnis'];
+
+function terminalDay() {
+  return new Date().toISOString().slice(0, 10); // hari-kalender UTC
+}
+
+async function terminalQuota(user) {
+  if (auth.isAdmin(user)) {
+    return { allowed: true, isAdmin: true, plan: 'admin', limit: 0, used: 0, remaining: 0 };
+  }
+  const plan = String(user.premium_plan || '');
+  const active = auth.isPremium(user);
+  if (!active || !TERMINAL_PLANS.includes(plan)) {
+    return { allowed: false, isAdmin: false, plan, limit: 0, used: 0, remaining: 0 };
+  }
+  const limits = await settings.getTerminalLimits();
+  const limit = Number(limits[plan]) || 0;
+  const day = terminalDay();
+  const row = await db.get('SELECT count FROM terminal_usage WHERE user_id = ? AND day = ?', user.id, day);
+  const used = Number(row && row.count) || 0;
+  return { allowed: true, isAdmin: false, plan, limit, used, remaining: Math.max(0, limit - used) };
+}
+
+async function terminalBump(userId) {
+  const day = terminalDay();
+  await db.run(
+    `INSERT INTO terminal_usage (user_id, day, count) VALUES (?, ?, 1)
+     ON CONFLICT (user_id, day) DO UPDATE SET count = count + 1`,
+    userId,
+    day
+  );
+}
+
+// perintah terminal -> bot pemroses (memakai balasan bot yang sama)
+function routeTerminal(raw) {
+  const text = String(raw || '').trim();
+  const parts = text.split(/\s+/);
+  const first = (parts[0] || '').toLowerCase();
+  const restText = parts.slice(1).join(' ').trim();
+  if (['verif', 'verifikasi', 'am', 'verif-am'].includes(first)) {
+    return { botId: 'bot-verif-am', text: restText || 'menu' };
+  }
+  if (['nik', 'parsenik'].includes(first)) {
+    return { botId: 'bot-nik', text };
+  }
+  if (['generate', 'gen', 'token', 'nftoken', 'buat'].includes(first)) {
+    return { botId: 'bot-nftoken', text };
+  }
+  return null;
+}
+
+const TERMINAL_HELP = [
+  '╭─────────────────────────────',
+  '│ TERMINAL MINI',
+  '│ Verif AM · Parse NIK · NFToken',
+  '╰─────────────────────────────',
+  '',
+  'Perintah:',
+  '',
+  '  menu                        Bantuan ini',
+  '  status                      Sisa kuota',
+  '  clear                       Bersihkan layar',
+  '',
+  '  verif send <email>          Kirim tautan verif AM',
+  '  verif cek <email> <token>   Cek verif AM',
+  '  nik <16 digit>              Parse NIK KTP',
+  '  generate [1-10]             Generate NFToken',
+  '',
+  'Contoh:',
+  '  verif send nama@mail.com',
+  '  nik 3175061509900001',
+  '  generate 3',
+].join('\n');
+
+app.get('/api/terminal/access', auth.requireAuth, ah(async (req, res) => {
+  const q = await terminalQuota(req.user);
+  const limits = await settings.getTerminalLimits();
+  res.json({ ...q, limits });
+}));
+
+app.post('/api/terminal/limits', auth.requireAuth, ah(async (req, res) => {
+  if (!auth.isAdmin(req.user)) return res.status(403).json({ error: 'Hanya admin yang bisa mengatur limit' });
+  const saved = await settings.setTerminalLimits(req.body || {});
+  res.json({ ok: true, limits: saved });
+}));
+
+app.post('/api/terminal/run', auth.requireAuth, ah(async (req, res) => {
+  const raw = String(req.body?.cmd || '').trim();
+  if (!raw) return res.status(400).json({ error: 'Perintah kosong' });
+
+  const q = await terminalQuota(req.user);
+  if (!q.allowed) {
+    return res.status(403).json({ error: 'Terminal hanya untuk admin, paket Permanen & Bisnis.' });
+  }
+
+  const lower = raw.toLowerCase();
+  if (lower === 'clear') return res.json({ output: '', clear: true, ...q });
+  if (['status', 'quota', 'kuota'].includes(lower)) {
+    const output = q.isAdmin
+      ? 'Status : Admin — akses tanpa limit.'
+      : `Status : paket ${q.plan} — terpakai ${q.used}/${q.limit} hari ini, sisa ${q.remaining}.`;
+    return res.json({ output, ...q });
+  }
+  if (['menu', 'help', 'bantuan', '?'].includes(lower)) {
+    return res.json({ output: TERMINAL_HELP, ...q });
+  }
+
+  // kuota harian (admin lolos tanpa dicek)
+  if (!q.isAdmin && q.remaining <= 0) {
+    return res.status(429).json({
+      error: `Kuota terminal habis (${q.limit}/hari). Hubungi admin untuk menaikkan limit.`,
+      ...q,
+    });
+  }
+
+  const route = routeTerminal(raw);
+  if (!route) {
+    return res.json({ output: `Perintah tidak dikenal: "${raw}". Ketik "menu" untuk bantuan.`, ...q });
+  }
+
+  const bot = await bots.get(route.botId);
+  if (!bot) return res.status(500).json({ error: 'Bot terminal tidak tersedia.' });
+
+  let out;
+  try {
+    out = await bots.reply(bot, route.text);
+  } catch (e) {
+    return res.status(502).json({ error: e.message || 'Gagal memproses perintah.', ...q });
+  }
+  const output = out && typeof out === 'object' ? out.text || '' : String(out || '');
+
+  if (!q.isAdmin) await terminalBump(req.user.id);
+  const after = await terminalQuota(req.user);
+  res.json({ output, ...after });
+}));
+
 app.post('/api/chats/:id/typing', auth.requireAuth, ah(async (req, res) => {
   if (!(await helpers.isMember(req.params.id, req.user.id))) {
     return res.status(403).json({ error: 'Bukan anggota chat ini' });
