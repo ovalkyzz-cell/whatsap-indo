@@ -2042,6 +2042,19 @@ html[data-theme="dark"] .plan-card .plan-cta { box-shadow: 0 8px 18px rgba(0, 0,
 .st-hdr-btn:hover { background: rgba(var(--wa-accent-rgb), .1); }
 .st-hdr-btn.active { background: rgb(var(--wa-accent-rgb)); color: #fff; border-color: rgb(var(--wa-accent-rgb)); }
 
+.st-progress {
+  margin: 12px 14px 0; padding: 12px 14px; border-radius: 14px;
+  background: rgba(var(--wa-accent-rgb), .08); border: 1px solid rgba(var(--wa-accent-rgb), .25);
+  animation: fadeUp .3s ease both;
+}
+.st-progress-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.st-progress-title { font-size: 13px; font-weight: 600; }
+.st-progress-pct { font-size: 13px; font-weight: 800; color: var(--wa-accent-text, #00a884); min-width: 38px; text-align: right; }
+.st-progress-bar { height: 8px; border-radius: 6px; background: rgba(0, 0, 0, .1); overflow: hidden; }
+html[data-theme="dark"] .st-progress-bar { background: rgba(255, 255, 255, .12); }
+.st-progress-bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: rgb(var(--wa-accent-rgb)); transition: width .2s ease; }
+.st-progress-sub { display: block; margin-top: 7px; font-size: 11.5px; color: var(--wa-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .st-tools { display: flex; justify-content: flex-end; margin: 0 14px; }
 .st-tool {
   display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px;

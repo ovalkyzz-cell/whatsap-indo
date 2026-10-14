@@ -3155,10 +3155,33 @@ async function deleteStorageItem(id, btn, kind) {
 
 /* ================= simpan dari galeri (satu klik) =================
    Pilih banyak foto/video/file dari galeri perangkat -> unggah lalu
-   daftarkan langsung ke storage (tanpa dikirim jadi pesan). Kuota
-   dicadangkan atomik di server (POST /api/storage/files); setelah semua
-   selesai daftar dimuat ulang agar file baru langsung tampil. */
+   daftarkan langsung ke storage (tanpa dikirim jadi pesan). Menampilkan
+   progress berpersen selama proses agar terasa lancar; kuota dicadangkan
+   atomik di server; setelah selesai daftar dimuat ulang. */
 $('btnStUpload').addEventListener('click', () => $('stFileInput').click());
+
+function stProgressShow(total) {
+  const el = $('stProgress');
+  if (!el) return;
+  el.classList.remove('hidden');
+  const pct = $('stProgressPct'); if (pct) pct.textContent = '0%';
+  const fill = $('stProgressFill'); if (fill) fill.style.width = '0%';
+  const sub = $('stProgressSub'); if (sub) sub.textContent = `Menyiapkan ${total} file…`;
+}
+function stProgressUpdate(fileIdx, total, filePct, name) {
+  const overall = Math.max(0, Math.min(100, Math.round(((fileIdx + filePct / 100) / total) * 100)));
+  const pct = $('stProgressPct'); if (pct) pct.textContent = overall + '%';
+  const fill = $('stProgressFill'); if (fill) fill.style.width = overall + '%';
+  const sub = $('stProgressSub'); if (sub) sub.textContent = `${name} · file ${fileIdx + 1} dari ${total}`;
+}
+function stProgressDone(msg) {
+  const el = $('stProgress');
+  if (!el) return;
+  const pct = $('stProgressPct'); if (pct) pct.textContent = '100%';
+  const fill = $('stProgressFill'); if (fill) fill.style.width = '100%';
+  const sub = $('stProgressSub'); if (sub) sub.textContent = msg || 'Selesai';
+  setTimeout(() => el.classList.add('hidden'), 1100);
+}
 
 $('stFileInput').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
@@ -3166,10 +3189,14 @@ $('stFileInput').addEventListener('change', async (e) => {
   if (!files.length) return;
   const btn = $('btnStUpload');
   if (btn) { btn.classList.add('busy'); btn.setAttribute('aria-busy', 'true'); }
+  stProgressShow(files.length);
   let ok = 0, fail = 0, lastErr = '';
-  for (const file of files) {
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
     try {
-      const meta = await uploadFile(file);
+      stProgressUpdate(i, files.length, 0, file.name);
+      const meta = await uploadFile(file, (p) => stProgressUpdate(i, files.length, Math.round(p * 100), file.name));
+      stProgressUpdate(i, files.length, 100, file.name); // unggah beres, siap didaftarkan
       await api('/api/storage/files', {
         method: 'POST',
         body: { url: meta.url, name: meta.name, size: meta.size, mime: meta.mime, type: meta.type },
@@ -3181,6 +3208,8 @@ $('stFileInput').addEventListener('change', async (e) => {
     }
   }
   if (btn) { btn.classList.remove('busy'); btn.removeAttribute('aria-busy'); }
+  const summary = ok && !fail ? `${ok} file tersimpan` : `${ok} tersimpan · ${fail} gagal`;
+  stProgressDone(summary);
   if (ok && !fail) toast(`${ok} file tersimpan di penyimpanan`);
   else if (ok && fail) toast(`${ok} tersimpan · ${fail} gagal (${lastErr})`);
   else toast(lastErr || 'Gagal menyimpan file');

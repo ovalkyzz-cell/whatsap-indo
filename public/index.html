@@ -708,6 +708,14 @@
         <button class="st-hdr-btn" id="btnStSelect" type="button" title="Pilih beberapa untuk hapus massal">Pilih</button>
         <input type="file" id="stFileInput" class="hidden" multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx" />
       </header>
+      <div class="st-progress hidden" id="stProgress" role="status" aria-live="polite">
+        <div class="st-progress-top">
+          <span class="st-progress-title">Menyimpan ke penyimpanan…</span>
+          <span class="st-progress-pct" id="stProgressPct">0%</span>
+        </div>
+        <div class="st-progress-bar"><i id="stProgressFill"></i></div>
+        <small class="st-progress-sub" id="stProgressSub">Menyiapkan…</small>
+      </div>
       <div class="storage-body" id="storageBody"></div>
       <div class="st-bulk-bar hidden" id="stBulkBar">
         <span class="st-bulk-count" id="stBulkCount">0 dipilih</span>
