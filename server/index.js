@@ -448,6 +448,35 @@ app.get('/api/me/storage/media', auth.requireAuth, ah(async (req, res) => {
   res.json({ usage, ...media });
 }));
 
+// simpan file langsung ke storage (dari galeri, satu klik) — tanpa jadi pesan.
+// klien mengunggah dulu (presigned/blob atau /api/upload) lalu mendaftarkan
+// url-nya di sini; kuota dicadangkan atomik & dicatat di saved_files.
+app.post('/api/storage/files', auth.requireAuth, ah(async (req, res) => {
+  const url = String(req.body?.url || '');
+  if (!validChatUrl(url)) return res.status(400).json({ error: 'URL file tidak valid' });
+  const result = await storage.saveFile(req.user, {
+    url,
+    name: req.body?.name,
+    size: req.body?.size,
+    mime: req.body?.mime,
+    type: req.body?.type,
+  });
+  if (!result.ok) {
+    return res.status(result.full ? 413 : 400).json({
+      error: result.error,
+      ...(result.full ? { storage: await storage.usage(req.user) } : {}),
+    });
+  }
+  res.status(201).json({ item: result.item });
+}));
+
+// hapus file tersimpan & bebaskan kuota storage
+app.delete('/api/storage/files/:id', auth.requireAuth, ah(async (req, res) => {
+  const result = await storage.deleteFile(req.user, req.params.id);
+  if (!result.ok) return res.status(result.notFound ? 404 : 400).json({ error: result.error });
+  res.json({ ok: true });
+}));
+
 // kode undangan + statistik: makin banyak teman join, makin banyak token
 app.get('/api/referral', auth.requireAuth, ah(async (req, res) => {
   const stats = await referral.stats(req.user);

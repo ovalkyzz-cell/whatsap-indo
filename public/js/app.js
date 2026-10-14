@@ -2980,7 +2980,7 @@ function renderStorage(data) {
 
   const grid = shown.length
     ? `<div class="st-grid">${shown.map((it) => `
-        <div class="st-card st-${it.type}" data-st-id="${esc(it.id)}">
+        <div class="st-card st-${it.type}" data-st-id="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}">
           ${it.type === 'image'
             ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="">`
             : it.type === 'video'
@@ -2990,7 +2990,7 @@ function renderStorage(data) {
             <span class="st-name" title="${esc(it.name || 'Media')}">${esc(it.name || (it.type === 'image' ? 'Foto' : it.type === 'video' ? 'Video' : it.type === 'audio' ? 'Audio' : 'File'))}</span>
             <span class="st-sub">${fmtBytes(it.size)} · ${fmtDate(it.at)}</span>
           </div>
-          <button class="st-del" type="button" data-st-del="${esc(it.id)}" title="Hapus & bebaskan storage">
+          <button class="st-del" type="button" data-st-del="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}" title="Hapus & bebaskan storage">
             <svg viewBox="0 0 24 24"><use href="#ic-trash" /></svg>
           </button>
         </div>`).join('')}</div>`
@@ -3008,7 +3008,7 @@ function renderStorage(data) {
     });
   });
   body.querySelectorAll('[data-st-del]').forEach((btn) => {
-    btn.addEventListener('click', (e) => { e.stopPropagation(); void deleteStorageItem(btn.dataset.stDel, btn); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); void deleteStorageItem(btn.dataset.stDel, btn, btn.dataset.stKind); });
   });
   // ketuk kartu (di luar tombol hapus) -> buka viewer lihat/tonton media
   body.querySelectorAll('.st-card').forEach((card, i) => {
@@ -3019,11 +3019,12 @@ function renderStorage(data) {
   });
 }
 
-async function deleteStorageItem(id, btn) {
+async function deleteStorageItem(id, btn, kind) {
   if (!confirm('Hapus media ini? Kuota storage akan dibebaskan.')) return;
   if (btn) btn.classList.add('busy');
   try {
-    await api(`/api/messages/${id}`, { method: 'DELETE' });
+    if (kind === 'saved') await api(`/api/storage/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    else await api(`/api/messages/${id}`, { method: 'DELETE' });
     toast('Media dihapus — storage dibebaskan');
     openStorageDrawer(); // muat ulang data
   } catch (err) {
@@ -3031,6 +3032,40 @@ async function deleteStorageItem(id, btn) {
     if (btn) btn.classList.remove('busy');
   }
 }
+
+/* ================= simpan dari galeri (satu klik) =================
+   Pilih banyak foto/video/file dari galeri perangkat -> unggah lalu
+   daftarkan langsung ke storage (tanpa dikirim jadi pesan). Kuota
+   dicadangkan atomik di server (POST /api/storage/files); setelah semua
+   selesai daftar dimuat ulang agar file baru langsung tampil. */
+$('btnStUpload').addEventListener('click', () => $('stFileInput').click());
+
+$('stFileInput').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = ''; // reset agar file yang sama bisa dipilih lagi
+  if (!files.length) return;
+  const btn = $('btnStUpload');
+  if (btn) { btn.classList.add('busy'); btn.setAttribute('aria-busy', 'true'); }
+  let ok = 0, fail = 0, lastErr = '';
+  for (const file of files) {
+    try {
+      const meta = await uploadFile(file);
+      await api('/api/storage/files', {
+        method: 'POST',
+        body: { url: meta.url, name: meta.name, size: meta.size, mime: meta.mime, type: meta.type },
+      });
+      ok++;
+    } catch (err) {
+      fail++;
+      lastErr = err.message || 'Gagal menyimpan';
+    }
+  }
+  if (btn) { btn.classList.remove('busy'); btn.removeAttribute('aria-busy'); }
+  if (ok && !fail) toast(`${ok} file tersimpan di penyimpanan`);
+  else if (ok && fail) toast(`${ok} tersimpan · ${fail} gagal (${lastErr})`);
+  else toast(lastErr || 'Gagal menyimpan file');
+  openStorageDrawer(); // muat ulang agar file baru tampil
+});
 
 /* ================= viewer media penyimpanan =================
    Lihat foto / tonton video / putar audio / buka file langsung dari daftar.

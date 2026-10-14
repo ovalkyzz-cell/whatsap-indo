@@ -13,6 +13,7 @@
 const db = require('./db');
 const settings = require('./settings');
 const auth = require('./auth');
+const crypto = require('crypto');
 
 // batas ukuran satu media yang dilaporkan klien (sinkron dengan upload.js)
 const MAX_MEDIA = 2 * 1024 * 1024 * 1024;
@@ -83,27 +84,37 @@ async function usage(user) {
   };
 }
 
-// hitung ulang dari sumber kebenaran: total ukuran media pesan aktif milik user
+// hitung ulang dari sumber kebenaran: total ukuran media pesan aktif + file tersimpan
 async function recompute(userId) {
-  const row = await db.get(
+  const msg = await db.get(
     `SELECT COALESCE(SUM(media_size), 0) AS total
        FROM messages
       WHERE sender_id = ? AND deleted_at IS NULL AND media_url IS NOT NULL`,
     userId
   );
-  const total = Math.max(0, Number(row && row.total) || 0);
+  const saved = await db.get(
+    `SELECT COALESCE(SUM(media_size), 0) AS total FROM saved_files WHERE user_id = ?`,
+    userId
+  );
+  const total = Math.max(0, (Number(msg && msg.total) || 0) + (Number(saved && saved.total) || 0));
   await db.run('UPDATE users SET storage_used = ? WHERE id = ?', total, userId);
   return total;
 }
 
 async function recomputeAll() {
-  const rows = await db.all(
+  const msgRows = await db.all(
     `SELECT m.sender_id AS id, COALESCE(SUM(m.media_size), 0) AS total
        FROM messages m
       WHERE m.deleted_at IS NULL AND m.media_url IS NOT NULL AND m.sender_id IS NOT NULL
       GROUP BY m.sender_id`
   );
-  const byId = new Map(rows.map((r) => [r.id, Math.max(0, Number(r.total) || 0)]));
+  const savedRows = await db.all(
+    `SELECT user_id AS id, COALESCE(SUM(media_size), 0) AS total
+       FROM saved_files GROUP BY user_id`
+  );
+  const byId = new Map();
+  for (const r of msgRows) byId.set(r.id, (byId.get(r.id) || 0) + Math.max(0, Number(r.total) || 0));
+  for (const r of savedRows) byId.set(r.id, (byId.get(r.id) || 0) + Math.max(0, Number(r.total) || 0));
   const users = await db.all('SELECT id FROM users');
   for (const u of users) {
     const total = byId.get(u.id) || 0;
@@ -113,10 +124,28 @@ async function recomputeAll() {
 }
 
 // daftar media milik satu pengguna (foto/video/file) yang masih tersimpan —
+// gabungan pesan media aktif + file yang disimpan langsung ke storage.
 // dipakai manajer penyimpanan; user hanya melihat berkas miliknya sendiri
+const VALID_TYPES = ['image', 'video', 'audio', 'file'];
+
+function serializeSaved(r) {
+  return {
+    id: r.id,
+    kind: 'saved',
+    chatId: null,
+    type: VALID_TYPES.includes(r.type) ? r.type : 'file',
+    url: r.media_url,
+    name: r.media_name || null,
+    size: Math.max(0, Number(r.media_size) || 0),
+    mime: r.mime || null,
+    at: Number(r.created_at) || 0,
+    viewOnce: false,
+  };
+}
+
 async function mediaList(userId, limit) {
   const cap = Math.min(Math.max(1, Number(limit) || 300), 1000);
-  const rows = await db.all(
+  const msgRows = await db.all(
     `SELECT id, chat_id, type, media_url, media_name, media_size, mime, created_at, view_once
        FROM messages
       WHERE sender_id = ? AND media_url IS NOT NULL AND deleted_at IS NULL
@@ -124,10 +153,19 @@ async function mediaList(userId, limit) {
       LIMIT ?`,
     userId, cap
   );
-  const items = rows.map((r) => ({
+  const savedRows = await db.all(
+    `SELECT id, media_url, media_name, media_size, mime, type, created_at
+       FROM saved_files
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?`,
+    userId, cap
+  );
+  const items = msgRows.map((r) => ({
     id: r.id,
+    kind: 'msg',
     chatId: r.chat_id,
-    type: ['image', 'video', 'audio', 'file'].includes(r.type) ? r.type : 'file',
+    type: VALID_TYPES.includes(r.type) ? r.type : 'file',
     url: r.media_url,
     name: r.media_name || null,
     size: Math.max(0, Number(r.media_size) || 0),
@@ -135,14 +173,60 @@ async function mediaList(userId, limit) {
     at: Number(r.created_at) || 0,
     viewOnce: !!r.view_once,
   }));
+  for (const r of savedRows) items.push(serializeSaved(r));
+  items.sort((a, b) => b.at - a.at);
+  const capped = items.slice(0, cap);
   const totals = { image: 0, video: 0, audio: 0, file: 0, all: 0 };
-  for (const it of items) {
+  for (const it of capped) {
     totals[it.type] += it.size;
     totals.all += it.size;
   }
-  return { items, totals, count: items.length };
+  return { items: capped, totals, count: capped.length };
+}
+
+// simpan file langsung ke storage (tanpa pesan): reservasi kuota atomik lalu
+// catat di saved_files. url wajib tervalidasi validChatUrl oleh pemanggil.
+async function saveFile(user, input) {
+  const url = String(input.url || '');
+  const size = Math.max(0, Math.round(Number(input.size) || 0));
+  if (!url) return { ok: false, error: 'URL file tidak valid' };
+  if (size > MAX_MEDIA) return { ok: false, error: 'Ukuran file maksimal 2GB' };
+  const type = VALID_TYPES.includes(input.type) ? input.type : 'file';
+  const quota = await quotaOf(user);
+  const reserved = await reserve(user.id, size, quota);
+  if (!reserved) return { ok: false, error: 'Storage penuh — hapus media lama atau upgrade paket', full: true };
+  const id = crypto.randomUUID();
+  try {
+    await db.run(
+      `INSERT INTO saved_files (id, user_id, media_url, media_name, media_size, mime, type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      user.id,
+      url,
+      input.name ? String(input.name).slice(0, 255) : null,
+      size,
+      input.mime ? String(input.mime).slice(0, 127) : null,
+      type,
+      Date.now()
+    );
+  } catch (err) {
+    await release(user.id, size); // gagal catat -> bebaskan reservasi
+    throw err;
+  }
+  const row = await db.get('SELECT * FROM saved_files WHERE id = ?', id);
+  return { ok: true, item: serializeSaved(row) };
+}
+
+// hapus file tersimpan milik user & bebaskan kuotanya
+async function deleteFile(user, id) {
+  const row = await db.get('SELECT * FROM saved_files WHERE id = ? AND user_id = ?', id, user.id);
+  if (!row) return { ok: false, error: 'File tidak ditemukan', notFound: true };
+  await db.run('DELETE FROM saved_files WHERE id = ?', id);
+  await release(user.id, Number(row.media_size) || 0);
+  return { ok: true };
 }
 
 module.exports = {
   MAX_MEDIA, quotaOf, usedOf, reserve, release, usage, recompute, recomputeAll, mediaList,
+  saveFile, deleteFile,
 };

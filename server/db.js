@@ -201,6 +201,17 @@ CREATE TABLE IF NOT EXISTS terminal_usage (
   count   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS saved_files (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  media_url  TEXT NOT NULL,
+  media_name TEXT,
+  media_size BIGINT NOT NULL DEFAULT 0,
+  mime       TEXT,
+  type       TEXT NOT NULL DEFAULT 'file',
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_files_user ON saved_files (user_id, created_at);
 `;
 
 const SQLITE_SCHEMA = `
@@ -389,6 +400,17 @@ CREATE TABLE IF NOT EXISTS terminal_usage (
   count   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS saved_files (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  media_url  TEXT NOT NULL,
+  media_name TEXT,
+  media_size INTEGER NOT NULL DEFAULT 0,
+  mime       TEXT,
+  type       TEXT NOT NULL DEFAULT 'file',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_files_user ON saved_files (user_id, created_at);
 `;
 
 // migrasi kolom per tabel (dijalankan saat boot, aman diulang)
