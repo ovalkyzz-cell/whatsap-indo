@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS users (
   invite_count    INTEGER NOT NULL DEFAULT 0,
   bot_tokens      INTEGER NOT NULL DEFAULT 0,
   bot_usage_day   TEXT,
-  bot_usage_count INTEGER NOT NULL DEFAULT 0
+  bot_usage_count INTEGER NOT NULL DEFAULT 0,
+  storage_used    BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -118,6 +119,7 @@ CREATE TABLE IF NOT EXISTS messages (
   deleted_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id);
 
 CREATE TABLE IF NOT EXISTS message_status (
   message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -238,7 +240,8 @@ CREATE TABLE IF NOT EXISTS users (
   invite_count    INTEGER NOT NULL DEFAULT 0,
   bot_tokens      INTEGER NOT NULL DEFAULT 0,
   bot_usage_day   TEXT,
-  bot_usage_count INTEGER NOT NULL DEFAULT 0
+  bot_usage_count INTEGER NOT NULL DEFAULT 0,
+  storage_used    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -297,6 +300,7 @@ CREATE TABLE IF NOT EXISTS messages (
   deleted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 
 CREATE TABLE IF NOT EXISTS message_status (
   message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -411,6 +415,7 @@ const TABLE_MIGRATIONS = {
     ['bot_tokens', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['bot_usage_day', 'TEXT', 'TEXT'],
     ['bot_usage_count', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['storage_used', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   chats: [
     ['avatar', 'TEXT', 'TEXT'],

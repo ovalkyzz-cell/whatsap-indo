@@ -2257,6 +2257,15 @@ async function openPlanDrawer() {
   }
 }
 
+// format byte -> teks ringkas (KB/MB/GB/TB)
+function fmtBytes(b) {
+  const n = Number(b) || 0;
+  if (n >= 1000 ** 4) return `${(n / 1000 ** 4).toFixed(n % 1000 ** 4 ? 1 : 0)} TB`;
+  if (n >= 1000 ** 3) return `${(n / 1000 ** 3).toFixed(n >= 10 * 1000 ** 3 ? 0 : 1)} GB`;
+  if (n >= 1000 ** 2) return `${(n / 1000 ** 2).toFixed(0)} MB`;
+  return `${Math.max(1, Math.round(n / 1000))} KB`;
+}
+
 // daftar fitur sebuah paket (ok=false = batasan yang mengurangi akses)
 function planFeatures(p, botTotal, exclusiveIds) {
   const excluded = Array.isArray(p.excluded) ? p.excluded : [];
@@ -2273,6 +2282,12 @@ function planFeatures(p, botTotal, exclusiveIds) {
   feats.push({ ok: true, text: p.permanen ? 'Masa aktif selamanya' : `${Number(p.days) || 0} hari masa aktif` });
   feats.push({ ok: true, text: 'Centang biru terverifikasi' });
   feats.push({ ok: true, text: 'Kirim foto, video & file hingga 2GB' });
+  // kuota storage nyata per paket
+  if (Number(p.storageLimit) > 0) {
+    feats.push({ ok: true, text: `Storage ${fmtBytes(p.storageLimit)} foto/video/file` });
+  } else {
+    feats.push({ ok: true, text: 'Storage 2 GB (paket dasar)' });
+  }
   return feats;
 }
 
@@ -2292,6 +2307,7 @@ function renderPlans(data) {
   const invite = data.invite || {};
   const botTotal = Number(data.botTotal) || 69;
   const exclusiveIds = data.exclusiveBotIds || [];
+  const st = data.storage || null;
   const popularId = plans.some((p) => p.id === 'bulanan')
     ? 'bulanan'
     : (plans[Math.min(1, plans.length - 1)] || {}).id;
@@ -2307,8 +2323,22 @@ function renderPlans(data) {
     : me.active
       ? `<div class="plan-quota on"><div class="plan-quota-top"><span>Kuota bot tanpa limit</span>
            <span class="plan-token"><svg viewBox="0 0 24 24"><use href="#ic-zap" /></svg> ${Number(me.tokens) || 0} token</span></div>
-           <div class="plan-quota-bar"><i style="width:100%"></i></div></div>`
+         <div class="plan-quota-bar"><i style="width:100%"></i></div></div>`
       : '';
+
+  // ringkasan pemakaian storage nyata (foto/video/file) milik pengguna
+  const storageBar = st
+    ? `<div class="plan-storage ${st.unlimited ? 'on' : ''} ${st.percent >= 90 ? 'warn' : ''}">
+         <div class="plan-quota-top">
+           <span>Storage ${st.unlimited ? 'tanpa batas' : `${fmtBytes(st.used)} / ${fmtBytes(st.quota)}`}</span>
+           <span class="plan-storage-ico"><svg viewBox="0 0 24 24"><use href="#ic-image" /></svg></span>
+         </div>
+         ${st.unlimited ? '' : `<div class="plan-quota-bar"><i style="width:${Math.min(100, st.percent || 0)}%"></i></div>`}
+         <small>${st.unlimited
+           ? 'Akun admin: seluruh media tanpa batas storage.'
+           : `Foto, video & file yang dikirim menempati storage paket Anda. Sisa ${fmtBytes(st.left)}.`}</small>
+       </div>`
+    : '';
 
   body.innerHTML = `
     <div class="plan-hero">
@@ -2322,6 +2352,7 @@ function renderPlans(data) {
           : `<strong>Belum punya paket</strong><span>Daftar bot masih terkunci — pilih paket di bawah</span>`}
       </div>
       ${quota}
+      ${storageBar}
     </div>
 
     <div class="plan-grid">
@@ -2358,7 +2389,8 @@ function renderPlans(data) {
       </button>
     </div>
     <p class="plan-note">Paket diaktifkan admin setelah pembayaran. <b>Harian</b> tanpa bot eksklusif &amp; berlimit harian,
-    <b>Mingguan</b> semua bot dengan limit yang diatur admin, <b>Bulanan</b> &amp; <b>Permanen</b> tanpa limit.
+    <b>Mingguan</b> semua bot dengan limit yang diatur admin, <b>Bulanan</b>, <b>Bisnis</b>, <b>Reseller Bulanan</b> &amp; <b>Permanen</b> tanpa limit.
+    Storage foto/video/file mengikuti paket (2&nbsp;GB&nbsp;–&nbsp;5&nbsp;TB) dan berlaku nyata.
     Semakin banyak teman yang join lewat kode undanganmu, semakin banyak token bot yang kamu dapat.</p>
   `;
 
@@ -3875,7 +3907,11 @@ function renderAdmPlans() {
         <input type="number" min="0" max="1000000" value="${Number(p.dailyLimit) || 0}" data-plan-limit="${i}" aria-label="Limit pesan bot harian" />
         <span class="adm-plan-unit">bot/hari</span>
       </div>
-      <small class="adm-plan-hint">${p.permanen ? 'Paket permanen — masa aktif selamanya' : 'Limit 0 = tanpa batas'}${(p.excluded || []).length ? ` • ${p.excluded.length} bot eksklusif ditutup` : ''}</small>
+      <div class="adm-plan-row">
+        <input type="number" min="0" max="100000" step="1" value="${Math.round((Number(p.storageLimit) || 0) / 1000 ** 3)}" data-plan-storage="${i}" aria-label="Storage GB" />
+        <span class="adm-plan-unit">GB storage</span>
+      </div>
+      <small class="adm-plan-hint">${p.permanen ? 'Paket permanen — masa aktif selamanya' : 'Limit 0 = tanpa batas'} • Storage foto/video/file (0 = pakai dasar 2&nbsp;GB)${(p.excluded || []).length ? ` • ${p.excluded.length} bot eksklusif ditutup` : ''}</small>
     </div>`).join('') || '<div class="empty-state">Belum ada paket.</div>';
 }
 
@@ -3965,13 +4001,14 @@ $('btnSavePlans').addEventListener('click', async () => {
     const el = document.querySelector(sel);
     return el && el.value !== '' && el.value !== null ? Number(el.value) : fallback;
   };
-  // label/harga/limit diedit; id, bot eksklusif & sifat permanen ikut dikirim utuh
+  // label/harga/limit/storageGB diedit; id, bot eksklusif & sifat permanen ikut dikirim utuh
   const plans = adm.plans.map((p, i) => ({
     ...p,
     label: (document.querySelector(`[data-plan-label="${i}"]`)?.value || p.label).trim(),
     days: val(`[data-plan-days="${i}"]`, Number(p.days) || 1),
     price: val(`[data-plan-price="${i}"]`, Number(p.price) || 0),
     dailyLimit: val(`[data-plan-limit="${i}"]`, Number(p.dailyLimit) || 0),
+    storageLimit: Math.max(0, Math.round(val(`[data-plan-storage="${i}"]`, Math.round((Number(p.storageLimit) || 0) / 1000 ** 3)) * 1000 ** 3)),
   }));
   try {
     const data = await api('/api/admin/settings', { method: 'PUT', body: { plans } });

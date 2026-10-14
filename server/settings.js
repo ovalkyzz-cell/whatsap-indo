@@ -6,13 +6,27 @@ const webpush = require('web-push');
 // bot eksklusif: hanya bisa dipakai paket di atas Harian
 const EXCLUSIVE_BOTS = ['bot-verif-am', 'bot-nik', 'bot-pos', 'bot-wilayah', 'bot-nftoken'];
 
-// daftar paket premium resmi Whatsap Indo (judul/harga/limit bisa diedit admin)
+// kuota storage (byte) untuk akun tanpa paket aktif
+const FREE_STORAGE = 2 * 1000 ** 3; // 2 GB
+
+// daftar paket premium resmi Whatsap Indo (judul/harga/limit/storage bisa diedit admin)
+// storageLimit dalam byte; foto/video/file yang dikirim menempati kuota ini secara nyata
 const DEFAULT_PLANS = [
-  { id: 'harian', label: 'Harian', days: 1, price: 1000, dailyLimit: 50, excluded: [...EXCLUSIVE_BOTS], permanent: false },
-  { id: 'mingguan', label: 'Mingguan', days: 7, price: 10000, dailyLimit: 200, excluded: [], permanent: false },
-  { id: 'bulanan', label: 'Bulanan', days: 30, price: 25000, dailyLimit: 0, excluded: [], permanent: false },
-  { id: 'permanen', label: 'Permanen', days: 3650, price: 50000, dailyLimit: 0, excluded: [], permanent: true },
+  { id: 'harian', label: 'Harian', days: 1, price: 1000, dailyLimit: 50, storageLimit: 10 * 1000 ** 3, excluded: [...EXCLUSIVE_BOTS], permanent: false },
+  { id: 'mingguan', label: 'Mingguan', days: 7, price: 10000, dailyLimit: 200, storageLimit: 100 * 1000 ** 3, excluded: [], permanent: false },
+  { id: 'bulanan', label: 'Bulanan', days: 30, price: 25000, dailyLimit: 0, storageLimit: 2 * 1000 ** 4, excluded: [], permanent: false },
+  { id: 'bisnis', label: 'Bisnis', days: 30, price: 50000, dailyLimit: 0, storageLimit: 3 * 1000 ** 4, excluded: [], permanent: false },
+  { id: 'reseller-bulanan', label: 'Reseller Bulanan', days: 30, price: 75000, dailyLimit: 0, storageLimit: 5 * 1000 ** 4, excluded: [], permanent: false },
+  { id: 'permanen', label: 'Permanen', days: 3650, price: 50000, dailyLimit: 0, storageLimit: 5 * 1000 ** 4, excluded: [], permanent: true },
 ];
+
+// storageCadangan per id ketika paket lama tersimpan tanpa field storageLimit
+const LEGACY_STORAGE = {
+  harian: 10 * 1000 ** 3,
+  mingguan: 100 * 1000 ** 3,
+  bulanan: 2 * 1000 ** 4,
+  permanen: 5 * 1000 ** 4,
+};
 
 const cache = new Map();
 
@@ -48,6 +62,17 @@ function normalizeExcluded(input) {
   return [...new Set(input.map((v) => String(v || '').trim().slice(0, 40)).filter(Boolean))].slice(0, 30);
 }
 
+const MAX_STORAGE = 100 * 1000 ** 4; // 100 TB (batas wajar)
+
+function normalizeStorage(input, id) {
+  if (input === undefined || input === null || input === '') {
+    return LEGACY_STORAGE[id] !== undefined ? LEGACY_STORAGE[id] : FREE_STORAGE;
+  }
+  const bytes = Math.round(Number(input));
+  if (!Number.isFinite(bytes) || bytes < 0 || bytes > MAX_STORAGE) return null;
+  return bytes;
+}
+
 function normalizePlans(input) {
   if (!Array.isArray(input)) return null;
   const out = [];
@@ -64,12 +89,15 @@ function normalizePlans(input) {
       : Math.round(Number(item.dailyLimit));
     if (!Number.isFinite(price) || price < 0 || price > 1_000_000_000) return null;
     if (!Number.isFinite(dailyLimit) || dailyLimit < 0 || dailyLimit > 1_000_000) return null;
+    const storageLimit = normalizeStorage(item?.storageLimit, id);
+    if (storageLimit === null) return null;
     out.push({
       id,
       label,
       days,
       price,
       dailyLimit,
+      storageLimit,
       excluded: normalizeExcluded(item?.excluded),
       permanent: !!item?.permanent,
     });
@@ -148,6 +176,7 @@ async function getVapid() {
 module.exports = {
   DEFAULT_PLANS,
   EXCLUSIVE_BOTS,
+  FREE_STORAGE,
   get,
   set,
   getPlans,

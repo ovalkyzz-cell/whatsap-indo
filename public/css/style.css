@@ -1779,6 +1779,22 @@ html[data-theme="dark"] .mi-ico-gift { background: rgba(255, 64, 129, .16); colo
 @keyframes quotaGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .plan-quota small { display: block; margin-top: 7px; font-size: 11px; line-height: 1.45; color: rgba(255, 255, 255, .82); }
 
+/* ringkasan pemakaian storage nyata (foto/video/file) per paket */
+.plan-storage {
+  position: relative; margin-top: 8px; padding: 11px 14px; border-radius: 13px; text-align: left;
+  background: rgba(0, 0, 0, .28); border: 1px solid rgba(255, 255, 255, .12);
+  animation: fadeUp .5s .3s ease both;
+}
+.plan-storage.on { background: rgba(0, 168, 132, .22); }
+.plan-storage.warn { border-color: rgba(255, 193, 7, .55); }
+.plan-storage-ico { display: inline-flex; color: #80cbc4; }
+.plan-storage-ico svg { width: 15px; height: 15px; }
+.plan-storage.warn .plan-storage-ico { color: #ffd54f; }
+.plan-storage .plan-quota-bar i {
+  background: linear-gradient(90deg, #4db6ac, #00a884);
+}
+.plan-storage.warn .plan-quota-bar i { background: linear-gradient(90deg, #ffb300, #ff8f00); }
+
 .plan-grid { display: grid; gap: 14px; padding: 16px 14px 4px; }
 .plan-card {
   position: relative; overflow: hidden; border-radius: 18px; padding: 18px 16px 16px;

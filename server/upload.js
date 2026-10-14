@@ -7,6 +7,7 @@ const { pipeline } = require('stream/promises');
 const express = require('express');
 const multer = require('multer');
 const { requireAuth } = require('./auth');
+const quota = require('./storage');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || '';
@@ -53,6 +54,24 @@ function classify(mime, original) {
   return 'file';
 }
 
+// pemeriksaan awal kuota storage sebelum file diproses (hemat bandwidth).
+// Reservasi yang sesungguhnya & otoritatif terjadi saat pesan benar-benar
+// dikirim di handleSend; ini hanya penolakan cepat bila sudah jelas penuh.
+async function rejectIfQuotaFull(req, res, size) {
+  const q = await quota.quotaOf(req.user);
+  if (q === null) return false; // admin / tanpa batas
+  const u = await quota.usage(req.user);
+  if (u.used + size <= q) return false;
+  const gb = (b) => (b >= 1000 ** 3
+    ? `${(b / 1000 ** 3).toFixed(b >= 10 * 1000 ** 3 ? 0 : 1)} GB`
+    : `${Math.max(1, Math.round(b / 1000 ** 2))} MB`);
+  res.status(413).json({
+    error: `Storage penuh (${gb(u.used)} dari ${gb(q)}). Hapus media lama atau upgrade paket.`,
+    storage: u,
+  });
+  return true;
+}
+
 // Tanda tangan presigned: browser mengunggah langsung ke Blob tanpa melewati
 // fungsi Vercel, sehingga file > 4,5MB (batas body permintaan) tetap terkirim.
 router.post('/uploads/sign', requireAuth, async (req, res) => {
@@ -64,6 +83,7 @@ router.post('/uploads/sign', requireAuth, async (req, res) => {
   const mime = String(req.body?.mime || '').slice(0, 127);
   if (!(size > 0)) return res.status(400).json({ error: 'Ukuran file tidak valid' });
   if (size > MAX_FILE_SIZE) return res.status(413).json({ error: 'Ukuran file maksimal 2GB' });
+  if (await rejectIfQuotaFull(req, res, size)) return;
 
   try {
     const ext = path.extname(original).slice(0, 16).replace(/[^\w.-]/g, '');
@@ -104,7 +124,7 @@ router.post('/upload', requireAuth, (req, res) => {
   if (!storageEnabled) {
     return res.status(501).json({ error: 'Penyimpanan file belum tersedia di hosting ini' });
   }
-  upload.single('file')(req, res, (err) => {
+  upload.single('file')(req, res, async (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({
@@ -123,6 +143,14 @@ router.post('/upload', requireAuth, (req, res) => {
       mime: req.file.mimetype || 'application/octet-stream',
       type: classify(req.file.mimetype || '', req.file.originalname),
     };
+
+    // kuota storage: tolak berkas yang sudah jelas melampaui batas paket
+    if (await rejectIfQuotaFull(req, res, meta.size)) {
+      if (!useBlob && req.file.path) {
+        try { await fs.promises.unlink(req.file.path); } catch { /* sudah hilang */ }
+      }
+      return;
+    }
 
     if (!useBlob) {
       return res.status(201).json({ url: `/uploads/${req.file.filename}`, ...meta });

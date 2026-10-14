@@ -7,6 +7,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 
 const db = require('./db');
+const storage = require('./storage');
 const auth = require('./auth');
 const helpers = require('./helpers');
 const presence = require('./presence');
@@ -409,10 +410,11 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/plans', auth.requireAuth, ah(async (req, res) => {
-  const [plans, access, invite] = await Promise.all([
+  const [plans, access, invite, storageUsage] = await Promise.all([
     settings.getPlans(),
     botAccess(req.user),
     referral.stats(req.user),
+    storage.usage(req.user),
   ]);
   const groups = bots.catalog();
   res.json({
@@ -427,8 +429,14 @@ app.get('/api/plans', auth.requireAuth, ah(async (req, res) => {
       inviteTokens: invite.inviteTokens,
       referred: invite.referred,
     },
+    storage: storageUsage,
     me: access,
   });
+}));
+
+// ringkasan pemakaian storage milik pengguna yang sedang login
+app.get('/api/me/storage', auth.requireAuth, ah(async (req, res) => {
+  res.json(await storage.usage(req.user));
 }));
 
 // kode undangan + statistik: makin banyak teman join, makin banyak token
@@ -938,6 +946,10 @@ app.delete('/api/messages/:id', auth.requireAuth, ah(async (req, res) => {
   if (row.sender_id !== req.user.id) return res.status(403).json({ error: 'Bukan pesan Anda' });
   const deletedAt = Date.now();
   await db.run('UPDATE messages SET deleted_at = ?, body = \'\' WHERE id = ?', deletedAt, row.id);
+  // media ikut terhapus dari catatan -> bebaskan kuota storage pengirim
+  if (row.media_url && Number(row.media_size) > 0) {
+    await storage.release(row.sender_id, Number(row.media_size));
+  }
   const fresh = await db.get('SELECT * FROM messages WHERE id = ?', row.id);
   const payload = (await helpers.serializeMessages([fresh], null))[0];
   const members = await helpers.getChatMemberIds(row.chat_id);
@@ -1248,13 +1260,19 @@ app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, re
   const { plans, homeBg } = req.body || {};
   if (plans !== undefined) {
     const saved = await settings.setPlans(plans);
-    if (!saved) return res.status(400).json({ error: 'Data paket tidak valid (minimal 3 paket, durasi 1-3650 hari, harga & limit wajar)' });
+    if (!saved) return res.status(400).json({ error: 'Data paket tidak valid (minimal 3 paket, durasi 1-3650 hari, harga, limit & kuota storage wajar)' });
   }
   if (homeBg !== undefined) {
     const saved = await settings.setHomeBg(homeBg);
     if (!saved) return res.status(400).json({ error: 'Background beranda tidak valid' });
   }
   res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg() });
+}));
+
+// hitung ulang storage_used semua pengguna dari catatan pesan (perbaikan drift)
+app.post('/api/admin/storage/recompute', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const count = await storage.recomputeAll();
+  res.json({ ok: true, users: count });
 }));
 
 // ---------- profil bot (khusus admin): foto profil, nama & bio ----------
@@ -2115,6 +2133,20 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
   }
 }
 
+// pesan penolakan ketika kuota storage paket sudah habis
+function storageFullMessage(usage, incoming) {
+  const n = (b) => {
+    if (b == null) return 'tanpa batas';
+    if (b >= 1000 ** 4) return `${(b / 1000 ** 4).toFixed(b % 1000 ** 4 ? 1 : 0)} TB`;
+    if (b >= 1000 ** 3) return `${(b / 1000 ** 3).toFixed(b >= 10 * 1000 ** 3 ? 0 : 1)} GB`;
+    if (b >= 1000 ** 2) return `${(b / 1000 ** 2).toFixed(0)} MB`;
+    return `${Math.max(1, Math.round(b / 1000))} KB`;
+  };
+  return `Storage penuh (${n(usage.used)} dari ${n(usage.quota)}). ` +
+    `Hapus beberapa media lama atau upgrade paket di menu Paket & Harga. ` +
+    `Berkas ini (${n(incoming)}) tidak jadi dikirim.`;
+}
+
 async function handleSend(user, payload) {
   const { chatId, type = 'text', body = '', media, viewOnce, duration, replyTo } = payload || {};
   if (!chatId || !(await helpers.isMember(chatId, user.id))) {
@@ -2193,24 +2225,43 @@ async function handleSend(user, payload) {
   // potong kuota tepat sebelum pesan disimpan (habis -> token undangan -> ditolak)
   if (botPeer) await consumeBotQuota(user);
 
-  await db.run(
-    `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, view_once, duration, reply_to, reply_preview, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id,
-    chatId,
-    user.id,
-    cleanType,
-    text,
-    mediaUrl,
-    media?.name ? String(media.name).slice(0, 255) : null,
-    media?.size ? Number(media.size) : null,
-    media?.mime || null,
-    cleanViewOnce,
-    cleanDuration,
-    cleanReplyTo,
-    cleanReplyPreview,
-    now
-  );
+  // --- kuota storage NYATA: reservasi atomik ukuran media sebelum pesan disimpan.
+  // Hanya media (foto/video/audio/file) menempati kuota; pesan teks bebas.
+  const mediaSize = cleanType !== 'text' && media?.size
+    ? Math.max(0, Math.round(Number(media.size) || 0))
+    : 0;
+  let storageReserved = 0;
+  if (mediaSize) {
+    const quota = await storage.quotaOf(user);
+    const ok = await storage.reserve(user.id, mediaSize, quota);
+    if (!ok) throw new Error(storageFullMessage(await storage.usage(user), mediaSize));
+    storageReserved = mediaSize;
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO messages (id, chat_id, sender_id, type, body, media_url, media_name, media_size, mime, view_once, duration, reply_to, reply_preview, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      chatId,
+      user.id,
+      cleanType,
+      text,
+      mediaUrl,
+      media?.name ? String(media.name).slice(0, 255) : null,
+      mediaSize || null,
+      media?.mime || null,
+      cleanViewOnce,
+      cleanDuration,
+      cleanReplyTo,
+      cleanReplyPreview,
+      now
+    );
+  } catch (err) {
+    // pesan gagal tersimpan -> bebaskan kembali reservasi storage
+    if (storageReserved) await storage.release(user.id, storageReserved);
+    throw err;
+  }
 
   const row = await db.get('SELECT * FROM messages WHERE id = ?', id);
   const message = (await helpers.serializeMessages([row], user.id))[0];

@@ -22,7 +22,8 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Cek bug admin | **Panel admin pemeriksa bug menempel di aplikasi**: buka `https://<domain>/admin` (terkunci: kunci `ADMIN_KEY` atau sesi akun admin) — 5 pemeriksaan berjalan di server produksi + 4 pemeriksaan berat yang hanya bisa dijalankan di mesin server (ditandai abu-abu); di lokal `npm run admin` (port 3200) menjalankan **semua 9 pemeriksaan nyata** (sintaks, dependensi, database, server, referensi frontend, panel terkunci, unit test, **alur panggilan/VC sungguhan**, berkas rahasia) dengan status **centang hijau = normal** / **merah = perlu diperbaiki**, plus tombol **Perbaiki Sekali Klik** yang memperbaiki lalu memeriksa ulang sampai hijau |
 | Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **69 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
-| Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 4 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup), **Mingguan Rp10.000** (limit 200/hari), **Bulanan Rp25.000** (tanpa limit), **Permanen Rp50.000** (100 tahun); admin bisa mengubah nama, durasi, harga, limit, bot eksklusif & status permanen |
+| Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
+| Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
 | Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas Whatsap Indo Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
 | Hubungi CS | Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi) langsung **membuka chat** lewat `GET /api/cs` — lolos privasi email & pencarian diri sendiri; saat akun CS sendiri yang menekan, chat diri sendiri (ala *message yourself*) tetap terbuka otomatis |
@@ -107,14 +108,17 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:crop` | **22 passed, 0 failed** |
 | `npm run test:calls` | **26 passed, 0 failed** |
 | `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
-| `npm test` (e2e) | **325 passed, 17 failed** |
+| `npm test` (e2e) | **327 passed, 15 failed** |
 
-17 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
+15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
 `MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
 Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model, Email Generator).
 Seluruh uji autentikasi, sesi, chat, grup, admin, media, **balasan (reply)**,
-panggilan (luring → kirim-ulang → ditolak → tak terjawab), notifikasi, PWA &
-keamanan **lolos semua**.
+**kuota storage nyata per paket**, panggilan (luring → kirim-ulang → ditolak → tak terjawab),
+notifikasi, PWA & keamanan **lolos semua**.
+
+Smoke test storage (`node test/stogetest.js`): **24 passed, 0 failed** — reserve atomik
+saat kirim media, release saat hapus, penolakan melebihi kuota, admin tanpa batas, recompute.
 
 Static check pendukung: `eslint` (tanpa error) dan audit `id` DOM
 (280 id di `index.html`, tanpa duplikat, tanpa `$()` yang mengacu ke id tak ada).
