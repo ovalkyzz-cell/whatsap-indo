@@ -17,7 +17,7 @@ const settings = require('./settings');
 const bots = require('./bots');
 const referral = require('./referral');
 const webpush = require('web-push');
-const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile, storedFileExists } = require('./upload');
+const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile, storedFileExists, storedFileStatus } = require('./upload');
 const { createAdminPanel } = require('../admin/panel');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -454,9 +454,12 @@ app.get('/api/me/storage/media', auth.requireAuth, ah(async (req, res) => {
 app.post('/api/storage/files', auth.requireAuth, ah(async (req, res) => {
   const url = String(req.body?.url || '');
   if (!validChatUrl(url)) return res.status(400).json({ error: 'URL file tidak valid' });
-  // pastikan file benar-benar ada di penyimpanan sebelum dicatat tersimpan
-  // (tolak referensi hantu — yang tercatat wajib nyata & awet)
-  if (!(await storedFileExists(url))) {
+  // Verifikasi file benar-benar ada HANYA untuk file lokal (/uploads/) yang
+  // bisa dicek andal via fs.stat. Untuk Blob (unggah presigned sukses ->
+  // URL sudah dikembalikan = bukti file tersimpan), TIDAK dicek ulang via
+  // HEAD karena pemeriksaan HEAD ke Blob tidak andal di fungsi serverless
+  // dan akan membuat pendaftaran gagal palsu.
+  if (url.startsWith('/uploads/') && !(await storedFileExists(url))) {
     return res.status(400).json({ error: 'File tidak ditemukan di penyimpanan — unggah ulang filenya' });
   }
   const result = await storage.saveFile(req.user, {
@@ -510,16 +513,18 @@ app.post('/api/storage/bulk-delete', auth.requireAuth, ah(async (req, res) => {
 }));
 
 // BERSIHKAN FILE RUSAK: pindai media milik user, cek file benar-benar ada di
-// penyimpanan; yang hilang/rusak dihapus + kuotanya dibebaskan. kind 'msg'
+// penyimpanan; hanya yang YAKIN hilang (status 'missing') yang dihapus +
+// kuotanya dibebaskan. File yang gagal dicek ('unknown' — jaringan/timeout
+// Blob) TIDAK dihapus agar tak pernah menghapus file valid. kind 'msg'
 // ikut broadcast 'message:deleted'. (Cek Blob via HEAD, lokal via fs.stat.)
 app.post('/api/storage/cleanup', auth.requireAuth, ah(async (req, res) => {
   const media = await storage.mediaList(req.user.id, 1000);
-  let checked = 0, removed = 0, freed = 0;
+  let checked = 0, removed = 0, freed = 0, skipped = 0;
   for (const it of media.items) {
     checked++;
-    let exists = false;
-    try { exists = await storedFileExists(it.url); } catch { exists = false; }
-    if (exists) continue;
+    let status = 'unknown';
+    try { status = await storedFileStatus(it.url); } catch { status = 'unknown'; }
+    if (status !== 'missing') { if (status === 'unknown') skipped++; continue; }
     try {
       if (it.kind === 'saved') {
         const r = await storage.deleteFile(req.user, it.id);
@@ -530,7 +535,7 @@ app.post('/api/storage/cleanup', auth.requireAuth, ah(async (req, res) => {
       }
     } catch { /* lanjut item berikutnya */ }
   }
-  res.json({ checked, removed, freed });
+  res.json({ checked, removed, freed, skipped });
 }));
 
 // kode undangan + statistik: makin banyak teman join, makin banyak token

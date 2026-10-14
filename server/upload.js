@@ -347,28 +347,40 @@ async function storeRemoteFile(url, kind, opts) {
   }
 }
 
-module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob, storeBuffer, storeRemoteFile, storedFileExists };
+module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob, storeBuffer, storeRemoteFile, storedFileExists, storedFileStatus };
 
-/* Verifikasi bahwa file tersimpan benar-benar ADA di penyimpanan.
-   Dipakai saat mendaftarkan file ke storage (POST /api/storage/files) agar
-   tak pernah mencatat referensi hantu — hanya file yang nyata tercatat
-   "tersimpan". Lokal: cek fisik di uploads/; hosting: HEAD ke Blob. */
-async function storedFileExists(url) {
+/* Status penyimpanan sebuah URL media:
+   'exists'  -> file terbukti ada
+   'missing' -> file terbukti hilang (404/410) — aman dihapus
+   'unknown' -> tak bisa dipastikan (jaringan/timeout/metode tak didukung) — JANGAN dihapus
+   Untuk Blob dipakai HEAD; kalau HEAD gagal karena gangguan (bukan 404),
+   hasilnya 'unknown' agar pembersihan tak pernah menghapus file valid. */
+async function storedFileStatus(url) {
   const s = String(url || '');
   if (s.startsWith('/uploads/')) {
-    if (!fsWritable) return false;
+    if (!fsWritable) return 'unknown';
     const name = s.slice('/uploads/'.length);
-    if (!/^[\w.\-]+$/.test(name)) return false;
+    if (!/^[\w.\-]+$/.test(name)) return 'missing';
     try {
       const st = await fs.promises.stat(path.join(UPLOAD_DIR, name));
-      return st.isFile();
-    } catch { return false; }
+      return st.isFile() ? 'exists' : 'missing';
+    } catch { return 'missing'; }
   }
   if (/^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\//.test(s)) {
     try {
       const r = await fetch(s, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
-      return r.ok;
-    } catch { return false; }
+      if (r.ok) return 'exists';
+      if (r.status === 404 || r.status === 410) return 'missing';
+      return 'unknown'; // status lain (403/405/5xx) -> tak bisa dipastikan
+    } catch { return 'unknown'; } // gagal jaringan/timeout -> tak bisa dipastikan
   }
-  return false;
+  return 'missing';
+}
+
+/* true bila file terbukti ada; false untuk lokal yang hilang.
+   Untuk Blob yang 'unknown' dianggap ada (tak mau menolak pendaftaran
+   hanya karena HEAD tak andal). */
+async function storedFileExists(url) {
+  const st = await storedFileStatus(url);
+  return st !== 'missing';
 }
