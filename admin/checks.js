@@ -50,18 +50,29 @@ function walk(dir, root, list = []) {
   return list;
 }
 
-async function fetchJson(url, timeout = 8000, maxLen = 300) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    const text = await res.text().catch(() => '');
-    return { status: res.status, ok: res.ok, body: text.slice(0, maxLen) };
-  } catch (err) {
-    return { status: 0, ok: false, body: err.message };
-  } finally {
-    clearTimeout(t);
+async function fetchJson(url, timeout = 8000, maxLen = 300, { retries = 0 } = {}) {
+  const attempt = async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      const text = await res.text().catch(() => '');
+      return { status: res.status, ok: res.ok, body: text.slice(0, maxLen) };
+    } catch (err) {
+      return { status: 0, ok: false, body: err.message };
+    } finally {
+      clearTimeout(t);
+    }
+  };
+  let out = await attempt();
+  // serverless (Vercel) cold-start: percobaan pertama sering putus/timeout walau
+  // server sehat. Ulangi beberapa kali dengan jeda singkat supaya pemeriksaan
+  // "cek sekali klik" tidak menampilkan merah palsu.
+  for (let i = 0; i < retries && !out.ok; i++) {
+    await sleep(600);
+    out = await attempt();
   }
+  return out;
 }
 
 /* ---------- deteksi lingkungan ---------- */
@@ -194,7 +205,8 @@ async function checkServer(ctx) {
     ['service worker', `${base}/sw.js`],
     ['kesehatan API', `${base}/api/health`],
   ];
-  const results = await Promise.all(probes.map(([, url]) => fetchJson(url)));
+  // retries: tahan cold-start serverless — percobaan pertama sering putus
+  const results = await Promise.all(probes.map(([, url]) => fetchJson(url, 8000, 300, { retries: 2 })));
   const down = [];
   results.forEach((r, i) => { if (!r.ok) down.push(`${probes[i][0]} → HTTP ${r.status || 'putus'}`); });
   return {
@@ -215,8 +227,8 @@ async function checkStatic(ctx) {
     js = fs.readFileSync(path.join(root, 'public', 'js', 'app.js'), 'utf8');
   } else {
     const [h, j] = await Promise.all([
-      fetchJson(`${base}/`, 15000, 400_000),
-      fetchJson(`${base}/js/app.js`, 20000, 900_000),
+      fetchJson(`${base}/`, 15000, 400_000, { retries: 2 }),
+      fetchJson(`${base}/js/app.js`, 20000, 900_000, { retries: 2 }),
     ]);
     if (!h.ok || !j.ok) {
       return { ok: false, detail: `berkas frontend tidak bisa diambil — index ${h.status || 'putus'}, app.js ${j.status || 'putus'}` };
