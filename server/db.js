@@ -509,6 +509,11 @@ const TABLE_MIGRATIONS = {
     ['reply_to', 'TEXT', 'TEXT'],
     ['reply_preview', 'TEXT', 'TEXT'],
   ],
+  db_files: [
+    ['chunk_size', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['total_chunks', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['complete', 'SMALLINT NOT NULL DEFAULT 1', 'INTEGER NOT NULL DEFAULT 1'],
+  ],
 };
 
 function boot() {
