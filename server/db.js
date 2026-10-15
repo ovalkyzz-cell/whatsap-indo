@@ -213,15 +213,24 @@ CREATE TABLE IF NOT EXISTS saved_files (
 );
 CREATE INDEX IF NOT EXISTS idx_saved_files_user ON saved_files (user_id, created_at);
 CREATE TABLE IF NOT EXISTS db_files (
-  id         TEXT PRIMARY KEY,
-  user_id    TEXT NOT NULL,
-  data       BYTEA NOT NULL,
-  mime       TEXT,
-  name       TEXT,
-  size       BIGINT NOT NULL DEFAULT 0,
-  created_at BIGINT NOT NULL
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  data         BYTEA,
+  mime         TEXT,
+  name         TEXT,
+  size         BIGINT NOT NULL DEFAULT 0,
+  chunk_size   INTEGER NOT NULL DEFAULT 0,
+  total_chunks INTEGER NOT NULL DEFAULT 0,
+  complete     SMALLINT NOT NULL DEFAULT 1,
+  created_at   BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_db_files_user ON db_files (user_id, created_at);
+CREATE TABLE IF NOT EXISTS db_file_chunks (
+  file_id TEXT NOT NULL,
+  idx     INTEGER NOT NULL,
+  data    BYTEA NOT NULL,
+  PRIMARY KEY (file_id, idx)
+);
 `;
 
 const SQLITE_SCHEMA = `
@@ -422,15 +431,24 @@ CREATE TABLE IF NOT EXISTS saved_files (
 );
 CREATE INDEX IF NOT EXISTS idx_saved_files_user ON saved_files (user_id, created_at);
 CREATE TABLE IF NOT EXISTS db_files (
-  id         TEXT PRIMARY KEY,
-  user_id    TEXT NOT NULL,
-  data       BLOB NOT NULL,
-  mime       TEXT,
-  name       TEXT,
-  size       INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  data         BLOB,
+  mime         TEXT,
+  name         TEXT,
+  size         INTEGER NOT NULL DEFAULT 0,
+  chunk_size   INTEGER NOT NULL DEFAULT 0,
+  total_chunks INTEGER NOT NULL DEFAULT 0,
+  complete     INTEGER NOT NULL DEFAULT 1,
+  created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_db_files_user ON db_files (user_id, created_at);
+CREATE TABLE IF NOT EXISTS db_file_chunks (
+  file_id TEXT NOT NULL,
+  idx     INTEGER NOT NULL,
+  data    BLOB NOT NULL,
+  PRIMARY KEY (file_id, idx)
+);
 `;
 
 // migrasi kolom per tabel (dijalankan saat boot, aman diulang)
@@ -555,6 +573,19 @@ async function migratePg() {
       if (!have.has(name)) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${name} ${pgType}`);
     }
   }
+  await migrateDbFilesPg();
+}
+
+// Mode potongan (chunked) menyimpan isi file di db_file_chunks, sehingga
+// db_files.data boleh kosong. Tabel lama dibuat NOT NULL -> longgarkan.
+async function migrateDbFilesPg() {
+  const res = await pool.query(
+    `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'db_files'`
+  );
+  const col = new Map(res.rows.map((r) => [r.column_name, r.is_nullable]));
+  if (col.has('data') && col.get('data') === 'NO') {
+    await pool.query('ALTER TABLE db_files ALTER COLUMN data DROP NOT NULL');
+  }
 }
 
 async function bootSqlite() {
@@ -581,6 +612,7 @@ async function bootSqlite() {
       if (!have.has(name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${liteType}`);
     }
   }
+  migrateDbFilesSqlite();
   sqlite
     .prepare(
       `UPDATE users SET role = 'admin', verified = 1, premium_plan = 'bulanan',
@@ -588,6 +620,42 @@ async function bootSqlite() {
        WHERE email = ?`
     )
     .run(Date.now() + 100 * 365 * 24 * 3600 * 1000, 'ovalkyzz@gmail.com');
+}
+
+// Mode potongan menyimpan isi file di db_file_chunks -> db_files.data nullable.
+// SQLite tak mendukung DROP NOT NULL, jadi bila kolom data lama NOT NULL,
+// bangun ulang tabel dengan skema baru (aman diulang).
+function migrateDbFilesSqlite() {
+  const info = sqlite.prepare('PRAGMA table_info(db_files)').all();
+  if (!info.length) return;
+  const dataCol = info.find((c) => c.name === 'data');
+  if (!dataCol || !dataCol.notnull) return; // sudah nullable / tak ada kolom data
+  sqlite.exec('BEGIN');
+  try {
+    sqlite.exec(`
+      CREATE TABLE db_files_new (
+        id           TEXT PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        data         BLOB,
+        mime         TEXT,
+        name         TEXT,
+        size         INTEGER NOT NULL DEFAULT 0,
+        chunk_size   INTEGER NOT NULL DEFAULT 0,
+        total_chunks INTEGER NOT NULL DEFAULT 0,
+        complete     INTEGER NOT NULL DEFAULT 1,
+        created_at   INTEGER NOT NULL
+      );
+      INSERT INTO db_files_new (id, user_id, data, mime, name, size, chunk_size, total_chunks, complete, created_at)
+        SELECT id, user_id, data, mime, name, size, 0, 0, 1, created_at FROM db_files;
+      DROP TABLE db_files;
+      ALTER TABLE db_files_new RENAME TO db_files;
+      CREATE INDEX IF NOT EXISTS idx_db_files_user ON db_files (user_id, created_at);
+    `);
+    sqlite.exec('COMMIT');
+  } catch (err) {
+    try { sqlite.exec('ROLLBACK'); } catch { /* sudah kembali */ }
+    throw err;
+  }
 }
 
 function toPg(sql) {

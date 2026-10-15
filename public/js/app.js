@@ -1988,17 +1988,66 @@ function putPresigned(url, file, onProgress = () => {}) {
   });
 }
 
+/* unggah potongan (chunked) ke database: melewati batas 4,5MB per request.
+   File dipotong menjadi bagian <chunkSize>, masing-masing dikirim sebagai
+   octet-stream mentah, lalu disatukan ulang oleh server (HTTP Range). */
+function putDbChunk(id, idx, blob) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `/api/storage/dbfiles/${id}/chunk/${idx}`);
+    xhr.setRequestHeader('Authorization', `Bearer ${S.token}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.error || 'Gagal mengunggah potongan'));
+      } catch { reject(new Error('Gagal mengunggah potongan')); }
+    };
+    xhr.onerror = () => reject(new Error('Gagal terhubung ke server'));
+    xhr.send(blob);
+  });
+}
+
+async function uploadFileChunked(file, onProgress = () => {}) {
+  const init = await api('/api/storage/dbfiles/init', {
+    method: 'POST',
+    body: { name: file.name, size: file.size, mime: file.type },
+  });
+  const { id, chunkSize, totalChunks } = init;
+  let sent = 0;
+  for (let i = 0; i < totalChunks; i += 1) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, file.size);
+    const blob = file.slice(start, end);
+    await putDbChunk(id, i, blob);
+    sent += blob.size;
+    if (typeof onProgress === 'function') onProgress(sent / file.size);
+  }
+  const done = await api(`/api/storage/dbfiles/${id}/complete`, { method: 'POST' });
+  return { url: done.url, name: file.name, size: file.size, mime: file.type, type: done.type };
+}
+
 async function uploadFile(file, onProgress = () => {}) {
   // di hosting file dikirim langsung ke Blob (lolos batas 4,5MB per request);
   // bila endpoint tanda tangan tidak ada (mode lokal) -> upload lewat server
+  let sign = null;
   try {
-    const sign = await api('/api/uploads/sign', {
+    sign = await api('/api/uploads/sign', {
       method: 'POST',
       body: { name: file.name, size: file.size, mime: file.type },
     });
-    const stored = await putPresigned(sign.presignedUrl, file, onProgress);
-    return { url: stored.url, name: sign.name, size: file.size, mime: sign.mime, type: sign.type };
-  } catch { /* lanjutkan dengan upload server */ }
+  } catch { /* mode lokal / gagal -> lanjut upload server */ }
+
+  if (sign && sign.presignedUrl) {
+    try {
+      const stored = await putPresigned(sign.presignedUrl, file, onProgress);
+      return { url: stored.url, name: sign.name, size: file.size, mime: sign.mime, type: sign.type };
+    } catch {
+      // Blob mati/tangguh -> unggah potongan ke database (ukuran berapa pun)
+      return uploadFileChunked(file, onProgress);
+    }
+  }
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();

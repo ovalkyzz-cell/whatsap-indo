@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { pipeline } = require('stream/promises');
+const { Readable } = require('stream');
 const express = require('express');
 const multer = require('multer');
 const { requireAuth } = require('./auth');
@@ -29,6 +30,8 @@ const storageEnabled = useBlob || fsWritable;
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB (mode filesystem)
 // batas permintaan Vercel 4,5MB per request -> di hosting file dikirim via Blob
 const HOSTED_MAX_FILE_SIZE = 4 * 1024 * 1024;
+// ukuran potongan unggah ke database (raw binary). Aman di bawah 4,5MB.
+const DB_CHUNK_SIZE = 4 * 1024 * 1024;
 
 const storage = useBlob
   ? multer.memoryStorage()
@@ -192,26 +195,225 @@ router.post('/upload', requireAuth, (req, res) => {
   });
 });
 
+/* ---------- unggah potongan (chunked) ke database ----------
+   Melewati batas body 4,5MB Vercel: file dikirim bertahap sebagai potongan
+   mentah (octet-stream) yang masing-masing di bawah batas. Isi file disimpan
+   per-potongan di db_file_chunks (kuat & hemat RAM), lalu disajikan ulang
+   lewat HTTP Range (streaming) sehingga video besar bisa diputar/seek. */
+
+// inisialisasi sesi unggah: buat baris metadata (belum lengkap)
+router.post('/storage/dbfiles/init', requireAuth, async (req, res) => {
+  const original = String(req.body?.name || 'file').slice(0, 255);
+  const size = Number(req.body?.size) || 0;
+  const mime = String(req.body?.mime || '').slice(0, 127);
+  if (!(size > 0)) return res.status(400).json({ error: 'Ukuran file tidak valid' });
+  if (size > MAX_FILE_SIZE) return res.status(413).json({ error: 'Ukuran file maksimal 2GB' });
+  if (await rejectIfQuotaFull(req, res, size)) return;
+
+  const id = crypto.randomUUID();
+  const chunkSize = DB_CHUNK_SIZE;
+  const totalChunks = Math.ceil(size / chunkSize);
+  try {
+    await db.run(
+      `INSERT INTO db_files (id, user_id, data, mime, name, size, chunk_size, total_chunks, complete, created_at)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 0, ?)`,
+      id, req.user.id, mime || 'application/octet-stream', original, size, chunkSize, totalChunks, Date.now()
+    );
+    res.status(201).json({ id, chunkSize, totalChunks, size, name: original, mime: mime || 'application/octet-stream' });
+  } catch (err) {
+    console.error('dbfiles init:', err.message);
+    res.status(500).json({ error: 'Gagal menyiapkan unggahan' });
+  }
+});
+
+// terima satu potongan (raw binary). Upsert agar retry aman.
+router.put(
+  '/storage/dbfiles/:id/chunk/:idx',
+  requireAuth,
+  express.raw({ type: 'application/octet-stream', limit: '8mb' }),
+  async (req, res) => {
+    const id = String(req.params.id || '');
+    const idx = Number(req.params.idx);
+    if (!/^[\w-]{1,64}$/.test(id)) return res.status(400).json({ error: 'ID tidak valid' });
+    if (!Number.isInteger(idx) || idx < 0) return res.status(400).json({ error: 'Index tidak valid' });
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || !body.length) return res.status(400).json({ error: 'Potongan kosong' });
+
+    let row = null;
+    try { row = await db.get('SELECT user_id, complete, chunk_size, total_chunks, size FROM db_files WHERE id = ?', id); } catch { /* jatuh ke 404 */ }
+    if (!row) return res.status(404).json({ error: 'Unggahan tidak ditemukan' });
+    if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Akses ditolak' });
+    if (row.complete) return res.status(409).json({ error: 'Unggahan sudah selesai' });
+    if (idx >= row.total_chunks) return res.status(400).json({ error: 'Index melebihi jumlah potongan' });
+    // potongan terakhir boleh lebih kecil (sisa)
+    const expected = idx === row.total_chunks - 1
+      ? row.size - (row.total_chunks - 1) * row.chunk_size
+      : row.chunk_size;
+    if (body.length !== expected) {
+      return res.status(400).json({ error: `Ukuran potongan tidak sesuai (diharapkan ${expected}, diterima ${body.length})` });
+    }
+    try {
+      await db.run(
+        `INSERT INTO db_file_chunks (file_id, idx, data) VALUES (?, ?, ?)
+         ON CONFLICT (file_id, idx) DO UPDATE SET data = excluded.data`,
+        id, idx, body
+      );
+      res.status(200).json({ ok: true, idx });
+    } catch (err) {
+      console.error('dbfiles chunk:', err.message);
+      res.status(500).json({ error: 'Gagal menyimpan potongan' });
+    }
+  }
+);
+
+// finalisasi: verifikasi semua potongan ada, tandai lengkap
+router.post('/storage/dbfiles/:id/complete', requireAuth, async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[\w-]{1,64}$/.test(id)) return res.status(400).json({ error: 'ID tidak valid' });
+  let row = null;
+  try {
+    row = await db.get(
+      'SELECT user_id, mime, name, size, chunk_size, total_chunks, complete FROM db_files WHERE id = ?',
+      id
+    );
+  } catch { /* jatuh ke 404 */ }
+  if (!row) return res.status(404).json({ error: 'Unggahan tidak ditemukan' });
+  if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Akses ditolak' });
+
+  const payload = { url: `/api/storage/dbfiles/${id}`, name: row.name, size: row.size, mime: row.mime, type: classify(row.mime, row.name) };
+  if (row.complete) return res.status(200).json(payload);
+
+  try {
+    const r = await db.get('SELECT COUNT(*) AS n FROM db_file_chunks WHERE file_id = ?', id);
+    if (!r || Number(r.n) !== row.total_chunks) {
+      return res.status(400).json({ error: `Potongan belum lengkap (${r ? r.n : 0}/${row.total_chunks})` });
+    }
+    await db.run('UPDATE db_files SET complete = 1 WHERE id = ?', id);
+    res.status(200).json(payload);
+  } catch (err) {
+    console.error('dbfiles complete:', err.message);
+    res.status(500).json({ error: 'Gagal menyelesaikan unggahan' });
+  }
+});
+
 /* Penyaji file yang disimpan di database (cadangan saat Blob mati).
    Akses publik via id acak yang tak terduga (sama seperti URL Blob publik
-   & /uploads/). Konten ditentukan dari mime yang tercatat. */
+   & /uploads/). Konten ditentukan dari mime yang tercatat. Mendukung HTTP
+   Range sehingga video besar dapat diputar & di-seek tanpa muat ke RAM. */
 router.get('/storage/dbfiles/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!/^[\w-]{1,64}$/.test(id)) return res.status(400).json({ error: 'ID tidak valid' });
   let row = null;
-  try { row = await db.get('SELECT data, mime FROM db_files WHERE id = ?', id); } catch { /* jatuh ke 404 */ }
-  if (!row || !row.data) return res.status(404).json({ error: 'File tidak ditemukan' });
+  try {
+    row = await db.get(
+      'SELECT data, mime, name, size, chunk_size, total_chunks, complete FROM db_files WHERE id = ?',
+      id
+    );
+  } catch { /* jatuh ke 404 */ }
+  if (!row || !row.complete) return res.status(404).json({ error: 'File tidak ditemukan' });
+
   const mime = row.mime || 'application/octet-stream';
+  let dataBuffer = null; // jalur lama: seluruh isi ada di kolom data
+  let totalSize;
+  if (row.data && row.data.length) {
+    dataBuffer = Buffer.from(row.data);
+    totalSize = dataBuffer.length;
+  } else {
+    totalSize = Number(row.size) || 0;
+    if (!(totalSize > 0) || !(row.total_chunks > 0)) {
+      return res.status(404).json({ error: 'File tidak ditemukan' });
+    }
+  }
+
   res.setHeader('Content-Type', mime);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
   // paksa unduh untuk tipe berisiko (mencegah XSS lewat HTML/SVG)
   if (!INLINE_SAFE.test(mime) || SVG_EXT_MIME.test(mime)) {
     res.setHeader('Content-Disposition', 'attachment');
   }
-  res.send(Buffer.from(row.data));
+
+  // parse header Range (hanya bentuk sederhana: bytes=a-b)
+  let start = 0;
+  let end = totalSize - 1;
+  let isPartial = false;
+  const rangeHeader = req.headers.range;
+  if (rangeHeader) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+    if (m) {
+      const hasStart = m[1] !== '';
+      const hasEnd = m[2] !== '';
+      let s = hasStart ? parseInt(m[1], 10) : null;
+      let e = hasEnd ? parseInt(m[2], 10) : null;
+      if (!hasStart && hasEnd) {
+        // akhiran: bytes=-N (N byte terakhir)
+        s = Math.max(0, totalSize - e);
+        e = totalSize - 1;
+      } else if (hasStart && !hasEnd) {
+        e = totalSize - 1;
+      }
+      if (s !== null && e !== null && Number.isFinite(s) && Number.isFinite(e)) {
+        if (s >= totalSize) {
+          res.setHeader('Content-Range', `bytes */${totalSize}`);
+          return res.status(416).end();
+        }
+        if (s < 0 || e < s) return res.status(400).json({ error: 'Range tidak valid' });
+        start = s;
+        end = Math.min(e, totalSize - 1);
+        isPartial = true;
+      }
+    }
+  }
+
+  const contentLength = end - start + 1;
+  if (isPartial) {
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+  }
+  res.setHeader('Content-Length', String(contentLength));
+
+  if (dataBuffer) {
+    return res.send(dataBuffer.subarray(start, end + 1));
+  }
+
+  // mode potongan: alirkan hanya potongan yang menutup rentang diminta
+  const stream = createDbFileRangeStream(id, row, start, end);
+  stream.on('error', (err) => {
+    console.error('dbfiles stream:', err.message);
+    if (!res.headersSent) res.status(500).end();
+    else res.destroy();
+  });
+  stream.pipe(res);
 });
+
+// alirkan rentang byte [start, end] dari tabel db_file_chunks (per-potongan)
+function createDbFileRangeStream(fileId, row, start, end) {
+  const chunkSize = Number(row.chunk_size) || DB_CHUNK_SIZE;
+  const firstChunk = Math.floor(start / chunkSize);
+  const lastChunk = Math.floor(end / chunkSize);
+  const totalNeeded = end - start + 1;
+
+  async function* generate() {
+    let produced = 0;
+    for (let ci = firstChunk; ci <= lastChunk && produced < totalNeeded; ci += 1) {
+      const chunkRow = await db.get('SELECT data FROM db_file_chunks WHERE file_id = ? AND idx = ?', fileId, ci);
+      if (!chunkRow || !chunkRow.data) throw new Error(`Potongan ${ci} hilang`);
+      const chunkBuf = Buffer.from(chunkRow.data);
+      const chunkStartByte = ci * chunkSize;
+      const sliceStart = ci === firstChunk ? Math.max(0, start - chunkStartByte) : 0;
+      const sliceEnd = ci === lastChunk ? Math.min(chunkBuf.length, end - chunkStartByte + 1) : chunkBuf.length;
+      if (sliceStart < sliceEnd) {
+        const slice = chunkBuf.subarray(sliceStart, sliceEnd);
+        produced += slice.length;
+        yield slice;
+      }
+    }
+  }
+
+  return Readable.from(generate());
+}
 
 /* ---------- simpan hasil unduhan bot (video/audio/berkas) ----------
    Tautan unduhan dari pihak ketiga cepat kedaluwarsa & diblokir hotlink,
