@@ -2,6 +2,21 @@
 
 Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, kirim **foto / video / audio / file hingga 2GB**, serta **panggilan suara & video** (WebRTC).
 
+## Profil Developer
+
+| | |
+|---|---|
+| Nama / Dikenal sebagai | **Mazval** |
+| Peran | Pembuat & developer utama **Whatsap Indo** |
+| Email resmi | `ovalkyzz@gmail.com` (admin & CS) |
+| Rilis pertama | **26 September 2026** |
+| Versi terkini | **1.0.0** (pembaruan terakhir **15 Oktober 2026**) |
+| API pendukung | [api-mazval.zone.id](https://api-mazval.zone.id) (bot, tools, AI, downloader) |
+| Repository | [github.com/ovalkyzz-cell/whatsap-indo](https://github.com/ovalkyzz-cell/whatsap-indo) |
+| Produksi | [whatsap-indo.vercel.app](https://whatsap-indo.vercel.app) / [whatsapp-mazval.zone.id](https://whatsapp-mazval.zone.id) |
+
+**Whatsap Indo** dikembangkan penuh oleh **Mazval** — dari arsitektur server (Express + Socket.IO + WebRTC), 69 bot premium, sistem paket & kuota storage nyata, hingga antarmuka PWA yang responsif. Identitas Mazval melekat di seluruh aplikasi: kode undangan `WA-MAZ-VAL-XXXX`, base URL API `api-mazval`, serta akun admin/CS `ovalkyzz@gmail.com`.
+
 ## Fitur
 
 | Kategori | Detail |
