@@ -832,8 +832,28 @@ const MAX_GROUP_MEMBERS = 500;
 function validChatUrl(url) {
   return /^\/uploads\/[\w.\-]+$/.test(String(url || ''))
     || /^\/api\/storage\/dbfiles\/[\w-]+$/.test(String(url || ''))
+    || /^\/api\/stickers\/[a-z_]+\.svg$/.test(String(url || ''))
     || /^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\/[\w.%\-/~]+$/.test(String(url || ''));
 }
+
+// ---------- stiker & emot khusus WA Indo ----------
+const stickers = require('./stickers');
+
+// katalog stiker yang bisa dipakai pengirim (sudah difilter paketnya)
+app.get('/api/stickers', auth.requireAuth, ah(async (req, res) => {
+  res.json(stickers.catalogFor(req.user));
+}));
+
+// penyaji SVG satu stiker (publik; id acak tak terduga + cacheable)
+app.get('/api/stickers/:id.svg', (req, res) => {
+  const id = String(req.params.id || '');
+  const svg = stickers.render(id);
+  if (!svg) return res.status(404).json({ error: 'Stiker tidak ditemukan' });
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.send(svg);
+});
 
 app.post('/api/chats/group', auth.requireAuth, ah(async (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 60);
@@ -2473,7 +2493,7 @@ async function handleSend(user, payload) {
     }
   }
 
-  const cleanType = ['text', 'image', 'video', 'audio', 'file'].includes(type) ? type : 'text';
+  const cleanType = ['text', 'image', 'video', 'audio', 'file', 'sticker'].includes(type) ? type : 'text';
   if (cleanType === 'text' && !String(body).trim()) throw new Error('Pesan kosong');
 
   // proteksi akun: batasi laju pengiriman supaya tidak terdeteksi sebagai spam
@@ -2531,8 +2551,9 @@ async function handleSend(user, payload) {
   if (botPeer) await consumeBotQuota(user);
 
   // --- kuota storage NYATA: reservasi atomik ukuran media sebelum pesan disimpan.
-  // Hanya media (foto/video/audio/file) menempati kuota; pesan teks bebas.
-  const mediaSize = cleanType !== 'text' && media?.size
+  // Hanya media unggahan (foto/video/audio/file) menempati kuota; pesan teks
+  // dan stiker (aset sistem SVG) bebas — stiker tidak menempati storage paket.
+  const mediaSize = (cleanType !== 'text' && cleanType !== 'sticker' && media?.size)
     ? Math.max(0, Math.round(Number(media.size) || 0))
     : 0;
   let storageReserved = 0;

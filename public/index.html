@@ -193,6 +193,13 @@
           fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
         <circle cx="11.2" cy="13.4" r="3.1" fill="none" stroke="currentColor" stroke-width="1.7" />
       </symbol>
+      <symbol id="ic-emoji" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <circle cx="8.9" cy="10" r="1.15" fill="currentColor" />
+        <circle cx="15.1" cy="10" r="1.15" fill="currentColor" />
+        <path d="M8.2 14.2a4.6 4.6 0 0 0 7.6 0" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" />
+      </symbol>
       <symbol id="ic-play" viewBox="0 0 24 24">
         <path d="M8.2 5.6l10 6.4-10 6.4z" fill="none" stroke="currentColor" stroke-width="1.7"
           stroke-linejoin="round" />
@@ -468,7 +475,12 @@
             <button data-kind="video"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg> Video</button>
             <button data-kind="audio"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-audio" /></svg> Audio</button>
             <button data-kind="file"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg> Dokumen</button>
+            <button data-kind="sticker"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-emoji" /></svg> Stiker</button>
             <button data-kind="viewonce"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-viewonce" /></svg> Sekali lihat</button>
+          </div>
+          <div class="sticker-panel hidden" id="stickerPanel">
+            <div class="sticker-tabs" id="stickerTabs"></div>
+            <div class="sticker-grid" id="stickerGrid"></div>
           </div>
           <input type="file" id="fileInput" class="hidden" />
           <div class="attach-preview hidden" id="attachPreview">

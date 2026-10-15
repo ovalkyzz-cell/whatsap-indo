@@ -852,6 +852,7 @@ function replyPreviewHtml(m) {
   else if (rp.type === 'video') body = '🎬 Video';
   else if (rp.type === 'audio') body = '🎤 Pesan suara';
   else if (rp.type === 'file') body = '📎 Berkas';
+  else if (rp.type === 'sticker') body = `😀 ${String(rp.body || 'Stiker').slice(0, 40)}`;
   else body = String(rp.body || '').slice(0, 140) || 'Pesan';
   return `<button type="button" class="reply-quote" data-jump="${esc(m.replyTo)}" title="Ke pesan asli">
     <span class="rq-bar" aria-hidden="true"></span>
@@ -880,7 +881,9 @@ function messageHtml(m, chat, opts = {}) {
         : `<button type="button" class="vo-bubble" data-vo="${esc(m.id)}"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-lock" /></svg>Buka ${voLabel.toLowerCase()} sekali lihat</button>`;
       if (m.body) inner += renderMsgBody(m.body);
     } else {
-      if (m.type === 'image' && m.mediaUrl) {
+      if (m.type === 'sticker' && m.mediaUrl) {
+        inner += `<div class="msg-sticker"><img src="${esc(m.mediaUrl)}" alt="${esc(m.body || 'Stiker')}" loading="lazy" onerror="mediaBroken(this)"></div>`;
+      } else if (m.type === 'image' && m.mediaUrl) {
         inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy" onerror="mediaBroken(this)"></a></div>`;
       } else if (m.type === 'video' && m.mediaUrl) {
         inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata" onerror="mediaBroken(this)"></video></div>`;
@@ -2134,6 +2137,11 @@ $('attachMenu').querySelectorAll('button').forEach((b) => {
     $('attachMenu').classList.add('hidden');
     const kind = b.dataset.kind;
     const input = $('fileInput');
+    if (kind === 'sticker') {
+      S.viewOncePending = false;
+      toggleStickerPanel();
+      return;
+    }
     if (kind === 'viewonce') {
       S.viewOncePending = true;
       input.accept = 'image/*,video/*';
@@ -2191,6 +2199,85 @@ function clearAttachPreview() {
   $('attachPreview').classList.remove('view-once');
   $('fileInput').value = '';
 }
+
+/* ================= pemilih stiker & emot khusus ================= */
+let _stickerData = null;      // cache katalog (sudah difilter paket)
+let _stickerActivePack = null;
+
+function closeStickerPanel() {
+  const p = $('stickerPanel');
+  if (p) p.classList.add('hidden');
+}
+
+async function toggleStickerPanel() {
+  const p = $('stickerPanel');
+  const opening = p.classList.contains('hidden');
+  p.classList.toggle('hidden', !opening);
+  if (!opening) return;
+  try {
+    if (!_stickerData) _stickerData = await api('/api/stickers');
+    renderStickerPicker();
+  } catch (err) {
+    p.classList.add('hidden');
+    toast(err.message || 'Gagal memuat stiker');
+  }
+}
+
+function renderStickerPicker() {
+  const data = _stickerData;
+  if (!data || !data.packs || !data.packs.length) {
+    $('stickerTabs').innerHTML = '';
+    $('stickerGrid').innerHTML = '<div class="sticker-empty">Belum ada stiker terbuka untuk paket Anda.</div>';
+    return;
+  }
+  if (!_stickerActivePack || !data.packs.some((p) => p.id === _stickerActivePack)) {
+    _stickerActivePack = data.packs[0].id;
+  }
+  $('stickerTabs').innerHTML = data.packs.map((p) => `
+    <button class="sticker-tab${p.id === _stickerActivePack ? ' active' : ''}" data-pack="${esc(p.id)}">${esc(p.label)}</button>
+  `).join('');
+  const pack = data.packs.find((p) => p.id === _stickerActivePack) || data.packs[0];
+  $('stickerGrid').innerHTML = pack.stickers.map((s) => `
+    <button class="sticker-cell" data-sticker="${esc(s.id)}" title="${esc(s.label)}">
+      <img src="/api/stickers/${encodeURIComponent(s.id)}.svg" alt="${esc(s.label)}" loading="lazy">
+    </button>
+  `).join('');
+}
+
+$('stickerTabs').addEventListener('click', (e) => {
+  const t = e.target.closest('.sticker-tab');
+  if (!t) return;
+  _stickerActivePack = t.dataset.pack;
+  renderStickerPicker();
+});
+
+$('stickerGrid').addEventListener('click', (e) => {
+  const c = e.target.closest('.sticker-cell');
+  if (!c) return;
+  sendSticker(c.dataset.sticker);
+});
+
+async function sendSticker(id) {
+  const chatId = S.activeChatId;
+  if (!chatId) return;
+  const data = _stickerData;
+  let label = id;
+  if (data && data.packs) {
+    for (const p of data.packs) {
+      const s = p.stickers.find((x) => x.id === id);
+      if (s) { label = s.label; break; }
+    }
+  }
+  closeStickerPanel();
+  const url = `/api/stickers/${encodeURIComponent(id)}.svg`;
+  const reply = S.replyTo ? S.replyTo.id : undefined;
+  sendViaSocket({ chatId, type: 'sticker', body: label, media: { url }, replyTo: reply });
+  clearReply();
+}
+
+document.addEventListener('click', () => closeStickerPanel());
+$('stickerPanel').addEventListener('click', (e) => e.stopPropagation());
+$('btnAttach').addEventListener('click', (e) => e.stopPropagation());
 
 /* ================= drawer manager ================= */
 const DRAWERS = ['menuDrawer', 'newChatDrawer', 'profileDrawer', 'wallpaperDrawer', 'homeBgDrawer', 'contactDrawer',
