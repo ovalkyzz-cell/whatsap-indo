@@ -8,10 +8,15 @@ const express = require('express');
 const multer = require('multer');
 const { requireAuth } = require('./auth');
 const quota = require('./storage');
+const db = require('./db');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || '';
 const useBlob = Boolean(BLOB_TOKEN);
+
+// mime yang aman ditampilkan inline; sisanya dipaksa unduh (cegah XSS)
+const INLINE_SAFE = /^(image\/(png|jpe?g|gif|webp|avif|bmp|ico)|video\/(mp4|webm|mov|m4v)|audio\/(mp3|ogg|wav|m4a|opus|aac|flac)|application\/(pdf)|text\/(plain|csv))$/i;
+const SVG_EXT_MIME = /svg/i;
 
 let fsWritable = false;
 try {
@@ -159,18 +164,53 @@ router.post('/upload', requireAuth, (req, res) => {
     const ext = path.extname(req.file.originalname).slice(0, 16);
     const pathname = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
     const { put } = require('@vercel/blob');
-    put(pathname, req.file.buffer, {
-      access: 'public',
-      token: BLOB_TOKEN || undefined,
-      addRandomSuffix: true,
-      contentType: req.file.mimetype || undefined,
-    })
-      .then((object) => res.status(201).json({ url: object.url, ...meta }))
-      .catch((blobErr) => {
-        console.error('upload blob:', blobErr.message);
-        res.status(500).json({ error: 'Gagal menyimpan file' });
+    try {
+      const object = await put(pathname, req.file.buffer, {
+        access: 'public',
+        token: BLOB_TOKEN || undefined,
+        addRandomSuffix: true,
+        contentType: req.file.mimetype || undefined,
       });
+      return res.status(201).json({ url: object.url, ...meta });
+    } catch (blobErr) {
+      // Blob ditangguhkan/gagal -> cadangan: simpan byttes ke database
+      // (Postgres/SQLite) supaya upload tetap berhasil walau Blob mati.
+      console.error('upload blob:', blobErr.message);
+      try {
+        const id = crypto.randomUUID();
+        await db.run(
+          `INSERT INTO db_files (id, user_id, data, mime, name, size, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          id, req.user.id, req.file.buffer, meta.mime, meta.name, meta.size, Date.now()
+        );
+        return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
+      } catch (dbErr) {
+        console.error('upload db fallback:', dbErr.message);
+        return res.status(500).json({ error: 'Gagal menyimpan file' });
+      }
+    }
   });
+});
+
+/* Penyaji file yang disimpan di database (cadangan saat Blob mati).
+   Akses publik via id acak yang tak terduga (sama seperti URL Blob publik
+   & /uploads/). Konten ditentukan dari mime yang tercatat. */
+router.get('/storage/dbfiles/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[\w-]{1,64}$/.test(id)) return res.status(400).json({ error: 'ID tidak valid' });
+  let row = null;
+  try { row = await db.get('SELECT data, mime FROM db_files WHERE id = ?', id); } catch { /* jatuh ke 404 */ }
+  if (!row || !row.data) return res.status(404).json({ error: 'File tidak ditemukan' });
+  const mime = row.mime || 'application/octet-stream';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  // paksa unduh untuk tipe berisiko (mencegah XSS lewat HTML/SVG)
+  if (!INLINE_SAFE.test(mime) || SVG_EXT_MIME.test(mime)) {
+    res.setHeader('Content-Disposition', 'attachment');
+  }
+  res.send(Buffer.from(row.data));
 });
 
 /* ---------- simpan hasil unduhan bot (video/audio/berkas) ----------
@@ -365,6 +405,15 @@ async function storedFileStatus(url) {
       const st = await fs.promises.stat(path.join(UPLOAD_DIR, name));
       return st.isFile() ? 'exists' : 'missing';
     } catch { return 'missing'; }
+  }
+  // file cadangan di database: cek keberadaan barisnya
+  if (s.startsWith('/api/storage/dbfiles/')) {
+    const id = s.slice('/api/storage/dbfiles/'.length);
+    if (!/^[\w-]{1,64}$/.test(id)) return 'missing';
+    try {
+      const row = await db.get('SELECT id FROM db_files WHERE id = ?', id);
+      return row ? 'exists' : 'missing';
+    } catch { return 'unknown'; }
   }
   if (/^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\//.test(s)) {
     try {

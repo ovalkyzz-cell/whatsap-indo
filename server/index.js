@@ -831,6 +831,7 @@ app.get('/api/calls', auth.requireAuth, ah(async (req, res) => {
 const MAX_GROUP_MEMBERS = 500;
 function validChatUrl(url) {
   return /^\/uploads\/[\w.\-]+$/.test(String(url || ''))
+    || /^\/api\/storage\/dbfiles\/[\w-]+$/.test(String(url || ''))
     || /^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\/[\w.%\-/~]+$/.test(String(url || ''));
 }
 
