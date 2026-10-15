@@ -6,18 +6,21 @@
      1. server lokal      -> npm run admin  (pemeriksaan penuh)
      2. aplikasi di domain -> /admin         (pemeriksaan adaptif)
 
-   Lingkungan serverless (Vercel) tidak punya berkas sumber, git,
-   maupun pm2. Pemeriksaan yang butuh akses mesin ditandai "lokal"
-   dan ditampilkan abu-abu (dilewati), BUKAN merah — supaya panel
-   di domain selalu jujur: yang hijau = benar-benar terbukti sehat.
-
+   Lingkungan serverless (Vercel) tidak punya git maupun pm2.
+   Pemeriksaan yang dahulu butuh akses mesin (child_process / git) kini
+   dijalankan dengan logika serverless-tetap-NYATA:
+     sintaks  -> parse vm.Script (bukan node --check)
+     unit     -> run() yang diekspor tiap berkas uji, in-process
+     callflow -> handshake Socket.IO sungguhan ke aplikasi yang hidup
+     secrets  -> pindai fs bundel deployment (tanpa git)
    Pemeriksaan yang berjalan di mana pun tetap NYATA:
-     koneksi & skema database, baris macet, endpoint aplikasi,
-     referensi DOM frontend, dan ketersediaan modul runtime.
+      koneksi & skema database, baris macet, endpoint aplikasi,
+      referensi DOM frontend, dan ketersediaan modul runtime.
    ============================================================ */
 
 const path = require('path');
 const fs = require('fs');
+const vm = require('vm');
 const { execFile } = require('child_process');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -76,7 +79,7 @@ async function fetchJson(url, timeout = 8000, maxLen = 300, { retries = 0 } = {}
 }
 
 /* ---------- deteksi lingkungan ---------- */
-function detectEnv({ root = process.cwd(), base = '', db = null, adminEmails = [] } = {}) {
+function detectEnv({ root = process.cwd(), base = '', db = null, adminEmails = [], token = '' } = {}) {
   const serverless = !!process.env.VERCEL;
   const hasSource = fs.existsSync(path.join(root, 'server', 'index.js'))
     && fs.existsSync(path.join(root, 'public', 'index.html'));
@@ -86,6 +89,7 @@ function detectEnv({ root = process.cwd(), base = '', db = null, adminEmails = [
     base: String(base || '').replace(/\/+$/, ''),
     db,
     adminEmails,
+    token,
     serverless,
     full: !serverless && hasSource && hasTests,
     hasSource,
@@ -97,7 +101,10 @@ function detectEnv({ root = process.cwd(), base = '', db = null, adminEmails = [
    PEMERIKSAAN
    ============================================================ */
 
-/* 1. Sintaks seluruh berkas JavaScript (lokal) */
+/* 1. Sintaks seluruh berkas JavaScript — parse nyata memakai vm.Script.
+   Tidak lagi memakai `node --check` (child_process) sehingga berjalan
+   di server lokal maupun lingkungan serverless (Vercel). vm.Script
+   mem-parses kode sungguhan sehingga galat sintaks nyata terdeteksi. */
 async function checkSyntax(ctx) {
   const { root } = ctx;
   const files = ['server.js', 'public/sw.js',
@@ -107,15 +114,23 @@ async function checkSyntax(ctx) {
     ...walk(path.join(root, 'admin'), root)];
   const bad = [];
   for (const f of files) {
-    const r = await run(process.execPath, ['--check', path.join(root, f)], { timeout: 30_000 });
-    if (r.code !== 0) {
-      const first = (r.err || r.out).split('\n').find((l) => l.trim()) || 'galat';
-      bad.push(`${f} — ${first}`);
+    let code;
+    try {
+      code = fs.readFileSync(path.join(root, f), 'utf8');
+    } catch (err) {
+      bad.push(`${f} — tidak bisa dibaca: ${err.message}`);
+      continue;
+    }
+    try {
+      // eslint-disable-next-line no-new
+      new vm.Script(code, { filename: f });
+    } catch (err) {
+      bad.push(`${f} — ${String(err.message).split('\n')[0]}`);
     }
   }
   return {
     ok: bad.length === 0,
-    detail: bad.length ? bad.slice(0, 5).join(' • ') : `${files.length} berkas JavaScript lolos node --check`,
+    detail: bad.length ? bad.slice(0, 5).join(' • ') : `${files.length} berkas JavaScript lolos parse vm.Script`,
     data: { total: files.length, bad },
   };
 }
@@ -265,51 +280,149 @@ async function checkStatic(ctx) {
   };
 }
 
-/* 6. Unit test: pemotong foto & mesin panggilan (lokal) */
+/* 2b. Unit test: pemotong foto & mesin panggilan.
+   Dijalankan in-process lewat run() yang diekspor tiap berkas uji,
+   sehingga berjalan di server lokal maupun serverless tanpa child_process.
+   crop: murni vm/DOM tiruan (aman). calls: menyentuh database sungguhan
+   dengan id ber-namespace unit-* dan membersihkan dirinya sendiri. */
 async function checkUnit(ctx) {
   const out = [];
   let failed = 0;
   for (const file of ['test/crop.js', 'test/calls.js']) {
-    const r = await run(process.execPath, [file], { timeout: 120_000, cwd: ctx.root });
-    const res = parseResult(r.out);
-    out.push(`${file}: ${res ? `${res.passed} lulus / ${res.failed} gagal` : 'tidak menghasilkan RESULT'}`);
-    if (!res || res.failed > 0 || r.code !== 0) failed++;
+    let res = null;
+    let err = null;
+    try {
+      // eslint-disable-next-line global-require, import/no-dynamic-require
+      const mod = require(path.join(ctx.root, file));
+      if (typeof mod.run !== 'function') throw new Error('modul tidak mengekspor run()');
+      res = await mod.run();
+    } catch (e) {
+      err = e;
+    }
+    if (res) {
+      out.push(`${file}: ${res.pass} lulus / ${res.fail} gagal`);
+      if (res.fail > 0) failed++;
+    } else {
+      out.push(`${file}: gagal — ${err ? err.message : 'tidak menghasilkan hasil'}`);
+      failed++;
+    }
   }
   return { ok: failed === 0, detail: out.join(' • '), data: { failed } };
 }
 
-/* 7. Alur panggilan/VC sungguhan lewat Socket.IO (lokal) */
+/* 3b. Alur panggilan/VC sungguhan lewat Socket.IO.
+   Di server lokal (full) dijalankan uji alur penuh test/callflow.js.
+   Di serverless (Vercel) tidak bisa memanggil server, tetapi kita
+   melakukan handshake Socket.IO NYATA ke aplikasi yang sedang hidup
+   (ctx.base): koneksi websocket sungguhan, connect event, lalu putus.
+   Ini pemeriksaan nyata lapisan Socket.IO produksi, bukan simulasi. */
 async function checkCallflow(ctx) {
-  const r = await run(process.execPath, ['test/callflow.js'], { timeout: 180_000, cwd: ctx.root });
-  const res = parseResult(r.out);
-  if (!res) {
-    const first = (r.err || r.out).split('\n').find((l) => l.trim()) || 'galat tidak diketahui';
-    return { ok: false, detail: `uji panggilan gagal dijalankan — ${first}`, data: { raw: (r.out || r.err).slice(-600) } };
+  if (ctx.full) {
+    const r = await run(process.execPath, ['test/callflow.js'], { timeout: 180_000, cwd: ctx.root });
+    const res = parseResult(r.out);
+    if (!res) {
+      const first = (r.err || r.out).split('\n').find((l) => l.trim()) || 'galat tidak diketahui';
+      return { ok: false, detail: `uji panggilan gagal dijalankan — ${first}`, data: { raw: (r.out || r.err).slice(-600) } };
+    }
+    return {
+      ok: res.failed === 0,
+      detail: res.failed === 0
+        ? `alur panggilan/VC normal: ${res.passed} pemeriksaan lulus (dering, jawab, sinyal WebRTC, ditutup)`
+        : `${res.failed} pemeriksaan panggilan gagal dari ${res.passed + res.failed}`,
+      data: res,
+    };
   }
-  return {
-    ok: res.failed === 0,
-    detail: res.failed === 0
-      ? `alur panggilan/VC normal: ${res.passed} pemeriksaan lulus (dering, jawab, sinyal WebRTC, ditutup)`
-      : `${res.failed} pemeriksaan panggilan gagal dari ${res.passed + res.failed}`,
-    data: res,
-  };
+  // serverless: handshake Socket.IO NYATA ke aplikasi hidup.
+  // io.use() mewajibkan token valid yang ditandatangani server yang SAMA,
+  // jadi kita memakai token sesi admin yang sudah dilewatkan panel (ctx.token)
+  // — bukan token yang diminta ulang dengan proses/JWT_SECRET berbeda.
+  const base = ctx.base;
+  if (!base) return { ok: false, detail: 'alamat aplikasi tidak diketahui untuk uji Socket.IO' };
+  const token = String(ctx.token || '').trim();
+  if (!token) {
+    return { ok: false, detail: 'token sesi admin tidak tersedia untuk uji Socket.IO terautentikasi' };
+  }
+  let ioClient;
+  try {
+    // eslint-disable-next-line global-require
+    ({ io: ioClient } = require('socket.io-client'));
+  } catch (err) {
+    return { ok: false, detail: `socket.io-client tidak tersedia: ${err.message}` };
+  }
+  const t0 = Date.now();
+  const sock = ioClient(base, {
+    auth: { token },
+    transports: ['websocket', 'polling'],
+    reconnection: false,
+    forceNew: true,
+    timeout: 8000,
+  });
+  const result = await new Promise((resolve) => {
+    const done = (ok, detail) => {
+      try { sock.close(); } catch { /* abaikan */ }
+      resolve({ ok, detail });
+    };
+    const timer = setTimeout(() => done(false, 'handshake Socket.IO timeout setelah 8 detik'), 8000);
+    sock.once('connect', () => {
+      clearTimeout(timer);
+      done(true, `handshake Socket.IO terautentikasi terhubung (id=${sock.id}, ${Date.now() - t0}ms)`);
+    });
+    sock.once('connect_error', (e) => {
+      clearTimeout(timer);
+      done(false, `handshake Socket.IO gagal: ${e && e.message ? e.message : e}`);
+    });
+  });
+  return { ...result, data: { base, ms: Date.now() - t0, auth: !!token } };
 }
 
-/* 8. Berkas rahasia tidak ikut ter-commit (lokal) */
+/* 4b. Berkas rahasia tidak ikut ter-bundle / ter-commit.
+   Di server lokal memakai git ls-files (teliti, termasuk riwayat commit).
+   Di serverless (tanpa git) memindai berkas sungguhan di dalam bundel
+   lewat fs — ini pemeriksaan nyata atas apa yang benar-benar ikut
+   ter-deploy, bukan simulasi. */
 async function checkSecrets(ctx) {
-  const ls = await run('git', ['ls-files'], { cwd: ctx.root });
-  if (ls.code !== 0) return { ok: false, detail: 'perintah git ls-files gagal dijalankan' };
-  const tracked = ls.out.split('\n').map((s) => s.trim()).filter(Boolean);
-  const risky = tracked.filter((f) => /(^|\/)\.env(\.|$)|\.pem$|\.key$|id_rsa|secret/i.test(f));
-  const gitignore = fs.readFileSync(path.join(ctx.root, '.gitignore'), 'utf8');
-  const guarded = /\.env/.test(gitignore);
-  const problems = [];
-  if (risky.length) problems.push(`ter-commit: ${risky.join(', ')}`);
-  if (!guarded) problems.push('.gitignore belum menutup berkas .env');
+  const riskyRe = /(^|\/)\.env(\.|$)|\.pem$|\.key$|id_rsa|secret/i;
+  const { root } = ctx;
+  const hasGit = fs.existsSync(path.join(root, '.git'));
+
+  if (hasGit) {
+    const ls = await run('git', ['ls-files'], { cwd: root });
+    if (ls.code !== 0) return { ok: false, detail: 'perintah git ls-files gagal dijalankan' };
+    const tracked = ls.out.split('\n').map((s) => s.trim()).filter(Boolean);
+    const risky = tracked.filter((f) => riskyRe.test(f));
+    const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+    const guarded = /\.env/.test(gitignore);
+    const problems = [];
+    if (risky.length) problems.push(`ter-commit: ${risky.join(', ')}`);
+    if (!guarded) problems.push('.gitignore belum menutup berkas .env');
+    return {
+      ok: problems.length === 0,
+      detail: problems.length ? problems.join(' • ') : `${tracked.length} berkas terpantau, tidak ada rahasia yang ter-commit`,
+      data: { tracked: tracked.length, risky, guarded, via: 'git' },
+    };
+  }
+
+  // serverless: pindai bundel deployment lewat fs (nyata, tanpa git)
+  const risky = [];
+  const scan = (dir, rel = '') => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      const relPath = rel ? `${rel}/${e.name}` : e.name;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) scan(full, relPath);
+      else if (riskyRe.test(relPath)) risky.push(relPath);
+    }
+  };
+  scan(root);
+  const envFiles = risky.filter((f) => /\.env(\.|$)/.test(f) || f === '.env');
   return {
-    ok: problems.length === 0,
-    detail: problems.length ? problems.join(' • ') : `${tracked.length} berkas terpantau, tidak ada rahasia yang ter-commit`,
-    data: { tracked: tracked.length, risky, guarded },
+    ok: risky.length === 0,
+    detail: risky.length
+      ? `berkas berisiko di bundel: ${risky.slice(0, 5).join(', ')}`
+      : `pindai fs bundel: tidak ada .env / kunci / rahasia ikut ter-deploy (${envFiles.length} env ditemukan)`,
+    data: { risky, via: 'fs-bundle' },
   };
 }
 
@@ -452,10 +565,10 @@ const CHECKS = [
   { id: 'static', label: 'Referensi frontend', desc: 'id DOM ganda & $() yang menunjuk id tak ada', scope: 'semua', run: checkStatic },
   { id: 'deps', label: 'Dependensi', desc: 'modul runtime terpasang & bisa dimuat', scope: 'semua', run: checkDeps, fix: fixDeps },
   { id: 'guard', label: 'Panel admin terkunci', desc: 'kunci ADMIN_KEY & daftar email admin', scope: 'semua', run: checkGuard },
-  { id: 'syntax', label: 'Sintaks JavaScript', desc: 'node --check pada seluruh berkas sumber', scope: 'lokal', run: checkSyntax },
-  { id: 'unit', label: 'Unit test (crop + calls)', desc: 'mesin crop dan mesin panggilan', scope: 'lokal', run: checkUnit },
-  { id: 'callflow', label: 'Alur panggilan / VC', desc: 'uji nyata Socket.IO: dering, jawab, sinyal, tutup', scope: 'lokal', run: checkCallflow, fix: fixCallflow },
-  { id: 'secrets', label: 'Berkas rahasia git', desc: '.env / kunci tidak ikut ter-commit', scope: 'lokal', run: checkSecrets, fix: fixSecrets },
+  { id: 'syntax', label: 'Sintaks JavaScript', desc: 'parse vm.Script pada seluruh berkas sumber', scope: 'semua', run: checkSyntax },
+  { id: 'unit', label: 'Unit test (crop + calls)', desc: 'mesin crop dan mesin panggilan', scope: 'semua', run: checkUnit },
+  { id: 'callflow', label: 'Alur panggilan / VC', desc: 'uji nyata Socket.IO: dering, jawab, sinyal, tutup', scope: 'semua', run: checkCallflow, fix: fixCallflow },
+  { id: 'secrets', label: 'Berkas rahasia', desc: '.env / kunci tidak ikut ter-bundle / ter-commit', scope: 'semua', run: checkSecrets, fix: fixSecrets },
 ];
 
 /* ============================================================

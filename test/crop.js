@@ -1,26 +1,12 @@
 'use strict';
 /* Test logika pemotong foto (public/js/app.js) tanpa browser.
    Blok fungsi cROP dievaluasi dengan DOM tiruan sehingga geometri
-   bingkai, clamp zoom/geser, dan koordinat ekspor benar-benar diuji. */
+   bingkai, clamp zoom/geser, dan koordinat ekspor benar-benar diuji.
+   Bisa dijalankan sendiri (node test/crop.js) maupun di-import oleh
+   mesin pemeriksaan admin yang memanggil run() tanpa mematikan proses. */
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-const start = SRC.indexOf('const CROP = {');
-const end = SRC.indexOf('/* ================= latar belakang chat');
-if (start < 0 || end < 0 || end <= start) {
-  console.error('blok pemotong foto tidak ditemukan di app.js');
-  process.exit(1);
-}
-const block = SRC.slice(start, end);
-
-let pass = 0;
-let fail = 0;
-const ok = (cond, label) => {
-  if (cond) { pass++; console.log('  ✓', label); }
-  else { fail++; console.log('  ✗ FAIL:', label); }
-};
 
 const drawn = [];
 const elements = {};
@@ -79,17 +65,34 @@ const sandbox = {
   Math, Promise, Number, String, console, setTimeout, clearTimeout,
 };
 
-const ctx = vm.createContext(sandbox);
-vm.runInContext(
-  `${block}\n;this.CROP=CROP;this.cropCenterRect=cropCenterRect;this.cropScales=cropScales;`
-  + 'this.cropClamp=cropClamp;this.cropZoomAt=cropZoomAt;this.cropResizeFrom=cropResizeFrom;'
-  + 'this.cropExport=cropExport;this.cropSync=cropSync;',
-  ctx,
-);
+async function run() {
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label) => {
+    if (cond) { pass++; console.log('  ✓', label); }
+    else { fail++; console.log('  ✗ FAIL:', label); }
+  };
 
-const S = sandbox;
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const start = SRC.indexOf('const CROP = {');
+  const end = SRC.indexOf('/* ================= latar belakang chat');
+  if (start < 0 || end < 0 || end <= start) {
+    fail++;
+    console.log('  ✗ FAIL: blok pemotong foto tidak ditemukan di app.js');
+    return { pass, fail };
+  }
+  const block = SRC.slice(start, end);
 
-(async () => {
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(
+    `${block}\n;this.CROP=CROP;this.cropCenterRect=cropCenterRect;this.cropScales=cropScales;`
+    + 'this.cropClamp=cropClamp;this.cropZoomAt=cropZoomAt;this.cropResizeFrom=cropResizeFrom;'
+    + 'this.cropExport=cropExport;this.cropSync=cropSync;',
+    ctx,
+  );
+
+  const S = sandbox;
+
   console.log('[1] Bingkai rasio bebas & rasio terkunci');
   S.CROP.stage = { w: 400, h: 300 };
   S.CROP.natural = [800, 600];
@@ -204,6 +207,16 @@ const S = sandbox;
     `titik di bawah kursor tetap di tempat (selisih ${Math.abs(ux - before.u).toFixed(3)})`);
   ok(s2 > 0.5, 'zoom benar-benar memperbesar');
 
-  console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
-  process.exit(fail ? 1 : 0);
-})().catch((e) => { console.error('TEST ERROR:', e); process.exit(1); });
+  return { pass, fail };
+}
+
+if (require.main === module) {
+  run()
+    .then((r) => {
+      console.log(`\n==== RESULT: ${r.pass} passed, ${r.fail} failed ====`);
+      process.exit(r.fail ? 1 : 0);
+    })
+    .catch((e) => { console.error('TEST ERROR:', e); process.exit(1); });
+}
+
+module.exports = { run };

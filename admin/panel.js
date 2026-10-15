@@ -109,11 +109,14 @@ function baseOf(req, opts) {
 }
 
 function ctxOf(req, opts) {
+  const header = String(req.get('authorization') || '');
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   return detectEnv({
     root: opts.root || process.cwd(),
     base: baseOf(req, opts),
     db: opts.db || db,
     adminEmails: auth.ADMIN_EMAILS,
+    token,
   });
 }
 

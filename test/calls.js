@@ -1,19 +1,22 @@
 'use strict';
 /* Unit test mesin panggilan: masa dering, terima/tutup, riwayat & pembersihan.
    Tanpa server — langsung ke lapisan database (SQLite WAL boleh dibuka
-   berbarengan dengan server yang sedang jalan). */
+   berbarengan dengan server yang sedang jalan).
+   Bisa dijalankan sendiri (node test/calls.js) maupun di-import oleh
+   mesin pemeriksaan admin yang memanggil run() tanpa mematikan proses. */
 const db = require('../server/db');
 const calls = require('../server/calls');
 
-let pass = 0, fail = 0;
-const ok = (cond, label) => {
-  if (cond) { pass++; console.log('  ✓', label); }
-  else { fail++; console.log('  ✗ FAIL:', label); }
-};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = (n) => `unit-user-${n}-${Date.now()}`;
 
-async function main() {
+async function run() {
+  let pass = 0, fail = 0;
+  const ok = (cond, label) => {
+    if (cond) { pass++; console.log('  ✓', label); }
+    else { fail++; console.log('  ✗ FAIL:', label); }
+  };
+
   await db.ready();
 
   console.log('\n[C1] Masa dering & pembuatan panggilan');
@@ -91,11 +94,19 @@ async function main() {
   // rapikan baris uji yang masih hidup
   for (const id of [id1, id2, id3, id4]) await calls.remove(id);
 
-  console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);
-  process.exit(fail ? 1 : 0);
+  return { pass, fail };
 }
 
-main().catch((err) => {
-  console.error('CALLS TEST CRASH:', err);
-  process.exit(2);
-});
+if (require.main === module) {
+  run()
+    .then((r) => {
+      console.log(`\n==== RESULT: ${r.pass} passed, ${r.fail} failed ====`);
+      process.exit(r.fail ? 1 : 0);
+    })
+    .catch((err) => {
+      console.error('CALLS TEST CRASH:', err);
+      process.exit(2);
+    });
+}
+
+module.exports = { run };
