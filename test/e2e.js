@@ -353,8 +353,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     'sesi lama benar-benar diputus server saat login/blokir');
   ok(dbSrc.includes('BEGIN IMMEDIATE') && dbSrc.includes('ROLLBACK'),
     'transaksi SQLite dibuka & di-rollback secara eksplisit');
-  ok(idxSrc.includes('Bot tidak dapat ditambahkan ke grup'),
-    'pembuatan grup menolak anggota bot');
+  ok(idxSrc.includes('Memasang bot di grup khusus pengguna premium') && idxSrc.includes('maksimal 1 bot per grup'),
+    'pemasangan bot di grup dibatasi admin/premium (maks 1 bot)');
+  ok(idxSrc.includes("SELECT COUNT(*) AS n FROM chat_members m JOIN users u ON u.id = m.user_id")
+    && idxSrc.includes('u.is_bot = 1'),
+    'grup hanya boleh memiliki satu bot');
   ok(idxSrc.includes('beforeId') && jsText.includes('beforeId='),
     'gulir riwayat memakai kursor keyset (created_at, id)');
   ok(jsText.includes('connBar') && jsText.includes("socket.on('disconnect'"),
@@ -1072,6 +1075,127 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chatsPasca = await api('/api/chats', { token: tokPrem });
   ok(!(chatsPasca.data.chats || []).some((c) => c.peer && c.peer.isBot),
     'chat bot disembunyikan dari daftar chat user non-premium');
+
+  // ---- bot di grup: khusus admin/premium, maks 1 bot, balas saat disebut ----
+  {
+    // premium dicabut di atas -> grant ulang; token tokPrem lama masih sah
+    // (revoke tidak mengganti sesi — jangan login ulang agar [30] tidak rusak)
+    await admApi('/api/admin/premium', {
+      method: 'POST',
+      body: { email: premEmail, plan: planPrem ? planPrem.id : '' },
+    });
+    const tokPrem2 = tokPrem;
+
+    // user non-premium (Luring, sesi lama offSignup) tidak boleh memasang bot
+    const tokLuring = offSignup.data.token;
+    const rgFree = await api('/api/chats/group', {
+      method: 'POST', token: tokLuring,
+      body: { name: `Grup Free ${stamp}`, memberIds: [userA.id] },
+    });
+    ok(rgFree.status === 201, 'user non-premium tetap bisa membuat grup');
+    const gidFree = rgFree.data.chat.id;
+    const addBotFree = await api(`/api/chats/${gidFree}/members`, {
+      method: 'POST', token: tokLuring, body: { userId: 'bot-verif-am' },
+    });
+    ok(addBotFree.status === 403 && /premium/i.test(addBotFree.data.error || ''),
+      'user non-premium ditolak memasang bot di grup');
+
+    // user non-premium membuat grup berisi bot saat membuat -> ditolak
+    const rgFreeBot = await api('/api/chats/group', {
+      method: 'POST', token: tokLuring,
+      body: { name: `Grup FreeBot ${stamp}`, memberIds: [userA.id, 'bot-verif-am'] },
+    });
+    ok(rgFreeBot.status === 403, 'pembuat non-premium tidak bisa membuat grup berisi bot');
+
+    // premium: buat grup lalu pasang bot
+    const rgPrem = await api('/api/chats/group', {
+      method: 'POST', token: tokPrem2,
+      body: { name: `Grup Bot ${stamp}`, memberIds: [offId] },
+    });
+    ok(rgPrem.status === 201, 'user premium membuat grup');
+    const gidBot = rgPrem.data.chat.id;
+    const addBot = await api(`/api/chats/${gidBot}/members`, {
+      method: 'POST', token: tokPrem2, body: { userId: 'bot-verif-am' },
+    });
+    ok(addBot.status === 201, 'user premium memasang bot ke grup');
+    const addBot2 = await api(`/api/chats/${gidBot}/members`, {
+      method: 'POST', token: tokPrem2, body: { userId: 'bot-ai' },
+    });
+    ok(addBot2.status === 400 && /sudah memiliki bot/i.test(addBot2.data.error || ''),
+      'grup hanya boleh memiliki satu bot');
+    const rMembersBot = await api(`/api/chats/${gidBot}/members`, { token: tokPrem2 });
+    ok(rMembersBot.data.members.some((m) => m.isBot === true), 'daftar anggota menandai bot');
+
+    // serialisasi chat memuat info bot grup
+    const chatsPrem2 = await api('/api/chats', { token: tokPrem2 });
+    const gBotChat = (chatsPrem2.data.chats || []).find((c) => c.id === gidBot);
+    ok(gBotChat && gBotChat.bot && gBotChat.bot.id === 'bot-verif-am',
+      'chat grup memuat kartu bot yang terpasang');
+
+    // anggota non-premium (Luring) mengirim pesan biasa -> pesan diterima, bot DIAM
+    const sockL2 = io(BASE, { auth: { token: tokLuring } });
+    await new Promise((r) => sockL2.on('connect', r));
+    const sockP2 = io(BASE, { auth: { token: tokPrem2 } });
+    await new Promise((r) => sockP2.on('connect', r));
+
+    // tunggu khusus balasan bot (senderId bot) — bukan pesan anggota biasa
+    const waitBotMsg = (sock, botId, timeout) => new Promise((resolve) => {
+      const h = (m) => {
+        if (!m || m.senderId !== botId) return;
+        clearTimeout(t);
+        sock.off('message:new', h);
+        resolve(m);
+      };
+      const t = setTimeout(() => { sock.off('message:new', h); resolve(null); }, timeout);
+      sock.on('message:new', h);
+    });
+
+    const noBotReply = waitBotMsg(sockP2, 'bot-verif-am', 5000);
+    const ackFreeMsg = await emitAck(sockL2, 'message:send', {
+      chatId: gidBot, type: 'text', body: 'halo semua',
+    });
+    ok(ackFreeMsg && ackFreeMsg.ok === true, 'anggota non-premium tetap bisa mengirim pesan di grup berbot');
+    ok(!(await noBotReply), 'bot tidak membalas anggota non-premium');
+
+    // anggota non-premium menyebut bot -> tetap DIAM
+    const noBotReply2 = waitBotMsg(sockP2, 'bot-verif-am', 5000);
+    await emitAck(sockL2, 'message:send', {
+      chatId: gidBot, type: 'text', body: '@Verif AM Prem menu',
+    });
+    ok(!(await noBotReply2), 'bot tidak merespons sebutan dari anggota non-premium');
+
+    // premium menyebut bot -> bot membalas
+    const botReplyWait = waitEvent(sockP2, 'message:new', 15000).catch(() => null);
+    const ackPremMsg = await emitAck(sockP2, 'message:send', {
+      chatId: gidBot, type: 'text', body: '@Verif AM Prem menu',
+    });
+    ok(ackPremMsg && ackPremMsg.ok === true, 'pesan premium ke grup diterima');
+    const gBotReply = await botReplyWait;
+    ok(gBotReply && gBotReply.senderId === 'bot-verif-am' && /VERIF AM PREM/.test(gBotReply.body),
+      `bot membalas anggota premium yang menyebutnya di grup${gBotReply ? '' : ' (timeout)'}`);
+
+    // premium membalas pesan bot (tanpa sebut) -> bot tetap merespons
+    if (gBotReply) {
+      const replyWait = waitEvent(sockP2, 'message:new', 15000).catch(() => null);
+      await emitAck(sockP2, 'message:send', {
+        chatId: gidBot, type: 'text', body: 'menu', replyTo: gBotReply.id,
+      });
+      const gBotReply2 = await replyWait;
+      ok(gBotReply2 && gBotReply2.senderId === 'bot-verif-am',
+        `bot merespons balasan premium ke pesan bot${gBotReply2 ? '' : ' (timeout)'}`);
+    }
+
+    // admin mengeluarkan bot
+    const kickBot = await api(`/api/chats/${gidBot}/members/bot-verif-am`, {
+      method: 'DELETE', token: tokPrem2,
+    });
+    ok(kickBot.status === 200, 'admin mengeluarkan bot dari grup');
+    const rMembersNoBot = await api(`/api/chats/${gidBot}/members`, { token: tokPrem2 });
+    ok(!rMembersNoBot.data.members.some((m) => m.isBot), 'bot hilang dari daftar anggota');
+
+    sockL2.close();
+    sockP2.close();
+  }
 
   await admLogin(); // sesi admin segar sebelum socket bot dipasang
   const botSock = io(BASE, { auth: { token: admToken } });

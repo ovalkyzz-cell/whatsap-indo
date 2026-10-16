@@ -926,11 +926,12 @@ app.post('/api/chats/group', auth.requireAuth, ah(async (req, res) => {
   if (found.length !== memberIds.length) {
     return res.status(400).json({ error: 'Ada anggota yang tidak ditemukan' });
   }
-  // bot hanya boleh di chat pribadi — kalau ikut terdaftar di grup, seluruh
-  // pesan grup jadi terkunci oleh kuota bot
-  if (found.some((u) => bots.isBot(u))) {
-    return res.status(403).json({ error: 'Bot tidak dapat ditambahkan ke grup. Gunakan chat pribadi dengan bot.' });
+  // bot di grup: khusus pembuat grup admin/premium, maksimal 1 bot per grup
+  const botMembers = found.filter((u) => bots.isBot(u));
+  if (botMembers.length > 1 || (botMembers.length && !canUseBots(req.user))) {
+    return res.status(403).json({ error: 'Memasang bot di grup khusus pengguna premium (maksimal 1 bot per grup).' });
   }
+  for (const b of botMembers) await assertBotAllowed(req.user, b.id);
 
   const id = await db.transaction(async () => {
     const chatId = crypto.randomUUID();
@@ -1020,7 +1021,19 @@ app.post('/api/chats/:id/members', auth.requireAuth, ah(async (req, res) => {
   const target = await db.get('SELECT * FROM users WHERE id = ?', userId);
   if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
   if (bots.isBot(target)) {
-    return res.status(403).json({ error: 'Bot tidak dapat ditambahkan ke grup. Gunakan chat pribadi dengan bot.' });
+    // pasang bot di grup: khusus admin/premium, maksimal 1 bot, sesuai cakupan paket
+    if (!canUseBots(req.user)) {
+      return res.status(403).json({ error: 'Memasang bot di grup khusus admin dan pengguna premium.' });
+    }
+    await assertBotAllowed(req.user, target.id);
+    const botCount = await db.get(
+      `SELECT COUNT(*) AS n FROM chat_members m JOIN users u ON u.id = m.user_id
+       WHERE m.chat_id = ? AND u.is_bot = 1`,
+      chat.id
+    );
+    if (Number(botCount.n) >= 1) {
+      return res.status(400).json({ error: 'Grup sudah memiliki bot. Keluarkan bot lama terlebih dahulu.' });
+    }
   }
   const existing = await db.get('SELECT 1 AS x FROM chat_members WHERE chat_id = ? AND user_id = ?', chat.id, userId);
   if (existing) return res.json({ ok: true, already: true });
@@ -1034,6 +1047,30 @@ app.post('/api/chats/:id/members', auth.requireAuth, ah(async (req, res) => {
   );
   await emitToUsers([userId, ...(await helpers.getChatMemberIds(chat.id))], 'chat:updated', { chatId: chat.id });
   res.status(201).json({ ok: true });
+}));
+
+// keluarkan anggota (termasuk bot) — khusus admin grup
+app.delete('/api/chats/:id/members/:userId', auth.requireAuth, ah(async (req, res) => {
+  const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
+  if (!chat || chat.type !== 'group') return res.status(404).json({ error: 'Grup tidak ditemukan' });
+  if (!(await helpers.isGroupAdmin(chat.id, req.user.id))) {
+    return res.status(403).json({ error: 'Hanya admin grup yang bisa mengeluarkan anggota' });
+  }
+  const targetId = String(req.params.userId || '');
+  if (!targetId || targetId === req.user.id) {
+    return res.status(400).json({ error: 'Tidak bisa mengeluarkan diri sendiri. Gunakan tombol Keluar.' });
+  }
+  if (!(await helpers.isMember(chat.id, targetId))) {
+    return res.status(404).json({ error: 'Anggota tidak ditemukan di grup ini' });
+  }
+  await db.run('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?', chat.id, targetId);
+  const members = await helpers.getChatMemberIds(chat.id);
+  if (!members.length) {
+    await db.run('DELETE FROM chats WHERE id = ?', chat.id);
+  } else {
+    await emitToUsers([...members, targetId], 'chat:updated', { chatId: chat.id, removed: targetId });
+  }
+  res.json({ ok: true });
 }));
 
 app.post('/api/chats/:id/leave', auth.requireAuth, ah(async (req, res) => {
@@ -2530,7 +2567,7 @@ async function deliverBotMessage(bot, chatId, text, targets, media) {
 }
 
 // jalur balasan bot: indikator mengetik -> proses perintah (API api-mazval) -> kirim balasan
-async function respondToBot({ bot, chatId, members, sender, userMessageId, text, type }) {
+async function respondToBot({ bot, chatId, members, sender, userMessageId, text, type, replyTo }) {
   const targets = members.filter((uid) => uid !== bot.id);
   if (!targets.length) return;
 
@@ -2547,7 +2584,26 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
     await markBotReceipt(userMessageId, bot.id, chatId, sender.id);
 
     const chat = await db.get('SELECT type FROM chats WHERE id = ?', chatId);
-    if (chat && chat.type !== 'direct') return; // bot tidak membalas di grup
+    const isGroup = !!chat && chat.type === 'group';
+    if (chat && chat.type !== 'direct' && !isGroup) return;
+
+    if (isGroup) {
+      // grup: hanya anggota premium yang boleh memakai bot (gerbang handleSend),
+      // dan hanya saat bot disebut (@NamaBot / @bot) atau pesan membalas pesan bot —
+      // supaya balasan bot tidak membanjiri obrolan grup
+      if (!canUseBots(sender)) return;
+      const nameRe = String(bot.name || '').trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      const mentionRe = nameRe ? new RegExp(`@(?:${nameRe}|bot)\\b`, 'i') : /@bot\b/i;
+      const mentioned = mentionRe.test(String(text || ''));
+      let repliedToBot = false;
+      if (!mentioned && replyTo) {
+        const orig = await db.get('SELECT sender_id FROM messages WHERE id = ?', String(replyTo));
+        repliedToBot = !!(orig && orig.sender_id === bot.id);
+      }
+      if (!mentioned && !repliedToBot) return;
+      if (mentioned) text = String(text || '').replace(mentionRe, ' ').replace(/\s+/g, ' ').trim();
+    }
 
     await emitToUsers(targets, 'typing', { chatId, userId: bot.id, typing: true });
     // pertahankan indikator "mengetik" selama bot memproses (mis. menunggu jawaban AI)
@@ -2606,18 +2662,28 @@ async function handleSend(user, payload) {
     throw new Error('Bukan anggota chat ini');
   }
 
-  // bot internal: akses dibatasi untuk admin & pengguna premium sesuai paketnya
+  // bot internal: di chat pribadi akses dibatasi admin/premium; di grup semua
+  // anggota tetap boleh mengirim pesan — bot hanya membalas anggota premium
   const botPeer = await bots.peerInChat(chatId);
-  if (botPeer && !canUseBots(user)) {
-    throw new Error('Bot hanya dapat digunakan oleh admin dan pengguna premium.');
-  }
+  const chatMeta = await db.get('SELECT type, name FROM chats WHERE id = ?', chatId);
+  const isGroupChat = !!(chatMeta && chatMeta.type === 'group');
+  let botWillReply = false;
   if (botPeer) {
     const excluded = await excludedBots(user);
-    if (excluded.has(botPeer.id)) {
-      const plan = await settings.planOf(user);
-      throw new Error(
-        `Bot ini tidak termasuk paket ${plan ? plan.label : 'Anda'}. Buka menu Paket & Harga untuk upgrade.`
-      );
+    if (!isGroupChat) {
+      if (!canUseBots(user)) {
+        throw new Error('Bot hanya dapat digunakan oleh admin dan pengguna premium.');
+      }
+      if (excluded.has(botPeer.id)) {
+        const plan = await settings.planOf(user);
+        throw new Error(
+          `Bot ini tidak termasuk paket ${plan ? plan.label : 'Anda'}. Buka menu Paket & Harga untuk upgrade.`
+        );
+      }
+      botWillReply = true;
+    } else {
+      // grup: balas hanya untuk anggota premium/admin yang paketnya mencakup bot
+      botWillReply = canUseBots(user) && !excluded.has(botPeer.id);
     }
   }
 
@@ -2677,8 +2743,30 @@ async function handleSend(user, payload) {
     });
   }
 
-  // potong kuota tepat sebelum pesan disimpan (habis -> token undangan -> ditolak)
-  if (botPeer) await consumeBotQuota(user);
+  // grup: bot hanya aktif saat disebut (@NamaBot / @bot) atau pesan membalas pesan bot
+  if (botWillReply && isGroupChat) {
+    const nameRe = String(botPeer.name || '').trim()
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    const mentionRe = nameRe ? new RegExp(`@(?:${nameRe}|bot)\\b`, 'i') : /@bot\b/i;
+    const mentioned = cleanType === 'text' && mentionRe.test(text);
+    let repliedToBot = false;
+    if (!mentioned && cleanReplyTo) {
+      const orig = await db.get('SELECT sender_id FROM messages WHERE id = ?', cleanReplyTo);
+      repliedToBot = !!(orig && orig.sender_id === botPeer.id);
+    }
+    botWillReply = mentioned || repliedToBot;
+  }
+
+  // potong kuota tepat sebelum pesan disimpan (habis -> token undangan -> ditolak).
+  // di grup kuota habis tidak memblokir pesan anggota — bot hanya berhenti membalas
+  if (botWillReply) {
+    try {
+      await consumeBotQuota(user);
+    } catch (err) {
+      if (!isGroupChat) throw err;
+      botWillReply = false;
+    }
+  }
 
   // --- kuota storage NYATA: reservasi atomik ukuran media sebelum pesan disimpan.
   // Hanya media unggahan (foto/video/audio/file) menempati kuota; pesan teks
@@ -2748,8 +2836,6 @@ async function handleSend(user, payload) {
 
   // penerima yang tidak punya koneksi aktif -> notifikasi push (aplikasi tertutup/offline)
   const offline = members.filter((uid) => uid !== user.id && !deliveredTo.includes(uid));
-  const chatMeta = await db.get('SELECT type, name FROM chats WHERE id = ?', chatId);
-  const isGroupChat = chatMeta && chatMeta.type === 'group';
   // tag semua anggota: pesan grup berisi @all/@semua/@everyone -> notifikasi
   // diarahkan ke SELURUH anggota (bukan hanya yang offline)
   const mentionsAll = isGroupChat
@@ -2786,7 +2872,7 @@ async function handleSend(user, payload) {
 
   await emitToUsers(members, 'chat:updated', { chatId });
 
-  if (botPeer) {
+  if (botWillReply) {
     void respondToBot({
       bot: botPeer,
       chatId,
@@ -2795,6 +2881,7 @@ async function handleSend(user, payload) {
       userMessageId: id,
       text: cleanType === 'text' ? text : '',
       type: cleanType,
+      replyTo: cleanReplyTo,
     });
   }
 

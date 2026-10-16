@@ -204,7 +204,8 @@ function serializeUser(row, viewerId, opts = {}) {
 async function loadChatBundle(rows, viewerId) {
   const bundle = {
     peers: new Map(), last: new Map(), unread: new Map(), statuses: new Map(),
-    counts: new Map(), roles: new Map(), archived: new Map(), viewerId,
+    counts: new Map(), roles: new Map(), archived: new Map(), bots: new Map(),
+    viewerId,
   };
   const chatIds = rows.map((r) => r.id);
   if (!chatIds.length) return bundle;
@@ -219,6 +220,9 @@ async function loadChatBundle(rows, viewerId) {
   );
   for (const row of peerRows) {
     if (!bundle.peers.has(row.chat_id)) bundle.peers.set(row.chat_id, row);
+    // anggota bot di grup -> disimpan terpisah supaya frontend bisa menampilkan
+    // "grup punya bot" & mengaktifkan UI @mention
+    if (Number(row.is_bot) === 1) bundle.bots.set(row.chat_id, row);
   }
 
   const countRows = await db.all(
@@ -269,6 +273,7 @@ function buildChat(row, bundle, online) {
   const peer = bundle.peers.get(row.id) || null;
   const last = bundle.last.get(row.id) || null;
   const isGroup = row.type === 'group';
+  const botRow = isGroup ? bundle.bots.get(row.id) || null : null;
   return {
     id: row.id,
     type: row.type,
@@ -277,6 +282,11 @@ function buildChat(row, bundle, online) {
     memberCount: bundle.counts.get(row.id) || 0,
     role: bundle.roles.get(row.id) || null,
     createdBy: row.created_by || null,
+    // bot yang terpasang di grup (null kalau tidak ada) — frontend memakai ini
+    // untuk menampilkan badge bot & pintu @mention di composer
+    bot: botRow
+      ? { id: botRow.id, name: botRow.name, avatar: botRow.avatar || null, verified: true }
+      : null,
     peer: peer
       ? {
           ...serializeUser(peer, bundle.viewerId, { online: !!(online && online.has(peer.id)), premium: false }),

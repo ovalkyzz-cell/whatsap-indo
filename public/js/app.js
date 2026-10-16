@@ -565,7 +565,8 @@ function updateChatStatus() {
   if (t && Object.keys(t).length) {
     $('chatStatus').textContent = 'sedang mengetik...';
   } else if (chat.type === 'group') {
-    $('chatStatus').textContent = `${chat.memberCount || 0} anggota${chat.role === 'admin' ? ' • Anda admin' : ''}`;
+    const botNote = chat.bot ? ` • 🤖 ${chat.bot.name}` : '';
+    $('chatStatus').textContent = `${chat.memberCount || 0} anggota${chat.role === 'admin' ? ' • Anda admin' : ''}${botNote}`;
   } else if (peer && peer.online) {
     $('chatStatus').textContent = 'online';
   } else if (peer) {
@@ -6372,6 +6373,29 @@ async function openGroupInfo() {
           <div class="search-wrap"><input type="search" id="giSearch" placeholder="Cari nama / email..." /></div>
           <div class="chat-list" id="giResults"></div>
         </div>` : ''}
+      <div class="profile-section" id="giBotSection">
+        <span class="ps-label">Bot grup</span>
+        ${(() => {
+          const bot = members.find((m) => m.isBot);
+          if (bot) {
+            return `
+              <div class="member-item">
+                <div class="avatar"><span>🤖</span></div>
+                <div class="member-meta">
+                  <strong>${esc(bot.name)}${badge(true)}</strong>
+                  <small>Bot aktif di grup ini</small>
+                </div>
+                ${isAdmin ? `<button class="icon-btn" id="giBotRemove" type="button" title="Keluarkan bot"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-exit" /></svg></button>` : ''}
+              </div>
+              <p class="wp-hint">Sebut bot dengan @${esc(bot.name)} atau balas pesan bot untuk memakainya. Hanya anggota premium yang bisa memanggil bot.</p>`;
+          }
+          if (!isAdmin) return `<p class="wp-hint">Belum ada bot di grup ini. Hanya admin grup yang bisa memasang bot.</p>`;
+          return `
+            <p class="wp-hint">Pasang satu bot untuk memperkaya grup — khusus admin &amp; pengguna premium. Sebut dengan @NamaBot untuk memakainya.</p>
+            <button class="btn-ghost" id="giBotAdd" type="button">🤖 Pasang bot ke grup</button>
+            <div class="chat-list hidden" id="giBotPicker"></div>`;
+        })()}
+      </div>
       <div class="profile-section" id="giInviteSection">
         <span class="ps-label">Link undangan grup</span>
         <div class="invite-row">
@@ -6393,14 +6417,69 @@ async function openGroupInfo() {
     const list = body.querySelector('#giMembers');
     list.innerHTML = members.map((m) => `
       <div class="member-item">
-        <div class="avatar"><span>${esc((m.name || '?').charAt(0).toUpperCase())}</span></div>
+        <div class="avatar"><span>${m.isBot ? '🤖' : esc((m.name || '?').charAt(0).toUpperCase())}</span></div>
         <div class="member-meta">
-          <strong>${esc(m.name)}${m.id === S.me.id ? ' (Anda)' : ''}</strong>
-          <small>${esc(m.email)}${m.online ? ' • online' : ''}</small>
+          <strong>${esc(m.name)}${m.isBot ? badge(true) : ''}${m.id === S.me.id ? ' (Anda)' : ''}</strong>
+          <small>${m.isBot ? 'Bot' : esc(m.email)}${m.online ? ' • online' : ''}</small>
         </div>
         ${m.role === 'admin' ? '<span class="role-badge">Admin</span>' : ''}
       </div>`).join('');
-    list.querySelectorAll('.avatar').forEach((av, i) => setAvatar(av, members[i]));
+    list.querySelectorAll('.avatar').forEach((av, i) => { if (!members[i].isBot) setAvatar(av, members[i]); });
+
+    // kelola bot grup: pasang (admin premium) / keluarkan (admin)
+    const botRemoveBtn = body.querySelector('#giBotRemove');
+    if (botRemoveBtn) {
+      botRemoveBtn.addEventListener('click', async () => {
+        const bot = members.find((m) => m.isBot);
+        if (!bot) return;
+        if (!confirm(`Keluarkan bot ${bot.name} dari grup?`)) return;
+        try {
+          await api(`/api/chats/${chat.id}/members/${bot.id}`, { method: 'DELETE' });
+          await loadChats();
+          toast('Bot dikeluarkan dari grup');
+          openGroupInfo();
+        } catch (err) { toast(err.message); }
+      });
+    }
+    const botAddBtn = body.querySelector('#giBotAdd');
+    if (botAddBtn) {
+      botAddBtn.addEventListener('click', async () => {
+        const picker = body.querySelector('#giBotPicker');
+        if (!picker) return;
+        if (!picker.classList.contains('hidden')) { picker.classList.add('hidden'); return; }
+        picker.classList.remove('hidden');
+        picker.innerHTML = '<div class="empty-state">Memuat daftar bot…</div>';
+        try {
+          const data = await api('/api/bots');
+          const all = (data.groups || []).flatMap((g) => g.bots);
+          picker.innerHTML = all.map((b) => `
+            <div class="chat-item" data-gbot="${esc(b.id)}">
+              <div class="avatar"><span>🤖</span></div>
+              <div class="chat-item-body">
+                <div class="chat-item-top"><strong>${esc(b.name)}</strong></div>
+                <div class="chat-item-bottom"><div class="chat-item-preview">${esc(b.about || b.tagline || '')}</div></div>
+              </div>
+              <span class="mi-arrow"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-plus" /></svg></span>
+            </div>`).join('');
+          picker.querySelectorAll('[data-gbot]').forEach((el) => {
+            el.addEventListener('click', async () => {
+              try {
+                await api(`/api/chats/${chat.id}/members`, { method: 'POST', body: { userId: el.dataset.gbot } });
+                await loadChats();
+                toast('Bot dipasang di grup ✓');
+                openGroupInfo();
+              } catch (err2) { toast(err2.message); }
+            });
+          });
+        } catch (err) {
+          if (err.status === 403 && err.data && err.data.locked) {
+            picker.innerHTML = '<div class="empty-state">Pemasangan bot khusus pengguna premium. Buka menu Paket &amp; Harga untuk upgrade.</div>';
+          } else {
+            picker.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
+          }
+        }
+      });
+    }
 
     if (isAdmin) {
       const avBtn = body.querySelector('#giAvatarBtn');
