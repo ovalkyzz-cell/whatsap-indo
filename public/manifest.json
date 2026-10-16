@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Whatsap Indo",
-  "short_name": "Whatsap",
-  "description": "Chat real-time, kirim foto, video, dan file hingga 2GB",
+  "name": "RTC-Core (Real-Time Chat Core)",
+  "short_name": "RTC-Core",
+  "description": "Chat real-time terenkripsi, kirim foto, video, dan file hingga 2GB",
   "lang": "id",
   "dir": "ltr",
   "start_url": "/",

@@ -560,7 +560,7 @@ async function storeRemoteFile(url, kind, opts) {
   let res;
   try {
     res = await fetch(String(url), {
-      headers: { 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: '*/*' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (RTCCore Bot)', Accept: '*/*' },
       signal: AbortSignal.timeout(timeout),
       redirect: 'follow',
     });

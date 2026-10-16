@@ -11,6 +11,12 @@ const antispam = require('./antispam');
 
 const JWT_SECRET = process.env.JWT_SECRET || resolveSecret();
 const TOKEN_TTL = '30d';
+// Klaim audience/issuer menempel di tiap token: token dari penerbit lain
+// ditolak meski secret kebetulan sama. Algoritma dipaku (anti "alg:none"
+// / penggantian algoritme yang menyebabkan token dipalsukan).
+const JWT_AUD = 'rtc-core-app';
+const JWT_ISS = 'rtc-core';
+const JWT_ALG = 'HS256';
 
 function resolveSecret() {
   if (process.env.VERCEL) {
@@ -124,7 +130,7 @@ async function register({ email, name, password, ref }, meta = {}) {
     if (existing) throw httpError(409, 'Email sudah terdaftar');
 
     const id = crypto.randomUUID();
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 12);
     const now = Date.now();
     // akun baru wajib disetujui admin lebih dulu, kecuali email admin/verifikasi
     const status = ADMIN_EMAILS.includes(email.trim().toLowerCase()) ? 'active' : 'pending';
@@ -240,9 +246,11 @@ function cleanMeta(value, max) {
 }
 
 function sign(row) {
-  return jwt.sign({ sub: row.id, email: row.email, sid: row.session_id || '' }, JWT_SECRET, {
-    expiresIn: TOKEN_TTL,
-  });
+  return jwt.sign(
+    { sub: row.id, email: row.email, sid: row.session_id || '' },
+    JWT_SECRET,
+    { expiresIn: TOKEN_TTL, algorithm: JWT_ALG, issuer: JWT_ISS, audience: JWT_AUD }
+  );
 }
 
 // pengecekan tunggal dipakai bersama oleh HTTP (requireAuth) dan socket handshake
@@ -265,7 +273,10 @@ function sessionCheck(payload, row) {
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    // Algoritma dipaku (HS256) — token "alg:none" / algoritme lain langsung ditolak.
+    // Klaim issuer/audience tidak dipaksakan agar sesi lama tetap sah (tanpa
+    // logout massal); token baru sudah membawa kedua klaim tersebut.
+    return jwt.verify(token, JWT_SECRET, { algorithms: [JWT_ALG] });
   } catch {
     return null;
   }

@@ -208,7 +208,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('\n[9] Static frontend');
   const idx = await fetch(BASE + '/');
   const html = await idx.text();
-  ok(idx.status === 200 && html.includes('Whatsap Indo'), 'index.html served');
+  ok(idx.status === 200 && html.includes('RTC-Core'), 'index.html served');
   const js = await fetch(BASE + '/js/app.js');
   ok(js.status === 200, 'app.js served');
   const jsText = await js.text();
@@ -1283,7 +1283,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await new Promise((r) => feedSock.on('connect', r));
   }
   ok(feedSock.connected === true, 'socket admin uji terhubung saat [27]');
-  const cariBot = await admApi('/api/users/search?q=bot.whatsap-indo');
+  const cariBot = await admApi('/api/users/search?q=bot.rtc-core');
   const daftarBot = (cariBot.data.users || []).filter((u) => u.isBot);
   ok(daftarBot.length === 69, `terdeteksi 69 bot admin (dapat ${daftarBot.length})`);
   ok(daftarBot.every((u) => u.verified === true), 'seluruh bot terverifikasi');

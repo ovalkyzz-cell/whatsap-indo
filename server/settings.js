@@ -9,7 +9,7 @@ const EXCLUSIVE_BOTS = ['bot-verif-am', 'bot-nik', 'bot-pos', 'bot-wilayah', 'bo
 // kuota storage (byte) untuk akun tanpa paket aktif
 const FREE_STORAGE = 2 * 1000 ** 3; // 2 GB
 
-// daftar paket premium resmi Whatsap Indo (judul/harga/limit/storage bisa diedit admin)
+// daftar paket premium resmi RTC-Core (judul/harga/limit/storage bisa diedit admin)
 // storageLimit dalam byte; foto/video/file yang dikirim menempati kuota ini secara nyata
 const DEFAULT_PLANS = [
   { id: 'harian', label: 'Harian', days: 1, price: 1000, dailyLimit: 50, storageLimit: 10 * 1000 ** 3, excluded: [...EXCLUSIVE_BOTS], permanent: false },

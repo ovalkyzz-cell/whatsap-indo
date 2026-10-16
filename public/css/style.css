@@ -34,6 +34,15 @@
   --wa-thumb: rgba(11, 20, 26, .2);
   --wa-toast: #111b21;
   --wa-chat-pattern: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23d6cdc0' fill-opacity='0.35'%3E%3Cpath d='M10 10h5v5h-5zM30 20h4v4h-4zM55 40h6v6h-6zM20 55h5v5h-5zM65 15h4v4h-4z'/%3E%3C/g%3E%3C/svg%3E");
+
+  /* ---------- sistem motion (konsistensi easing & durasi) ---------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+  --dur-fast: 0.14s;
+  --dur-med: 0.24s;
+  --dur-slow: 0.38s;
+
   color-scheme: light;
 }
 
@@ -77,13 +86,22 @@ input, textarea { font: inherit; }
   background: linear-gradient(160deg, var(--wa-teal-dark) 0%, var(--wa-teal-deep) 100%);
 }
 .auth-hero { text-align: center; color: #fff; }
-.auth-logo { font-size: 64px; }
-.auth-hero h1 { font-size: 34px; font-weight: 600; margin-top: 8px; }
-.auth-hero p { opacity: .85; margin-top: 8px; }
+.auth-logo { font-size: 64px; animation: heroPop 0.6s var(--ease-spring) both; }
+.auth-hero h1 { font-size: 34px; font-weight: 600; margin-top: 8px; letter-spacing: -0.4px; animation: fadeUp 0.5s var(--ease-out) 0.08s both; }
+.auth-tag {
+  display: inline-block; margin-top: 6px; font-size: 12.5px; font-weight: 600;
+  letter-spacing: 2.5px; text-transform: uppercase; opacity: 0.9;
+  padding: 3px 12px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px;
+  animation: fadeUp 0.5s var(--ease-out) 0.16s both;
+}
+.auth-hero p { opacity: .85; margin-top: 8px; animation: fadeUp 0.5s var(--ease-out) 0.22s both; }
 .auth-copy { font-size: 12.5px; letter-spacing: .3px; opacity: .7 !important; margin-top: 14px !important; }
+@keyframes heroPop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes cardIn { from { opacity: 0; transform: translateY(16px) scale(0.98); } to { opacity: 1; transform: none; } }
 .auth-card {
   background: var(--wa-panel); border-radius: 16px; padding: 26px;
   width: 100%; max-width: 400px; box-shadow: var(--shadow);
+  animation: cardIn 0.55s var(--ease-out) 0.18s both;
 }
 .auth-tabs { display: flex; border-bottom: 1px solid var(--wa-border); margin-bottom: 20px; }
 .auth-tab {
@@ -1791,7 +1809,14 @@ html[data-theme="dark"] .msg-text a { color: #53bdeb; }
   box-shadow: 0 1px 1px rgba(11, 20, 26, .1);
 }
 @keyframes shimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
-.skeleton { animation: pulse 1.5s ease-in-out infinite; border-radius: 8px; }
+/* skeleton memakai shimmer halus (lebih rapi daripada pulse polos) */
+.skeleton {
+  border-radius: 8px; position: relative; overflow: hidden;
+  background-color: var(--wa-chip);
+  background-image: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .55) 50%, transparent 70%);
+  background-size: 220% 100%; animation: shimmer 1.35s linear infinite;
+  color: transparent;
+}
 @keyframes pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 
 /* ================= drawer lebar: paket / undang teman / tentang ================= */
@@ -2591,3 +2616,17 @@ html[data-accent="batu"][data-theme="dark"]   { --wa-accent-text: #94a3b8; --wa-
 }
 .term-admin .btn-primary { padding: 9px; font-size: 13px; }
 .term-link-label input { width: 100%; }
+
+/* ================= aksesibilitas: hormati preferensi kurangi gerak ================= */
+/* Pengguna yang memilih "reduce motion" di sistem mendapat transisi sangat singkat
+   atau tanpa gerak — tanpa menghilangkan fungsi, hanya mengurangi animasi. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton, .older-loading { animation: none !important; background-image: none !important; }
+  .typing-indicator span { animation: none !important; opacity: 0.6; }
+}

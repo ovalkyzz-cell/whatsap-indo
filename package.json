@@ -1,7 +1,7 @@
 {
-  "name": "whatsap-indo",
-  "version": "1.0.0",
-  "description": "Whatsap Indo - clone WhatsApp real-time chat dengan autentikasi email, kirim pesan, foto, video, file hingga 2GB, dan pusat notifikasi",
+  "name": "rtc-core",
+  "version": "2.0.0",
+  "description": "RTC-Core (Real-Time Chat Core) — chat real-time terenkripsi dengan autentikasi email, kirim pesan, foto, video, file hingga 2GB, panggilan WebRTC, dan pusat notifikasi",
   "main": "server/index.js",
   "type": "commonjs",
   "scripts": {
@@ -22,10 +22,13 @@
     "test:admin-notify": "node test/admin-notify.js"
   },
   "keywords": [
-    "whatsapp-clone",
+    "rtc-core",
+    "real-time-chat",
     "chat",
     "realtime",
+    "e2e-encryption",
     "socket.io",
+    "webrtc",
     "notifications"
   ],
   "license": "MIT",

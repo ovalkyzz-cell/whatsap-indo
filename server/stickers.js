@@ -1,8 +1,8 @@
 'use strict';
 
-/* Sistem stiker & emot khusus WA Indo.
+/* Sistem stiker & emot khusus RTC-Core.
    Semua stiker adalah SVG vektor buatan sendiri (bukan hasil API eksternal) —
-   tajam di segala ukuran, berat file kecil, dan khas WA Indo (tema Nusantara,
+   tajam di segala ukuran, berat file kecil, dan khas RTC-Core (tema Nusantara,
    kilau premium, efek legendaris). Tiap paket terkunci pada ladder paket plan:
    makin tinggi paketnya, makin banyak & makin langka koleksinya. */
 

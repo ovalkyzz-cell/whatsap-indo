@@ -10,6 +10,7 @@ const db = require('./db');
 const storage = require('./storage');
 const auth = require('./auth');
 const helpers = require('./helpers');
+const vault = require('./vault');
 const presence = require('./presence');
 const calls = require('./calls');
 const bus = require('./bus');
@@ -45,6 +46,29 @@ app.set(
     ? !['0', 'false', 'no', 'off'].includes(trustProxyEnv)
     : !!process.env.VERCEL
 );
+
+// ---------- security headers global ----------
+// Melindungi seluruh respons: anti-sniff, anti-clickjacking, HSTS, privasi
+// referrer & policy izin (kamera/mikrofon hanya untuk origin sendiri).
+// Header ditambahkan tanpa CSP ketat agar PWA + WebRTC + blob media tidak rusak.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(self), microphone=(self), geolocation=(), payment=(), usb=(), interest-cohort=()'
+  );
+  // HSTS hanya di HTTPS (Vercel); lokal http tidak akan di-upgrade
+  if (req.secure || (req.headers['x-forwarded-proto'] || '').includes('https')) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  res.removeHeader('X-Powered-By');
+  next();
+});
 
 // File yang aman ditampilkan inline; sisanya dipaksa unduh (mencegah XSS
 // lewat file HTML/SVG buatan pengguna pada origin yang sama).
@@ -861,7 +885,7 @@ function validChatUrl(url) {
     || /^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\/[\w.%\-/~]+$/.test(String(url || ''));
 }
 
-// ---------- stiker & emot khusus WA Indo ----------
+// ---------- stiker & emot khusus RTC-Core ----------
 const stickers = require('./stickers');
 
 // katalog stiker yang bisa dipakai pengirim (sudah difilter paketnya)
@@ -1339,7 +1363,7 @@ function serializeStatus(row, viewerId, viewCount) {
     id: row.id,
     userId: row.user_id,
     type: row.type,
-    body: row.body,
+    body: vault.decrypt(row.body),
     bg: row.bg,
     mediaUrl: row.media_url,
     mediaName: row.media_name,
@@ -1394,7 +1418,7 @@ app.post('/api/status', auth.requireAuth, ah(async (req, res) => {
     id,
     req.user.id,
     type,
-    body,
+    body ? vault.encrypt(body) : body,
     bg && /^#[0-9a-fA-F]{6}$/.test(bg) ? bg : null,
     type === 'text' ? null : mediaUrl,
     type === 'text' ? null : mediaName,
@@ -2410,7 +2434,7 @@ async function deliverBotMessage(bot, chatId, text, targets, media) {
     chatId,
     bot.id,
     msgType,
-    caption.slice(0, 8000),
+    vault.encrypt(caption.slice(0, 8000)),
     hasMedia ? mediaUrl.slice(0, 2000) : null,
     hasMedia ? mediaName || null : null,
     hasMedia ? mediaSize : null,
@@ -2566,7 +2590,7 @@ async function handleSend(user, payload) {
       user.id,
       Date.now() - 5000
     );
-    if (recent && String(recent.body || '').trim().toLowerCase() === norm) {
+    if (recent && String(vault.decrypt(recent.body) || '').trim().toLowerCase() === norm) {
       throw new Error('Pesan sama dikirim berulang (anti-spam). Tunggu beberapa detik.');
     }
   }
@@ -2595,7 +2619,7 @@ async function handleSend(user, payload) {
       senderId: target.sender_id,
       senderName: targetSender ? targetSender.name : null,
       type: target.deleted_at ? 'text' : target.type,
-      body: target.deleted_at ? '' : String(target.body || '').slice(0, 160),
+      body: target.deleted_at ? '' : String(vault.decrypt(target.body) || '').slice(0, 160),
       viewOnce: !target.deleted_at && !!target.view_once,
       deleted: !!target.deleted_at,
     });
@@ -2626,7 +2650,7 @@ async function handleSend(user, payload) {
       chatId,
       user.id,
       cleanType,
-      text,
+      vault.encrypt(text),
       mediaUrl,
       media?.name ? String(media.name).slice(0, 255) : null,
       mediaSize || null,
@@ -2634,7 +2658,7 @@ async function handleSend(user, payload) {
       cleanViewOnce,
       cleanDuration,
       cleanReplyTo,
-      cleanReplyPreview,
+      cleanReplyPreview ? vault.encrypt(cleanReplyPreview) : null,
       now
     );
   } catch (err) {
@@ -2754,5 +2778,5 @@ async function boot() {
 void boot();
 
 server.listen(PORT, () => {
-  console.log(`Whatsap Indo berjalan di http://localhost:${PORT} (${db.dialect})`);
+  console.log(`RTC-Core berjalan di http://localhost:${PORT} (${db.dialect})`);
 });

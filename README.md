@@ -1,27 +1,40 @@
-# Whatsap Indo
+# RTC-Core (Real-Time Chat Core)
 
-Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, kirim **foto / video / audio / file hingga 2GB**, serta **panggilan suara & video** (WebRTC).
+Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto / video / audio / file hingga 2GB**, **panggilan suara & video** (WebRTC), serta **enkripsi data privasi saat disimpan** (AES-256-GCM).
 
 ## Profil Developer
 
 | | |
 |---|---|
 | Nama / Dikenal sebagai | **Mazval** |
-| Peran | Pembuat & developer utama **Whatsap Indo** |
+| Peran | Pembuat & developer utama **RTC-Core** |
 | Email resmi | `ovalkyzz@gmail.com` (admin & CS) |
 | Rilis pertama | **26 September 2026** |
-| Versi terkini | **1.0.0** (pembaruan terakhir **16 Oktober 2026**) |
+| Versi terkini | **2.0.0** (rebrand RTC-Core + hardening enkripsi, **16 Oktober 2026**) |
 | API pendukung | [api-mazval.zone.id](https://api-mazval.zone.id) (bot, tools, AI, downloader) |
 | Repository | [github.com/ovalkyzz-cell/whatsap-indo](https://github.com/ovalkyzz-cell/whatsap-indo) |
 | Produksi | [whatsap-indo.vercel.app](https://whatsap-indo.vercel.app) / [whatsapp-mazval.zone.id](https://whatsapp-mazval.zone.id) |
 
-**Whatsap Indo** dikembangkan penuh oleh **Mazval** — dari arsitektur server (Express + Socket.IO + WebRTC), 69 bot premium, sistem paket & kuota storage nyata, hingga antarmuka PWA yang responsif. Identitas Mazval melekat di seluruh aplikasi: kode undangan `WA-MAZ-VAL-XXXX`, base URL API `api-mazval`, serta akun admin/CS `ovalkyzz@gmail.com`.
+**RTC-Core** dikembangkan penuh oleh **Mazval** — dari arsitektur server (Express + Socket.IO + WebRTC), inti enkripsi data privasi (`server/vault.js`), 69 bot premium, sistem paket & kuota storage nyata, hingga antarmuka PWA yang responsif. Identitas Mazval melekat di seluruh aplikasi: kode undangan `WA-MAZ-VAL-XXXX`, base URL API `api-mazval`, serta akun admin/CS `ovalkyzz@gmail.com`.
+
+## Keamanan & Enkripsi
+
+| Lapisan | Implementasi |
+|---|---|
+| **Enkripsi saat disimpan (at rest)** | Isi pesan (`body`, `reply_preview`) & teks status dienkripsi **AES-256-GCM** lewat `server/vault.js` sebelum masuk database — kebocoran berkas/backup DB tidak serta-merta membocorkan isi percakapan. Format `RTC1:<iv>:<tag>:<ct>`; data lama (plaintext) tetap terbaca (migrasi malas). |
+| **Kunci enkripsi** | Diambil dari `ENCRYPTION_KEY` (base64/hex 32 byte) atau dibuat & disimpan persistent di `data/.enc-key` (mode `0600`). Di Vercel tanpa key eksplisit, kunci di-derive dari `JWT_SECRET` agar stabil antar cold-start. |
+| **Password** | Hash **bcrypt** (12 round). |
+| **Sesi / token** | JWT **HS256** dengan algoritma dipatuhi saat verifikasi (token `alg:none` / algoritme lain ditolak). |
+| **Security header global** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener/Resource-Policy`, `Permissions-Policy` (kamera & mikrofon hanya origin sendiri), HSTS di HTTPS, `X-Powered-By` disembunyikan. |
+| **Anti-spam & brute-force** | Rate-limit auth per IP, 1 akun/IP/24 jam, blokir IP otomatis, limit pesan/status per waktu. |
+
+> Catatan: enkripsi at-rest melindungi data di server (server-side). Ini berbeda dari *end-to-end encryption* — isi pesan tetap diproses di server untuk fitur bot, centang-biru & notifikasi.
 
 ## Fitur
 
 | Kategori | Detail |
 |---|---|
-| Autentikasi | Daftar & masuk dengan email + password (bcrypt + JWT) |
+| Autentikasi | Daftar & masuk dengan email + password (bcrypt 12 + JWT HS256 terpaku) |
 | Sesi | **Satu akun satu device** — login baru mematikan sesi & socket perangkat lama |
 | Persetujuan | Akun baru berstatus **menunggu** — harus disetujui admin sebelum bisa masuk |
 | Anti-spam daftar | **Email satu kali** + **1 akun per IP tiap 24 jam**; pelanggar & gagal beruntun **auto-blokir IP** permanen sampai admin membuka — masuk dengan akun lama tetap diizinkan |
@@ -41,7 +54,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
 | Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
-| Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas Whatsap Indo Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
+| Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas RTC-Core Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
 | Hubungi CS | Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi) langsung **membuka chat** lewat `GET /api/cs` — lolos privasi email & pencarian diri sendiri; saat akun CS sendiri yang menekan, chat diri sendiri (ala *message yourself*) tetap terbuka otomatis |
 | Proteksi foto | Foto profil terlindungi: klik kanan, seret, salin, unduh & blokir gambar dimatikan; screenshot (PrintScreen / Ctrl+P / Ctrl+S) dan menu cetak menyembunyikannya |
 | Kontrol akun | Admin bisa **setujui / tolak** pendaftaran dan **blokir / buka blokir** akun |
@@ -107,7 +120,7 @@ yang sudah terbuka dipakai ulang, bukan dibuka dobel), ikon di `public/icons/`
 bisa dibuka saat offline. Satu basis kode yang sama dipakai untuk web, desktop & APK.
 
 - **Desktop (Windows/macOS/Linux):** buka di Chrome/Edge → menu ⋮ → *Install app* /
-  *Install Whatsap Indo*. Jendela mandiri tanpa address bar, ikon sendiri di taskbar/dock;
+  *Install RTC-Core*. Jendela mandiri tanpa address bar, ikon sendiri di taskbar/dock;
   layout desktop (sidebar 432px pada layar ≥1440px) tetap dipakai, scroll daftar chat,
   pesan & drawer berjalan dengan momentum yang sama seperti di ponsel.
 - **Android (APK):** situs lolos kriteria instalasi Chrome → buka

@@ -32,63 +32,63 @@ const HR = '──────────────────────�
 const BOTS = [
   {
     id: 'bot-verif-am',
-    email: 'verif-am@bot.whatsap-indo',
+    email: 'verif-am@bot.rtc-core',
     name: 'Verif AM Prem',
     about: 'Verifikasi & pengiriman tautan Alight Motion Premium. Ketik "menu".',
     reply: verifReply,
   },
   {
     id: 'bot-nftoken',
-    email: 'nftoken@bot.whatsap-indo',
+    email: 'nftoken@bot.rtc-core',
     name: 'Generate NFToken',
     about: 'Generator NFToken Netflix. Ketik "menu".',
     reply: nftokenReply,
   },
   {
     id: 'bot-ai',
-    email: 'ai@bot.whatsap-indo',
+    email: 'ai@bot.rtc-core',
     name: 'AI',
     about: 'ChatGPT · Gemini · Deepseek · Claude. Kirim pertanyaanmu.',
     reply: aiReply,
   },
   {
     id: 'bot-down',
-    email: 'downloader@bot.whatsap-indo',
+    email: 'downloader@bot.rtc-core',
     name: 'Downloader',
     about: 'Download video TikTok, Instagram, YouTube, Facebook, X & lainnya. Kirim tautannya.',
     reply: downReply,
   },
   {
     id: 'bot-email',
-    email: 'generator@bot.whatsap-indo',
+    email: 'generator@bot.rtc-core',
     name: 'Email Generator',
     about: 'Email sementara lengkap: buat, cek inbox, baca pesan & OTP. Ketik "menu".',
     reply: emailReply,
   },
   {
     id: 'bot-tools',
-    email: 'tools@bot.whatsap-indo',
+    email: 'tools@bot.rtc-core',
     name: 'Tools',
     about: 'Terjemah · Cuaca · IP · QR · npm. Ketik "menu".',
     reply: toolsReply,
   },
   {
     id: 'bot-kodesnap',
-    email: 'kodesnap@bot.whatsap-indo',
+    email: 'kodesnap@bot.rtc-core',
     name: 'Screenshot Kode',
     about: 'Render potongan kode jadi gambar ala VS Code. Contoh: kode console.log("halo").',
     reply: kodesnapReply,
   },
   {
     id: 'bot-npm-zip',
-    email: 'npmzip@bot.whatsap-indo',
+    email: 'npmzip@bot.rtc-core',
     name: 'Unduh Kode npm',
     about: 'Unduh source code paket npm sebagai file zip. Contoh: zip express.',
     reply: npmZipReply,
   },
   {
     id: 'bot-model-ai',
-    email: 'modelai@bot.whatsap-indo',
+    email: 'modelai@bot.rtc-core',
     name: 'Katalog Model AI',
     about: 'Daftar model AI: gratis, berbayar & provider. Contoh: daftar.',
     reply: modelListReply,
@@ -171,7 +171,7 @@ async function callApi(path, params, opts) {
   const method = opts && opts.method === 'POST' ? 'POST' : 'GET';
   const init = {
     method,
-    headers: { Accept: 'application/json', 'User-Agent': 'WhatsapIndo-Bot/1.0' },
+    headers: { Accept: 'application/json', 'User-Agent': 'RTCCore-Bot/1.0' },
     signal: AbortSignal.timeout((opts && opts.timeout) || API_TIMEOUT),
   };
   if (method === 'POST') {
@@ -214,7 +214,7 @@ async function callApiBuffer(path, params, opts) {
   try {
     res = await fetch(url.toString(), {
       method: 'GET',
-      headers: { Accept: '*/*', 'User-Agent': 'WhatsapIndo-Bot/1.0' },
+      headers: { Accept: '*/*', 'User-Agent': 'RTCCore-Bot/1.0' },
       signal: AbortSignal.timeout((opts && opts.timeout) || API_TIMEOUT),
     });
   } catch (e) {
@@ -907,7 +907,7 @@ async function probeMedia(url) {
   let res;
   try {
     res = await fetch(url, {
-      headers: { Range: 'bytes=0-2047', 'User-Agent': 'Mozilla/5.0 (WhatsapIndo Bot)', Accept: 'video/*,audio/*,*/*' },
+      headers: { Range: 'bytes=0-2047', 'User-Agent': 'Mozilla/5.0 (RTCCore Bot)', Accept: 'video/*,audio/*,*/*' },
       signal: AbortSignal.timeout(DOWN_PROBE_TIMEOUT),
       redirect: 'follow',
     });
@@ -1016,7 +1016,7 @@ async function fetchJson(url, opts) {
   try {
     const res = await fetch(url, {
       method: o.method || 'GET',
-      headers: { Accept: 'application/json', 'User-Agent': 'WhatsapIndo-Bot/1.0', ...(o.headers || {}) },
+      headers: { Accept: 'application/json', 'User-Agent': 'RTCCore-Bot/1.0', ...(o.headers || {}) },
       body: o.body,
       signal: AbortSignal.timeout(o.timeout || DOWN_JSON_TIMEOUT),
       redirect: 'follow',
@@ -2283,9 +2283,11 @@ async function seedOne(bot, now) {
       // nama/bio khusus admin dipertahankan; hanya baris dengan nama bawaan
       // (atau kosong) yang disegarkan ke default terbaru
       const custom = existing.name && !DEFAULT_NAMES.has(String(existing.name));
+      // email bot ikut disinkronkan (migrasi domain @bot.whatsap-indo -> @bot.rtc-core)
       await db.run(
-        `UPDATE users SET is_bot = 1, verified = 1, account_status = 'active', banned = 0
+        `UPDATE users SET is_bot = 1, verified = 1, account_status = 'active', banned = 0, email = ?
          WHERE id = ?`,
+        bot.email,
         bot.id
       );
       if (!custom) {
@@ -2358,7 +2360,7 @@ async function reply(bot, text) {
 
 const GENERIC_SPECS = [
   {
-    id: 'bot-cuaca', email: 'cuaca@bot.whatsap-indo', name: 'Cuaca',
+    id: 'bot-cuaca', email: 'cuaca@bot.rtc-core', name: 'Cuaca',
     tagline: 'Cuaca kota saat ini',
     about: 'Cuaca kota real-time: suhu, kelembaban & angin. Contoh: cuaca Jakarta.',
     commands: [
@@ -2367,7 +2369,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-gempa', email: 'gempa@bot.whatsap-indo', name: 'Info Gempa',
+    id: 'bot-gempa', email: 'gempa@bot.rtc-core', name: 'Info Gempa',
     tagline: 'Gempa bumi terkini',
     about: 'Gempa bumi terkini dari BMKG. Contoh: gempa.',
     commands: [
@@ -2376,7 +2378,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-sholat', email: 'sholat@bot.whatsap-indo', name: 'Jadwal Sholat',
+    id: 'bot-sholat', email: 'sholat@bot.rtc-core', name: 'Jadwal Sholat',
     tagline: 'Jadwal sholat & doa harian',
     about: 'Jadwal sholat per kota & kumpulan doa harian. Contoh: sholat Jakarta.',
     commands: [
@@ -2387,7 +2389,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-quran', email: 'quran@bot.whatsap-indo', name: 'Al-Quran',
+    id: 'bot-quran', email: 'quran@bot.rtc-core', name: 'Al-Quran',
     tagline: 'Teks Arab, latin & terjemah',
     about: 'Teks surah Al-Quran lengkap: Arab, latin & terjemah. Contoh: surat 1.',
     commands: [
@@ -2396,7 +2398,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-mimpi', email: 'mimpi@bot.whatsap-indo', name: 'Tafsir Mimpi',
+    id: 'bot-mimpi', email: 'mimpi@bot.rtc-core', name: 'Tafsir Mimpi',
     tagline: 'Tafsir mimpi & arti nama',
     about: 'Tafsir mimpi primbon & arti nama lengkap. Contoh: mimpi ular.',
     commands: [
@@ -2407,7 +2409,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-kurs', email: 'kurs@bot.whatsap-indo', name: 'Kurs & Kripto',
+    id: 'bot-kurs', email: 'kurs@bot.rtc-core', name: 'Kurs & Kripto',
     tagline: 'Mata uang dunia & kripto',
     about: 'Kurs mata uang dunia & harga kripto terkini. Contoh: kurs USD IDR 100.',
     commands: [
@@ -2419,7 +2421,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-nomor', email: 'nomor@bot.whatsap-indo', name: 'Cek Nomor',
+    id: 'bot-nomor', email: 'nomor@bot.rtc-core', name: 'Cek Nomor',
     tagline: 'Info nomor HP & negara',
     about: 'Info operator/prefix nomor HP & data negara. Contoh: nomor 081234567890.',
     commands: [
@@ -2430,7 +2432,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-github', email: 'github@bot.whatsap-indo', name: 'Stalk GitHub',
+    id: 'bot-github', email: 'github@bot.rtc-core', name: 'Stalk GitHub',
     tagline: 'Profil GitHub siapa saja',
     about: 'Profil GitHub lengkap: bio, followers, repo. Contoh: github octocat.',
     commands: [
@@ -2439,7 +2441,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-stalk', email: 'stalker@bot.whatsap-indo', name: 'Stalk Sosmed',
+    id: 'bot-stalk', email: 'stalker@bot.rtc-core', name: 'Stalk Sosmed',
     tagline: 'Intip profil sosial media',
     about: 'Intip profil Twitter, YouTube, Pinterest & Threads. Contoh: twitter elonmusk.',
     commands: [
@@ -2454,7 +2456,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-quotes', email: 'quotes@bot.whatsap-indo', name: 'Quotes & Pantun',
+    id: 'bot-quotes', email: 'quotes@bot.rtc-core', name: 'Quotes & Pantun',
     tagline: 'Pantun, quote bucin & anime',
     about: 'Pantun, quote bucin & quote anime acak. Contoh: pantun.',
     commands: [
@@ -2467,7 +2469,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-tebak', email: 'tebak@bot.whatsap-indo', name: 'Tebak-Tebakan',
+    id: 'bot-tebak', email: 'tebak@bot.rtc-core', name: 'Tebak-Tebakan',
     tagline: 'Teka-teki & asah otak',
     about: 'Tebak-tebakan, teka-teki & asah otak. Contoh: tebak.',
     commands: [
@@ -2480,7 +2482,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-meme', email: 'meme@bot.whatsap-indo', name: 'Meme Random',
+    id: 'bot-meme', email: 'meme@bot.rtc-core', name: 'Meme Random',
     tagline: 'Meme & konten acak',
     about: 'Meme, meme bergambar & konten Reddit acak. Contoh: meme.',
     commands: [
@@ -2493,7 +2495,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-waifu', email: 'waifu@bot.whatsap-indo', name: 'Waifu Random',
+    id: 'bot-waifu', email: 'waifu@bot.rtc-core', name: 'Waifu Random',
     tagline: 'Gambar waifu acak',
     about: 'Gambar waifu acak setiap kali diminta. Contoh: waifu.',
     commands: [
@@ -2502,7 +2504,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-anime', email: 'animedl@bot.whatsap-indo', name: 'Cari Anime & Game',
+    id: 'bot-anime', email: 'animedl@bot.rtc-core', name: 'Cari Anime & Game',
     tagline: 'Cari anime, manga & game',
     about: 'Cari anime (Otakotaku), manga (Mangatoon) & game (MCPEDL). Contoh: anime naruto.',
     commands: [
@@ -2515,7 +2517,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-web', email: 'websearch@bot.whatsap-indo', name: 'Pencarian Web',
+    id: 'bot-web', email: 'websearch@bot.rtc-core', name: 'Pencarian Web',
     tagline: 'DuckDuckGo, Brave & gambar',
     about: 'Cari di DuckDuckGo, Brave & gambar Bing. Contoh: ddg nodejs.',
     commands: [
@@ -2528,7 +2530,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-media', email: 'mediasearch@bot.whatsap-indo', name: 'Cari Media',
+    id: 'bot-media', email: 'mediasearch@bot.rtc-core', name: 'Cari Media',
     tagline: 'YouTube, musik & Pinterest',
     about: 'Cari video YouTube, lagu Apple Music & pin Pinterest. Contoh: yt dangdut.',
     commands: [
@@ -2541,7 +2543,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-stiker', email: 'stiker@bot.whatsap-indo', name: 'Stiker',
+    id: 'bot-stiker', email: 'stiker@bot.rtc-core', name: 'Stiker',
     tagline: 'Stiker WhatsApp & paket stiker',
     about: 'Cari stiker WhatsApp (Stickerly) & paket stiker (Combot). Contoh: stiker kucing.',
     commands: [
@@ -2552,7 +2554,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-ss', email: 'screenshot@bot.whatsap-indo', name: 'Screenshot Web',
+    id: 'bot-ss', email: 'screenshot@bot.rtc-core', name: 'Screenshot Web',
     tagline: 'Screenshot situs apa pun',
     about: 'Screenshot situs apa pun langsung dari chat. Contoh: ss https://example.com.',
     commands: [
@@ -2561,7 +2563,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-qr', email: 'qr@bot.whatsap-indo', name: 'QR Code',
+    id: 'bot-qr', email: 'qr@bot.rtc-core', name: 'QR Code',
     tagline: 'Buat & baca QR',
     about: 'Buat QR dari teks & baca QR dari gambar. Contoh: buat halo dunia.',
     commands: [
@@ -2572,7 +2574,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-pos', email: 'kodepos@bot.whatsap-indo', name: 'Kode Pos & Wilayah',
+    id: 'bot-pos', email: 'kodepos@bot.rtc-core', name: 'Kode Pos & Wilayah',
     tagline: 'Kode pos, provinsi & jarak',
     about: 'Cari kode pos, daftar provinsi & jarak antar kota. Contoh: kodepos gambir.',
     commands: [
@@ -2585,7 +2587,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-bola', email: 'bola@bot.whatsap-indo', name: 'Jadwal Bola',
+    id: 'bot-bola', email: 'bola@bot.rtc-core', name: 'Jadwal Bola',
     tagline: 'Jadwal pertandingan',
     about: 'Jadwal pertandingan sepak bola (TheSportsDB). Contoh: bola.',
     commands: [
@@ -2594,7 +2596,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-brat', email: 'brat@bot.whatsap-indo', name: 'Generator Gambar',
+    id: 'bot-brat', email: 'brat@bot.rtc-core', name: 'Generator Gambar',
     tagline: 'Brat, Brat HD & meme custom',
     about: 'Gambar teks Brat, Brat HD & meme custom. Contoh: brat halo guys.',
     commands: [
@@ -2607,7 +2609,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-domain', email: 'recon@bot.whatsap-indo', name: 'Security Domain',
+    id: 'bot-domain', email: 'recon@bot.rtc-core', name: 'Security Domain',
     tagline: 'Recon DNS & subdomain',
     about: 'Recon DNS & daftar subdomain sebuah domain. Contoh: recon example.com.',
     commands: [
@@ -2618,7 +2620,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-npm', email: 'npmbot@bot.whatsap-indo', name: 'Cari NPM',
+    id: 'bot-npm', email: 'npmbot@bot.rtc-core', name: 'Cari NPM',
     tagline: 'Info paket npm',
     about: 'Info paket npm: versi, lisensi & deskripsi. Contoh: npm express.',
     commands: [
@@ -2627,7 +2629,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-ocr', email: 'ocr@bot.whatsap-indo', name: 'OCR Gambar',
+    id: 'bot-ocr', email: 'ocr@bot.rtc-core', name: 'OCR Gambar',
     tagline: 'Ambil teks dari gambar',
     about: 'Baca teks di dalam gambar lewat OCR. Contoh: baca https://i.imgur.com/foto.jpg.',
     commands: [
@@ -2636,7 +2638,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-suara', email: 'suara@bot.whatsap-indo', name: 'Suara MyInstants',
+    id: 'bot-suara', email: 'suara@bot.rtc-core', name: 'Suara MyInstants',
     tagline: 'Sound efek MyInstants',
     about: 'Cari sound efek populer MyInstants. Contoh: suara tik.',
     commands: [
@@ -2647,7 +2649,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-font', email: 'font@bot.whatsap-indo', name: 'Font Keren',
+    id: 'bot-font', email: 'font@bot.rtc-core', name: 'Font Keren',
     tagline: 'Kumpulan gaya font unik',
     about: 'Cari gaya font untuk nickname, bio & caption. Contoh: font love.',
     commands: [
@@ -2656,7 +2658,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-repo', email: 'repo@bot.whatsap-indo', name: 'Cari Repo',
+    id: 'bot-repo', email: 'repo@bot.rtc-core', name: 'Cari Repo',
     tagline: 'Pencarian repository kode',
     about: 'Cari repository kode lewat Gitagram. Contoh: repo express.',
     commands: [
@@ -2665,7 +2667,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-cari-lahelu', email: 'carilahelu@bot.whatsap-indo', name: 'Pencarian Lahelu',
+    id: 'bot-cari-lahelu', email: 'carilahelu@bot.rtc-core', name: 'Pencarian Lahelu',
     tagline: 'Cari konten di Lahelu',
     about: 'Pencarian konten Lahelu. Contoh: lahelu meme.',
     commands: [
@@ -2674,7 +2676,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-terjemah', email: 'terjemah@bot.whatsap-indo', name: 'Terjemah',
+    id: 'bot-terjemah', email: 'terjemah@bot.rtc-core', name: 'Terjemah',
     tagline: 'Inggris ke Indonesia',
     about: 'Terjemahkan kalimat Inggris ke Indonesia. Contoh: terjemah good morning.',
     commands: [
@@ -2683,7 +2685,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-ip', email: 'ipcheck@bot.whatsap-indo', name: 'Cek IP',
+    id: 'bot-ip', email: 'ipcheck@bot.rtc-core', name: 'Cek IP',
     tagline: 'Info IP & domain',
     about: 'Info lokasi, ISP & ASN sebuah IP/domain. Contoh: ip 8.8.8.8.',
     commands: [
@@ -2692,7 +2694,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-stalker-x', email: 'stalkx@bot.whatsap-indo', name: 'Stalk Twitter / X',
+    id: 'bot-stalker-x', email: 'stalkx@bot.rtc-core', name: 'Stalk Twitter / X',
     tagline: 'Profil Twitter siapa saja',
     about: 'Profil Twitter / X lengkap. Contoh: twitter elonmusk.',
     commands: [
@@ -2701,7 +2703,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-channel', email: 'channel@bot.whatsap-indo', name: 'Stalk Channel',
+    id: 'bot-channel', email: 'channel@bot.rtc-core', name: 'Stalk Channel',
     tagline: 'Profil channel YouTube',
     about: 'Statistik channel YouTube: subscriber, video & views. Contoh: channel MrBeast.',
     commands: [
@@ -2710,7 +2712,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-gambar', email: 'imgsearch@bot.whatsap-indo', name: 'Cari Gambar',
+    id: 'bot-gambar', email: 'imgsearch@bot.rtc-core', name: 'Cari Gambar',
     tagline: 'Pencarian gambar Bing',
     about: 'Cari gambar lewat Bing Image. Contoh: gambar kucing.',
     commands: [
@@ -2719,7 +2721,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-pin', email: 'pinsearch@bot.whatsap-indo', name: 'Cari Pinterest',
+    id: 'bot-pin', email: 'pinsearch@bot.rtc-core', name: 'Cari Pinterest',
     tagline: 'Pencarian pin Pinterest',
     about: 'Cari pin Pinterest. Contoh: pin wallpaper aesthetic.',
     commands: [
@@ -2728,7 +2730,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-game', email: 'gamesearch@bot.whatsap-indo', name: 'Cari Game',
+    id: 'bot-game', email: 'gamesearch@bot.rtc-core', name: 'Cari Game',
     tagline: 'Cari game & mod di MCPEDL',
     about: 'Cari game, resource pack & mod. Contoh: game minecraft.',
     commands: [
@@ -2743,7 +2745,7 @@ const GENERIC_SPECS = [
      pertanyaan tetap terjawab walau satu model sedang sibuk. */
   {
     kind: 'ai',
-    id: 'bot-bard', email: 'bard@bot.whatsap-indo', name: 'Bard Google',
+    id: 'bot-bard', email: 'bard@bot.rtc-core', name: 'Bard Google',
     tagline: 'Asisten AI Google Bard',
     about: 'Tanya apa saja langsung ke Bard Google. Contoh: apa itu fotosintesis?',
     commands: [
@@ -2753,7 +2755,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-copilot', email: 'copilot@bot.whatsap-indo', name: 'Copilot',
+    id: 'bot-copilot', email: 'copilot@bot.rtc-core', name: 'Copilot',
     tagline: 'Asisten AI Copilot',
     about: 'Copilot menjawab pertanyaan & membantu menyusun teks. Contoh: copilot buat puisi pendek.',
     commands: [
@@ -2763,7 +2765,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-opus', email: 'opus@bot.whatsap-indo', name: 'Claude Opus',
+    id: 'bot-opus', email: 'opus@bot.rtc-core', name: 'Claude Opus',
     tagline: 'Model Claude Opus',
     about: 'Claude Opus untuk analisis panjang & penulisan rapi. Contoh: opus ringkas artikel ini.',
     commands: [
@@ -2773,7 +2775,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-gptoss', email: 'gptoss@bot.whatsap-indo', name: 'GPT-OSS 120B',
+    id: 'bot-gptoss', email: 'gptoss@bot.rtc-core', name: 'GPT-OSS 120B',
     tagline: 'Model GPT-OSS 120B',
     about: 'Model terbuka GPT-OSS 120B. Contoh: oss buatkan resep nasi goreng.',
     commands: [
@@ -2783,7 +2785,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-gpt-klasik', email: 'gptklasik@bot.whatsap-indo', name: 'GPT Klasik',
+    id: 'bot-gpt-klasik', email: 'gptklasik@bot.rtc-core', name: 'GPT Klasik',
     tagline: 'Model GPT generasi lama',
     about: 'GPT klasik yang ringan & cepat. Contoh: gpt tulis caption liburan.',
     commands: [
@@ -2793,7 +2795,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-glm', email: 'glmflash@bot.whatsap-indo', name: 'GLM Flash',
+    id: 'bot-glm', email: 'glmflash@bot.rtc-core', name: 'GLM Flash',
     tagline: 'Model GLM 4.7 Flash',
     about: 'GLM Flash cepat untuk tugas harian. Contoh: glm susun daftar belanja.',
     commands: [
@@ -2803,7 +2805,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-phi', email: 'phi2@bot.whatsap-indo', name: 'Phi-2',
+    id: 'bot-phi', email: 'phi2@bot.rtc-core', name: 'Phi-2',
     tagline: 'Model ringan Phi-2',
     about: 'Phi-2 ringan untuk jawaban singkat. Contoh: phi apa itu algoritma?',
     commands: [
@@ -2813,7 +2815,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-deepai', email: 'deepai@bot.whatsap-indo', name: 'Deep AI',
+    id: 'bot-deepai', email: 'deepai@bot.rtc-core', name: 'Deep AI',
     tagline: 'Asisten Deep AI',
     about: 'Deep AI untuk eksplorasi ide. Contoh: deep ide bisnis anak muda.',
     commands: [
@@ -2823,7 +2825,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-publicai', email: 'publicai@bot.whatsap-indo', name: 'Public AI',
+    id: 'bot-publicai', email: 'publicai@bot.rtc-core', name: 'Public AI',
     tagline: 'Asisten Public AI',
     about: 'Public AI untuk pertanyaan umum. Contoh: public kenapa langit biru.',
     commands: [
@@ -2833,7 +2835,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-epsilon', email: 'epsilon@bot.whatsap-indo', name: 'Epsilon AI',
+    id: 'bot-epsilon', email: 'epsilon@bot.rtc-core', name: 'Epsilon AI',
     tagline: 'Asisten Epsilon AI',
     about: 'Epsilon AI untuk brainstorming. Contoh: epsilon nama produk kopi.',
     commands: [
@@ -2843,7 +2845,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-powerbrain', email: 'powerbrain@bot.whatsap-indo', name: 'PowerBrain',
+    id: 'bot-powerbrain', email: 'powerbrain@bot.rtc-core', name: 'PowerBrain',
     tagline: 'Asisten PowerBrain AI',
     about: 'PowerBrain untuk penjelasan konsep sulit. Contoh: powerbrain jelaskan fotosintesis.',
     commands: [
@@ -2853,7 +2855,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-jeeves', email: 'jeeves@bot.whatsap-indo', name: 'Jeeves AI',
+    id: 'bot-jeeves', email: 'jeeves@bot.rtc-core', name: 'Jeeves AI',
     tagline: 'Asisten pribadi Jeeves',
     about: 'Jeeves merapikan & menjawab apa saja. Contoh: jeeves perbaiki kalimat ini.',
     commands: [
@@ -2863,7 +2865,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-realtime', email: 'realtime@bot.whatsap-indo', name: 'AI Realtime',
+    id: 'bot-realtime', email: 'realtime@bot.rtc-core', name: 'AI Realtime',
     tagline: 'Jawaban cepat & perintah prompt',
     about: 'Dua mode: jawaban realtime & generator prompt. Contoh: realtime kabar jakarta besok.',
     commands: [
@@ -2875,7 +2877,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-studi', email: 'studi@bot.whatsap-indo', name: 'AI Studi',
+    id: 'bot-studi', email: 'studi@bot.rtc-core', name: 'AI Studi',
     tagline: 'Tata bahasa, parafrase & model penalaran',
     about: 'Bantu belajar: koreksi grammar, parafrase & penalaran. Contoh: grammar i is go to school.',
     hint: 'Jawab ringkas, langsung ke inti, dalam Bahasa Indonesia yang rapi.',
@@ -2892,7 +2894,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-aigambar', email: 'aigambar@bot.whatsap-indo', name: 'AI Gambar',
+    id: 'bot-aigambar', email: 'aigambar@bot.rtc-core', name: 'AI Gambar',
     tagline: 'Generator gambar dari teks',
     about: 'Buat gambar dari teks. Contoh: gambar kucing astronot di bulan.',
     hint: 'Kalau diminta membuat/mendeskripsikan gambar, tuliskan prompt gambarnya saja secara ringkas.',
@@ -2909,7 +2911,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-aiseni', email: 'aiseni@bot.whatsap-indo', name: 'AI Seni',
+    id: 'bot-aiseni', email: 'aiseni@bot.rtc-core', name: 'AI Seni',
     tagline: 'Anime, chibi & gaya seni AI',
     about: 'Ubah ide jadi karya seni AI. Contoh: anime gadis berambut biru.',
     hint: 'Fokus pada deskripsi visual yang jelas: subjek, gaya, warna, dan latar.',
@@ -2926,7 +2928,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-aiagama', email: 'aiagama@bot.whatsap-indo', name: 'AI Agama',
+    id: 'bot-aiagama', email: 'aiagama@bot.rtc-core', name: 'AI Agama',
     tagline: 'Pertanyaan seputar agama',
     about: 'Islam, Alkitab & kitab suci. Contoh: islam hukum sedekah.',
     hint: 'Jawab dengan santun, sebutkan sumber ajaran bila memungkinkan, dan hindari menghakimi.',
@@ -2941,7 +2943,7 @@ const GENERIC_SPECS = [
   },
   {
     kind: 'ai',
-    id: 'bot-eksplorasi', email: 'eksplorasi@bot.whatsap-indo', name: 'AI Eksplorasi',
+    id: 'bot-eksplorasi', email: 'eksplorasi@bot.rtc-core', name: 'AI Eksplorasi',
     tagline: 'Bebas tanya ke banyak model',
     about: 'Coba beberapa model sekaligus. Contoh: dolphin jelaskan black hole.',
     hint: 'Jawab ringkas dan terstruktur memakai poin bila penjelasan panjang.',
@@ -2957,7 +2959,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-wilayah', email: 'wilayah@bot.whatsap-indo', name: 'Wilayah Indonesia',
+    id: 'bot-wilayah', email: 'wilayah@bot.rtc-core', name: 'Wilayah Indonesia',
     tagline: 'Provinsi, kabupaten, kecamatan & desa',
     about: 'Data wilayah Indonesia lengkap. Contoh: provinsi, kabupaten 31, kecamatan 3101.',
     commands: [
@@ -2975,7 +2977,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-simbol', email: 'simbol@bot.whatsap-indo', name: 'Simbol Provinsi',
+    id: 'bot-simbol', email: 'simbol@bot.rtc-core', name: 'Simbol Provinsi',
     tagline: 'Lambang & simbol tiap provinsi',
     about: 'Daftar simbol provinsi Indonesia. Contoh: simbol, simbol 3.',
     commands: [
@@ -2984,7 +2986,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-nik', email: 'nik@bot.whatsap-indo', name: 'Parse NIK',
+    id: 'bot-nik', email: 'nik@bot.rtc-core', name: 'Parse NIK',
     tagline: 'Baca data dari NIK KTP',
     about: 'Baca isi NIK KTP 16 digit: provinsi, kabupaten, kecamatan, tanggal lahir, usia & jenis kelamin. Contoh: nik 3175061509900001.',
     commands: [
@@ -2994,7 +2996,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-tracking', email: 'tracking@bot.whatsap-indo', name: 'Tracking Paket',
+    id: 'bot-tracking', email: 'tracking@bot.rtc-core', name: 'Tracking Paket',
     tagline: 'Lacak paket semua kurir',
     about: 'Lacak nomor resi JNE, J&T, SiCepat, POS, TIKI, AnterAja, Lion, Wahana & Ninja. Contoh: resi JNE00123456789 atau jnt JT00123456789.',
     hint: 'Bila resi tidak ditemukan, sarankan pengguna memastikan nomor & kurir benar.',
@@ -3032,7 +3034,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-ngl', email: 'ngl@bot.whatsap-indo', name: 'NGL',
+    id: 'bot-ngl', email: 'ngl@bot.rtc-core', name: 'NGL',
     tagline: 'Kirim pesan anonim ke NGL',
     about: 'Kirim satu pesan anonim ke link NGL milikmu. Contoh: ngl https://ngl.link/username halo sayang.',
     commands: [
@@ -3042,7 +3044,7 @@ const GENERIC_SPECS = [
     ],
   },
   {
-    id: 'bot-ngl-spam', email: 'nglspam@bot.whatsap-indo', name: 'NGL Spam',
+    id: 'bot-ngl-spam', email: 'nglspam@bot.rtc-core', name: 'NGL Spam',
     tagline: 'Kirim pesan NGL berulang',
     about: 'Kirim pesan anonim berulang ke link NGL (maksimal 10 kali). Contoh: spam https://ngl.link/username halo 5.',
     commands: [

@@ -1,7 +1,7 @@
 /* Service Worker: notifikasi WhatsApp-style (online & offline) */
 'use strict';
 
-const CACHE = 'wa-static-v3';
+const CACHE = 'rtc-core-v4';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -73,7 +73,7 @@ function readPayload(event) {
   try {
     return event.data ? event.data.json() : {};
   } catch {
-    return { title: 'Whatsap Indo', body: event.data ? event.data.text() : '' };
+    return { title: 'RTC-Core', body: event.data ? event.data.text() : '' };
   }
 }
 

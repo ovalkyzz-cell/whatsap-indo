@@ -143,7 +143,7 @@ const HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Panel Admin — Pemeriksa Bug Whatsap Indo</title>
+<title>Panel Admin — Pemeriksa Bug RTC-Core</title>
 <style>
   :root { color-scheme: light dark; --ok:#16a34a; --bad:#dc2626; --skip:#64748b; --bg:#0b1220; --card:#111a2e; --line:#1f2b45; --txt:#e6edf7; --mut:#93a4c4; }
   * { box-sizing: border-box; }
@@ -200,7 +200,7 @@ const HTML = `<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <h1>Panel Admin — Pemeriksa Bug Whatsap Indo</h1>
+  <h1>Panel Admin — Pemeriksa Bug RTC-Core</h1>
   <div class="sub">Pemeriksaan berjalan nyata di server ini (bukan simulasi). Hijau = normal, merah = ada masalah, abu-abu = pemeriksaan berat yang hanya bisa dijalankan di mesin server.</div>
   <div class="env" id="envBox">Lingkungan: <b id="env">…</b></div>
 
@@ -353,7 +353,7 @@ function summary() {
     const st = r.querySelector('.dot').textContent.trim();
     return st + ' ' + r.querySelector('h3').textContent + ': ' + ((r.querySelector('.detail') || {}).textContent || '');
   });
-  const text = 'Pemeriksa bug Whatsap Indo — ' + $('title').textContent + '\\n' + rows.join('\\n');
+  const text = 'Pemeriksa bug RTC-Core — ' + $('title').textContent + '\\n' + rows.join('\\n');
   if (navigator.clipboard) navigator.clipboard.writeText(text);
   $('btnCopy').textContent = 'Tersalin ✓';
   setTimeout(() => { $('btnCopy').textContent = 'Salin Ringkasan'; }, 1600);

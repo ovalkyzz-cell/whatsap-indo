@@ -2648,7 +2648,7 @@ function openTerminal() {
   openDrawer('terminalDrawer');
   const out = $('termOut');
   if (out && !out.childElementCount) {
-    termAppend('res', 'Terminal Mini — Whatsap Indo');
+    termAppend('res', 'Terminal Mini — RTC-Core');
     termAppend('res', 'Verif AM · Parse NIK · Generate NFToken');
     termAppend('res', 'Ketik "menu" untuk daftar perintah.');
     termAppend('res', '────────────────────────');
@@ -2788,7 +2788,7 @@ function renderBotLocked(data) {
       <div class="bc-plans">
         ${plans.map((p) => `<span class="bc-plan">${esc(p.label)}<small>${p.price ? `Rp${Number(p.price).toLocaleString('id-ID')}/` : ''}${Number(p.days) || 0} hari</small></span>`).join('')}
       </div>` : ''}
-      <p class="bc-hint">Pilih paket lalu aktifkan lewat admin Whatsap Indo. Begitu aktif, menu Daftar Bot langsung terbuka.</p>
+      <p class="bc-hint">Pilih paket lalu aktifkan lewat admin RTC-Core. Begitu aktif, menu Daftar Bot langsung terbuka.</p>
       <button class="btn-primary" id="bcOpenPlans" type="button">Lihat Paket &amp; Harga</button>
       <button class="btn-ghost" id="bcClose" type="button">Mengerti</button>
     </div>`;
@@ -2924,7 +2924,7 @@ function renderPlans(data) {
   body.innerHTML = `
     <div class="plan-hero">
       <span class="plan-hero-orb o1"></span><span class="plan-hero-orb o2"></span>
-      <span class="plan-hero-chip"><svg viewBox="0 0 24 24"><use href="#ic-star" /></svg> WHATSAP INDO PREMIUM</span>
+      <span class="plan-hero-chip"><svg viewBox="0 0 24 24"><use href="#ic-star" /></svg> RTC-CORE PREMIUM</span>
       <h3>Semua bot dalam satu paket</h3>
       <p>${botTotal} bot AI, alat produktivitas, media &amp; informasi — pilih durasi sesuai kebutuhanmu.</p>
       <div class="plan-status ${me.active ? 'on' : ''}">
@@ -3096,7 +3096,7 @@ function renderInvite(data) {
   $('invShare').addEventListener('click', async () => {
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'Gabung Whatsap Indo', text: `Daftar pakai kode undangan saya: ${code}`, url: link });
+        await navigator.share({ title: 'Gabung RTC-Core', text: `Daftar pakai kode undangan saya: ${code}`, url: link });
         return;
       } catch { /* dibatalkan / tidak didukung -> salin */ }
     }
@@ -3528,16 +3528,16 @@ async function chatWithAdmin() {
 const ABOUT_HTML = `
   <div class="about-hero">
     <div class="about-logo">📱</div>
-    <h3>Whatsap Indo</h3>
-    <p class="about-sub">APK WhatsApp Indo Developer • Versi 1.0.0</p>
+    <h3>RTC-Core</h3>
+    <p class="about-sub">Real-Time Chat Core • Versi 2.0.0</p>
     <span class="about-badge"><svg viewBox="0 0 24 24"><use href="#ic-verified" /></svg> Developer resmi: mazval-developer-java</span>
   </div>
 
   <section class="about-sec" style="--i:0">
     <h4><svg viewBox="0 0 24 24"><use href="#ic-info" /></svg> Tentang Aplikasi</h4>
-    <p>Whatsap Indo adalah aplikasi chat real-time dengan pengiriman foto, video, dan file hingga <b>2GB</b>,
-    notifikasi sistem, status 24 jam, grup besar, serta ratusan bot premium (AI, informasi, media, hiburan,
-    alat produktivitas) yang bisa dipakai lewat paket premium.</p>
+    <p><b>RTC-Core (Real-Time Chat Core)</b> adalah inti chat real-time dengan pengiriman foto, video, dan file hingga <b>2GB</b>,
+    notifikasi sistem, status 24 jam, grup besar, panggilan suara &amp; video WebRTC, serta ratusan bot premium (AI, informasi,
+    media, hiburan, alat produktivitas) yang bisa dipakai lewat paket premium.</p>
   </section>
 
   <section class="about-sec" style="--i:1">
@@ -3558,7 +3558,7 @@ const ABOUT_HTML = `
     <div class="about-cs">
       <div class="about-cs-row"><span class="cs-ico"><svg viewBox="0 0 24 24"><use href="#ic-mail" /></svg></span>
         <span class="cs-text"><strong>Email CS</strong><small>ovalkyzz@gmail.com</small></span>
-        <a class="cs-go" href="mailto:ovalkyzz@gmail.com?subject=CS%20Whatsap%20Indo">Kirim</a></div>
+        <a class="cs-go" href="mailto:ovalkyzz@gmail.com?subject=CS%20RTC-Core">Kirim</a></div>
       <div class="about-cs-row"><span class="cs-ico"><svg viewBox="0 0 24 24"><use href="#ic-chat" /></svg></span>
         <span class="cs-text"><strong>Chat admin di aplikasi</strong><small>Balasan langsung di kotak masuk</small></span>
         <button class="cs-go" id="aboutCsChat" type="button">Chat</button></div>
@@ -3571,13 +3571,15 @@ const ABOUT_HTML = `
   <section class="about-sec" style="--i:3">
     <h4><svg viewBox="0 0 24 24"><use href="#ic-shield" /></svg> Keamanan &amp; Privasi</h4>
     <ul class="about-list">
+      <li>Pesan &amp; status dienkripsi <b>AES-256-GCM</b> saat disimpan — data privat tidak telanjang di database.</li>
+      <li>Password di-hash <b>bcrypt</b>; sesi memakai token ber-signature yang dipaku algoritmanya.</li>
       <li>Foto profil dilindungi: klik kanan, seret, simpan &amp; cetak dimatikan.</li>
       <li>Satu akun hanya boleh aktif di satu perangkat.</li>
       <li>Akun baru wajib disetujui admin — mencegah bot &amp; spam.</li>
     </ul>
   </section>
 
-  <p class="about-copy">Whatsap Indo • v1.0.0 • MIT<br/>© mazval-developer-java</p>
+  <p class="about-copy">RTC-Core • v2.0.0 • MIT<br/>© mazval-developer-java</p>
 `;
 
 function openAboutDrawer() {
@@ -4156,7 +4158,7 @@ function renderWallpaperPreview() {
 
   const mode = wpDraft.mode;
   const scale = wpDraft.scale / 100;
-  let label = 'Bawaan Whatsap Indo';
+  let label = 'Bawaan RTC-Core';
 
   if (w.type === 'image' && w.url) {
     layer.style.backgroundImage = `url("${w.url}")`;
@@ -4346,7 +4348,7 @@ function renderHomeBgPreview() {
     layer.classList.add('has-shade');
     safePlay(v);
   }
-  $('hbLabel').textContent = bg.type === 'video' ? 'Video' : bg.type === 'image' ? 'Foto' : 'Bawaan Whatsap Indo';
+  $('hbLabel').textContent = bg.type === 'video' ? 'Video' : bg.type === 'image' ? 'Foto' : 'Bawaan RTC-Core';
   document.querySelectorAll('[data-hb]').forEach((o) => {
     const kind = o.dataset.hb;
     o.classList.toggle('active', kind === 'clear'

@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const db = require('./db');
 const presence = require('./presence');
+const vault = require('./vault');
 const { verifiedOf, isPremium, isAdmin } = require('./auth');
 
 function directKey(a, b) {
@@ -116,7 +117,8 @@ function serializeMessage(row, status, opts = {}) {
       : row.media_url;
   let replyPreview = null;
   if (row.reply_preview) {
-    try { replyPreview = JSON.parse(row.reply_preview); } catch { replyPreview = null; }
+    // reply_preview disimpan terenkripsi (vault) -> dekripsi sebelum di-parse
+    try { replyPreview = JSON.parse(vault.decrypt(row.reply_preview)); } catch { replyPreview = null; }
   }
   return {
     id: row.id,
@@ -125,7 +127,7 @@ function serializeMessage(row, status, opts = {}) {
     senderName: sender ? sender.name : null,
     senderAvatar: sender ? sender.avatar : null,
     type: row.type,
-    body: row.deleted_at ? '' : row.body,
+    body: row.deleted_at ? '' : vault.decrypt(row.body),
     mediaUrl: mediaOut,
     mediaName: row.deleted_at ? null : row.media_name,
     mediaSize: row.deleted_at ? null : row.media_size,
