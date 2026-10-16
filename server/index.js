@@ -14,6 +14,7 @@ const presence = require('./presence');
 const calls = require('./calls');
 const bus = require('./bus');
 const settings = require('./settings');
+const antispam = require('./antispam');
 const bots = require('./bots');
 const referral = require('./referral');
 const webpush = require('web-push');
@@ -248,6 +249,16 @@ async function adminEvent(type, payload = {}) {
   }
 }
 
+// IP yang diblokir otomatis oleh anti-spam pendaftaran -> notifikasi panel admin
+antispam.setNotify(async (row) => {
+  await adminEvent('ip_banned', {
+    name: row.ip,
+    ip: row.ip,
+    reason: row.reason,
+    detail: row.detail,
+  });
+});
+
 // memutus semua socket milik satu akun lalu memberi tahu pemiliknya
 // (kecuali sesi baru yang sedang dipakai login terakhir)
 function kickUserSessions(userId, reason, keepSid = '') {
@@ -270,7 +281,21 @@ async function revokeSessions(userId, reason) {
 // ---------- auth routes ----------
 app.post('/api/auth/register', authLimiter, ah(async (req, res) => {
   const meta = reqMeta(req);
-  const out = await auth.register(req.body || {}, meta);
+  let out;
+  try {
+    out = await auth.register(req.body || {}, meta);
+  } catch (err) {
+    if (err && err.status === 403 && err.code === 'ip_diblokir') {
+      // pendaftaran diblokir anti-spam tetap terlihat di monitor admin
+      await recordLogin({
+        email: String(req.body?.email || '').slice(0, 200),
+        ...meta,
+        result: 'blocked',
+        detail: String(err.message || '').slice(0, 200),
+      });
+    }
+    throw err;
+  }
   res.status(201).json(out);
   if (out.pending) {
     await recordLogin({ userId: out.user.id, email: out.user.email, ...meta, result: 'pending', detail: 'menunggu persetujuan admin' });
@@ -1747,6 +1772,34 @@ app.post('/api/admin/users/:id/unban', auth.requireAuth, requireAdmin, ah(async 
   res.json({ user: adminUser(fresh), stats: await adminStats() });
 }));
 
+// ---------- anti-spam pendaftaran: blokir IP ----------
+// daftar IP yang diblokir (otomatis karena spam, atau manual oleh admin)
+app.get('/api/admin/ip-bans', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  res.json({ bans: await antispam.listBans(200), rules: await antispam.rules() });
+}));
+
+// admin memblokir IP tertentu sendiri (mis. laporan pengguna)
+app.post('/api/admin/ip-bans/ban', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const ip = antispam.normalizeIp(req.body?.ip);
+  if (!ip) return res.status(400).json({ error: 'IP tidak valid' });
+  if (antispam.isLoopback(ip)) return res.status(400).json({ error: 'IP lokal tidak bisa diblokir' });
+  const ban = await antispam.ban(ip, {
+    reason: 'manual',
+    detail: req.body?.reason,
+    actor: req.user.email,
+  });
+  res.json({ ban });
+}));
+
+// membuka blokir IP: permanen sampai admin membuka; kuota pendaftaran ikut direset
+app.post('/api/admin/ip-bans/unban', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const ip = antispam.normalizeIp(req.body?.ip);
+  if (!ip) return res.status(400).json({ error: 'IP tidak valid' });
+  const ok = await antispam.unban(ip);
+  if (!ok) return res.status(404).json({ error: 'IP ini tidak sedang diblokir' });
+  res.json({ ok: true, ip });
+}));
+
 // daftar lengkap untuk layar pemantauan (status akun, online, device, riwayat masuk)
 app.get('/api/admin/monitor', auth.requireAuth, requireAdmin, ah(async (req, res) => {
   const q = String(req.query.q || '').trim();
@@ -1779,6 +1832,7 @@ app.get('/api/admin/monitor', auth.requireAuth, requireAdmin, ah(async (req, res
     users: rows.map((r) => adminUser(r, online.has(r.id))),
     pending: pendingRows.map((r) => adminUser(r, online.has(r.id))),
     logs,
+    ipBans: await antispam.listBans(50),
     stats: await adminStats(),
   });
 }));

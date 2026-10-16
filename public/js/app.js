@@ -4690,7 +4690,7 @@ $('notifSoundToggle').addEventListener('change', (e) => {
 });
 
 /* ================= panel admin ================= */
-const adm = { plans: [], homeBg: { type: 'default', url: null }, pendingBg: null, users: [], pending: [], logs: [], timer: null };
+const adm = { plans: [], homeBg: { type: 'default', url: null }, pendingBg: null, users: [], pending: [], logs: [], ipBans: [], timer: null };
 
 const ADMIN_EVENT_LABEL = {
   registered: 'mendaftar — menunggu persetujuan',
@@ -4702,6 +4702,7 @@ const ADMIN_EVENT_LABEL = {
   logout: 'keluar dari akun',
   online: 'daring',
   offline: 'luring',
+  ip_banned: 'diblokir otomatis — anti-spam pendaftaran',
 };
 
 async function openAdminPanel() {
@@ -4739,15 +4740,23 @@ function renderAdmMonitor(mon) {
   adm.users = mon.users || [];
   adm.pending = mon.pending || [];
   adm.logs = mon.logs || [];
+  adm.ipBans = mon.ipBans || [];
   if (mon.stats) renderAdmStats(mon.stats);
 
   const onlineCount = adm.users.filter((u) => u.online).length;
-  $('admLiveText').textContent = `${onlineCount} daring • ${adm.users.length} pengguna • ${adm.logs.length} upaya masuk terakhir`;
+  $('admLiveText').textContent = `${onlineCount} daring • ${adm.users.length} pengguna • ${adm.logs.length} upaya masuk terakhir`
+    + (adm.ipBans.length ? ` • ${adm.ipBans.length} IP diblokir` : '');
   $('admLive').classList.toggle('is-offline', onlineCount === 0);
 
   const badgeCount = $('admPendingCount');
   badgeCount.textContent = adm.pending.length;
   badgeCount.classList.toggle('hidden', adm.pending.length === 0);
+
+  const banCount = $('admIpBanCount');
+  if (banCount) {
+    banCount.textContent = adm.ipBans.length;
+    banCount.classList.toggle('hidden', adm.ipBans.length === 0);
+  }
 
   $('admPending').innerHTML = adm.pending.map((u) => `
     <div class="adm-user" data-row="${esc(u.id)}">
@@ -4762,11 +4771,19 @@ function renderAdmMonitor(mon) {
     </div>`).join('') || '<div class="empty-state">Tidak ada pendaftaran menunggu.</div>';
 
   $('admLogs').innerHTML = adm.logs.slice(0, 12).map((l) => `
-    <div class="adm-log log-${esc(l.result)}">
+    <div class="adm-log log-${esc(l.result)}" title="${esc(l.detail || '')}">
       <span class="adm-log-time">${fmtTime(l.at)}</span>
       <span class="adm-log-mail">${esc(l.email || '—')}</span>
       <span class="adm-log-res">${logLabel(l.result)}</span>
     </div>`).join('') || '<div class="empty-state">Belum ada upaya masuk.</div>';
+
+  $('admIpBans').innerHTML = adm.ipBans.map((b) => `
+    <div class="adm-log log-failed" title="${esc(b.detail || '')}">
+      <span class="adm-log-time">${fmtTime(b.at)}</span>
+      <span class="adm-log-mail">${esc(b.ip)}</span>
+      <span class="adm-log-res">${b.reason === 'manual' ? 'admin' : 'spam'}${Number(b.hits) > 1 ? ` ×${Number(b.hits)}` : ''}</span>
+      <button class="tag tag-grant" data-act="unban-ip" data-id="${esc(b.ip)}">Buka blokir</button>
+    </div>`).join('') || '<div class="empty-state">Tidak ada IP yang diblokir.</div>';
 
   $('admMonitor').innerHTML = adm.users.map((u) => `
     <div class="adm-user" data-row="${esc(u.id)}">
@@ -4781,7 +4798,7 @@ function renderAdmMonitor(mon) {
 function logLabel(result) {
   return ({
     success: 'masuk', pending: 'menunggu', rejected: 'ditolak', banned: 'diblokir',
-    failed: 'gagal', logout: 'keluar',
+    failed: 'gagal', logout: 'keluar', blocked: 'daftar diblokir',
   })[result] || result;
 }
 
@@ -4828,6 +4845,15 @@ const ADM_ACTION_MSG = {
 };
 
 async function admAction(act, id, name) {
+  // blokir / buka blokir IP (anti-spam pendaftaran)
+  if (act === 'unban-ip') {
+    try {
+      await api('/api/admin/ip-bans/unban', { method: 'POST', body: { ip: id } });
+      admMsg('admMsg', `IP ${id} dibuka blokirnya — kuota pendaftaran IP direset`, false);
+      await refreshAdminMonitor();
+    } catch (err) { admMsg('admMsg', err.message, true); }
+    return;
+  }
   const body = {};
   if (act === 'reject' || act === 'ban') {
     const reason = window.prompt(act === 'ban' ? `Alasan memblokir ${name || 'akun'}:` : `Alasan menolak ${name || 'akun'}:`, '');
@@ -4852,7 +4878,7 @@ document.addEventListener('click', (e) => {
 });
 
 // peristiwa admin yang layak ditonjolkan: kartu notifikasi + bunyi khusus
-const ADMIN_ALERT_EVENTS = new Set(['registered', 'approved', 'rejected', 'banned', 'unbanned']);
+const ADMIN_ALERT_EVENTS = new Set(['registered', 'approved', 'rejected', 'banned', 'unbanned', 'ip_banned']);
 
 // peristiwa real-time dari server (pendaftaran, masuk/daring, blokir)
 function onAdminEvent(ev) {
@@ -4861,7 +4887,9 @@ function onAdminEvent(ev) {
   const label = ADMIN_EVENT_LABEL[ev.type];
   const drawerOpen = $('adminDrawer') && !$('adminDrawer').classList.contains('hidden');
   const isAlert = ADMIN_ALERT_EVENTS.has(ev.type);
-  const title = ev.type === 'registered' ? 'Pendaftar baru' : 'Panel admin';
+  const title = ev.type === 'registered' ? 'Pendaftar baru'
+    : ev.type === 'ip_banned' ? 'IP Diblokir (Anti-Spam)'
+    : 'Panel admin';
   const body = `${who} ${label || 'memperbarui akun'}`;
   const payload = { title, body, tag: 'wa-admin', silent: true };
 

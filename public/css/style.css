@@ -1538,8 +1538,10 @@ html[data-theme="dark"] #emptyHomeBg::after { background: rgba(4, 22, 18, .74); 
 .adm-log-mail { color: var(--wa-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .adm-log-res { flex-shrink: 0; font-weight: 600; color: var(--wa-text-2); }
 .adm-log-success .adm-log-res { color: var(--wa-teal-dark); }
-.adm-log-failed .adm-log-res, .adm-log-rejected .adm-log-res, .adm-log-banned .adm-log-res { color: var(--wa-danger-text); }
+.adm-log-failed .adm-log-res, .adm-log-rejected .adm-log-res,
+.adm-log-banned .adm-log-res, .adm-log-blocked .adm-log-res { color: var(--wa-danger-text); }
 .adm-log-pending .adm-log-res { color: #8a6100; }
+.adm-log .tag { flex-shrink: 0; }
 .adm-plans { display: flex; flex-direction: column; gap: 7px; }
 .adm-plan-row { display: flex; align-items: center; gap: 7px; }
 .adm-plan-row input {

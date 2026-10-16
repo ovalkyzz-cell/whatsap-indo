@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
 const referral = require('./referral');
+const antispam = require('./antispam');
 
 const JWT_SECRET = process.env.JWT_SECRET || resolveSecret();
 const TOKEN_TTL = '30d';
@@ -102,56 +103,77 @@ function publicUser(row) {
 }
 
 async function register({ email, name, password, ref }, meta = {}) {
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw httpError(400, 'Email tidak valid');
-  }
-  if (!name || name.trim().length < 2) {
-    throw httpError(400, 'Nama minimal 2 karakter');
-  }
-  if (!password || password.length < 6) {
-    throw httpError(400, 'Password minimal 6 karakter');
-  }
-  // kode undangan divalidasi dulu supaya tidak ada baris tersisip separuh jalan
-  const inviter = await referral.findInviter(ref);
-  const existing = await db.get('SELECT id FROM users WHERE email = ?', email.trim().toLowerCase());
-  if (existing) throw httpError(409, 'Email sudah terdaftar');
+  const ip = antispam.normalizeIp(meta.ip);
+  // IP diblokir / kuota pendaftaran IP terpakai -> ditolak sebelum ada baris apa pun
+  await antispam.assertRegisterAllowed(ip);
 
-  const id = crypto.randomUUID();
-  const hash = await bcrypt.hash(password, 10);
-  const now = Date.now();
-  // akun baru wajib disetujui admin lebih dulu, kecuali email admin/verifikasi
-  const status = ADMIN_EMAILS.includes(email.trim().toLowerCase()) ? 'active' : 'pending';
-  await db.run(
-    `INSERT INTO users (id, email, name, password_hash, verified, account_status, created_at, last_seen,
-       referred_by, bot_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id,
-    email.trim().toLowerCase(),
-    name.trim(),
-    hash,
-    isVerifiedEmail(email) ? 1 : 0,
-    status,
-    now,
-    now,
-    inviter ? inviter.id : null,
-    inviter ? referral.WELCOME_TOKENS : 0
-  );
+  let saved = false;
+  try {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw httpError(400, 'Email tidak valid');
+    }
+    if (!name || name.trim().length < 2) {
+      throw httpError(400, 'Nama minimal 2 karakter');
+    }
+    if (!password || password.length < 6) {
+      throw httpError(400, 'Password minimal 6 karakter');
+    }
+    // kode undangan divalidasi dulu supaya tidak ada baris tersisip separuh jalan
+    const inviter = await referral.findInviter(ref);
+    const existing = await db.get('SELECT id FROM users WHERE email = ?', email.trim().toLowerCase());
+    if (existing) throw httpError(409, 'Email sudah terdaftar');
 
-  const row = await db.get('SELECT * FROM users WHERE id = ?', id);
-  if (status !== 'active') {
-    return {
-      user: publicUser(row),
-      pending: true,
-      refApplied: !!inviter,
-      message: inviter
-        ? `Pendaftaran diterima (kode undangan ${referral.normalizeCode(ref)} dipakai). Menunggu persetujuan admin sebelum bisa masuk.`
-        : 'Pendaftaran diterima. Menunggu persetujuan admin sebelum bisa masuk.',
-    };
+    const id = crypto.randomUUID();
+    const hash = await bcrypt.hash(password, 10);
+    const now = Date.now();
+    // akun baru wajib disetujui admin lebih dulu, kecuali email admin/verifikasi
+    const status = ADMIN_EMAILS.includes(email.trim().toLowerCase()) ? 'active' : 'pending';
+    await db.run(
+      `INSERT INTO users (id, email, name, password_hash, verified, account_status, created_at, last_seen,
+         referred_by, bot_tokens)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      email.trim().toLowerCase(),
+      name.trim(),
+      hash,
+      isVerifiedEmail(email) ? 1 : 0,
+      status,
+      now,
+      now,
+      inviter ? inviter.id : null,
+      inviter ? referral.WELCOME_TOKENS : 0
+    );
+    saved = true;
+    // pendaftaran sukses tercatat per IP: dasar limit 1 akun / 24 jam
+    await antispam.recordAttempt({ ip, email, ok: true, reason: 'sukses' });
+
+    const row = await db.get('SELECT * FROM users WHERE id = ?', id);
+    if (status !== 'active') {
+      return {
+        user: publicUser(row),
+        pending: true,
+        refApplied: !!inviter,
+        message: inviter
+          ? `Pendaftaran diterima (kode undangan ${referral.normalizeCode(ref)} dipakai). Menunggu persetujuan admin sebelum bisa masuk.`
+          : 'Pendaftaran diterima. Menunggu persetujuan admin sebelum bisa masuk.',
+      };
+    }
+    // akun aktif langsung: pengundang langsung mendapat token undangannya
+    if (inviter) await referral.rewardInviter(id);
+    const fresh = await startSession(row, meta);
+    return { user: publicUser(fresh), token: sign(fresh), refApplied: !!inviter };
+  } catch (err) {
+    // percobaan gagal ikut dihitung: beruntun -> IP ditandai spam
+    if (!saved && err && Number(err.status) >= 400 && Number(err.status) < 500) {
+      await antispam.recordAttempt({
+        ip,
+        email,
+        ok: false,
+        reason: err.code || (err.status === 409 ? 'email-terdaftar' : 'validasi'),
+      });
+    }
+    throw err;
   }
-  // akun aktif langsung: pengundang langsung mendapat token undangannya
-  if (inviter) await referral.rewardInviter(id);
-  const fresh = await startSession(row, meta);
-  return { user: publicUser(fresh), token: sign(fresh), refApplied: !!inviter };
 }
 
 async function login({ email, password }, meta = {}) {

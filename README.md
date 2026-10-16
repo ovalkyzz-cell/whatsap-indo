@@ -10,7 +10,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Peran | Pembuat & developer utama **Whatsap Indo** |
 | Email resmi | `ovalkyzz@gmail.com` (admin & CS) |
 | Rilis pertama | **26 September 2026** |
-| Versi terkini | **1.0.0** (pembaruan terakhir **15 Oktober 2026**) |
+| Versi terkini | **1.0.0** (pembaruan terakhir **16 Oktober 2026**) |
 | API pendukung | [api-mazval.zone.id](https://api-mazval.zone.id) (bot, tools, AI, downloader) |
 | Repository | [github.com/ovalkyzz-cell/whatsap-indo](https://github.com/ovalkyzz-cell/whatsap-indo) |
 | Produksi | [whatsap-indo.vercel.app](https://whatsap-indo.vercel.app) / [whatsapp-mazval.zone.id](https://whatsapp-mazval.zone.id) |
@@ -24,6 +24,7 @@ Clone WhatsApp berbasis web dengan autentikasi **email**, chat **real-time**, ki
 | Autentikasi | Daftar & masuk dengan email + password (bcrypt + JWT) |
 | Sesi | **Satu akun satu device** — login baru mematikan sesi & socket perangkat lama |
 | Persetujuan | Akun baru berstatus **menunggu** — harus disetujui admin sebelum bisa masuk |
+| Anti-spam daftar | **Email satu kali** + **1 akun per IP tiap 24 jam**; pelanggar & gagal beruntun **auto-blokir IP** permanen sampai admin membuka — masuk dengan akun lama tetap diizinkan |
 | Chat real-time | Socket.IO — pesan, indikator mengetik, status online/terakhir dilihat |
 | Tanda centang | ✓ terkirim → ✓✓ diterima → ✓✓ biru dibaca (read receipt) |
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
@@ -560,6 +561,43 @@ Foto profil bot — **khusus admin**:
   ditolak `400`; akun non-bot → `404`; user biasa → `403`;
 - badge centang biru & penanda `isBot` tetap melekat setelah diedit, labelnya
   "Bot resmi • Siap membantu".
+
+### Anti-spam pendaftaran & blokir IP (`server/antispam.js`)
+
+Pendaftaran dikendalikan tiga lapis: modul `server/antispam.js`, tabel `reg_logs`
+(ledger percobaan per IP) dan `ip_bans` (blokir permanen).
+
+- **Email satu kali** — `users.email` UNIQUE; memakai email yang sudah terdaftar →
+  `409 Email sudah terdaftar`, dan percobaannya ikut tercatat di ledger.
+- **Limit per IP** — maksimal **1 pendaftaran sukses per IP dalam 24 jam** (ambang
+  `perIp` bisa diubah lewat `settings.antispam`). Percobaan ke-2 dari IP yang sama
+  dianggap spam → IP **diblokir otomatis**, pendaftaran berikutnya menerima `403`
+  berkode `ip_diblokir` dengan pesan *…Hubungi admin untuk membuka blokir* — pesan
+  langsung tampil di form daftar.
+- **Gagal beruntun** — ≥ 10 percobaan pendaftaran gagal dalam 10 menit dari satu IP
+  juga memblokir IP otomatis.
+- **Login tidak dibatasi** — blokir hanya menahan **pendaftaran**; akun lama tetap
+  bisa masuk dari IP yang diblokir.
+- **IP lokal dikecualikan** — loopback (`127.0.0.1`, `::1`) tidak dihitung maupun
+  diblokir, sehingga server lokal & suite test tidak mengunci dirinya sendiri. IP
+  klien diambil dari `X-Forwarded-For` lewat *trust proxy* Express (otomatis aktif
+  di Vercel; di belakang nginx set `TRUST_PROXY=1`), sehingga akurat dan sulit
+  dipalsukan klien.
+- **Panel admin** — bagian **IP Diblokir** menampilkan IP, alasan, jumlah pelanggaran
+  (`×N`) dan waktunya. Tombol **Buka blokir** memakai `POST /api/admin/ip-bans/unban`
+  yang membuka blokir **dan mereset kuota pendaftaran IP** (supaya tidak langsung kena
+  lagi), IP bisa diblokir manual via `POST /api/admin/ip-bans/ban`, dan daftar penuh
+  diambil lewat `GET /api/admin/ip-bans` — semuanya hanya untuk sesi admin (`401`/`403`).
+- **Notifikasi** — blokir otomatis mengirim `admin:event ip_banned`: kartu notifikasi
+  *IP Diblokir (Anti-Spam)* bersuara khusus pada admin, plus baris `blocked` di
+  riwayat monitor (*upaya masuk*) lengkap dengan alasannya.
+- **Bersih-bersih** — ledger percobaan yang lebih tua dari 30 hari dihapus berkala.
+  Blokir bersifat **permanen** sampai admin membukanya.
+
+Uji otomatis: `npm run test:antispam` (30 pemeriksaan) menjalankan server sungguhan
+dengan `TRUST_PROXY=1` lalu memalsukan `X-Forwarded-For` per kasus — termasuk alur
+blokir otomatis, notifikasi admin, buka blokir, blokir manual, login dari IP terblokir
+dan penolakan non-admin.
 
 ### Keamanan
 

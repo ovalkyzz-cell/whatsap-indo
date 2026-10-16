@@ -80,6 +80,29 @@ CREATE TABLE IF NOT EXISTS login_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_login_logs_at ON login_logs (at);
 
+-- anti-spam pendaftaran: ledger percobaan daftar per IP (dasar limit 1 akun/24 jam)
+CREATE TABLE IF NOT EXISTS reg_logs (
+  id     TEXT PRIMARY KEY,
+  ip     TEXT NOT NULL,
+  email  TEXT,
+  ok     SMALLINT NOT NULL DEFAULT 0,
+  reason TEXT,
+  at     BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reg_logs_ip_at ON reg_logs (ip, at);
+
+-- IP yang diblokir karena spam pendaftaran: permanen sampai admin membukanya
+CREATE TABLE IF NOT EXISTS ip_bans (
+  ip       TEXT PRIMARY KEY,
+  reason   TEXT NOT NULL,
+  detail   TEXT,
+  hits     INTEGER NOT NULL DEFAULT 1,
+  actor    TEXT,
+  at       BIGINT NOT NULL,
+  last_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ip_bans_at ON ip_bans (at);
+
 CREATE TABLE IF NOT EXISTS chats (
   id         TEXT PRIMARY KEY,
   type       TEXT NOT NULL DEFAULT 'direct',
@@ -297,6 +320,29 @@ CREATE TABLE IF NOT EXISTS login_logs (
   at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_login_logs_at ON login_logs (at);
+
+-- anti-spam pendaftaran: ledger percobaan daftar per IP (dasar limit 1 akun/24 jam)
+CREATE TABLE IF NOT EXISTS reg_logs (
+  id     TEXT PRIMARY KEY,
+  ip     TEXT NOT NULL,
+  email  TEXT,
+  ok     INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reg_logs_ip_at ON reg_logs (ip, at);
+
+-- IP yang diblokir karena spam pendaftaran: permanen sampai admin membukanya
+CREATE TABLE IF NOT EXISTS ip_bans (
+  ip       TEXT PRIMARY KEY,
+  reason   TEXT NOT NULL,
+  detail   TEXT,
+  hits     INTEGER NOT NULL DEFAULT 1,
+  actor    TEXT,
+  at       INTEGER NOT NULL,
+  last_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ip_bans_at ON ip_bans (at);
 
 CREATE TABLE IF NOT EXISTS chats (
   id         TEXT PRIMARY KEY,
