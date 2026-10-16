@@ -4691,7 +4691,8 @@ function openProfile() {
     : 'Gratis';
   $('factPlan').style.color = prem.active ? '#0a6ed1' : '';
   $('factJoined').textContent = fmtDate(S.me.createdAt);
-  $('factId').textContent = S.me.id || '—';
+  const idInput = $('profileUserId');
+  if (idInput) idInput.value = S.me.id || '—';
   // link kontak pribadi: ?u=<id> -> penerima langsung bisa membuka chat
   const clInput = $('myContactLink');
   if (clInput) {
@@ -4701,6 +4702,14 @@ function openProfile() {
   $('profileMsg').classList.add('hidden');
   openDrawer('profileDrawer');
 }
+
+// salin ID pengguna dari drawer profil
+$('btnCopyUserId') && $('btnCopyUserId').addEventListener('click', async () => {
+  const v = $('profileUserId') && $('profileUserId').value;
+  if (!v || v === '—') return;
+  const ok = await copyToClipboard(v);
+  toast(ok ? 'ID pengguna disalin' : 'Gagal menyalin');
+});
 
 // salin / bagikan link kontak dari drawer profil
 $('btnCopyContactLink') && $('btnCopyContactLink').addEventListener('click', async () => {
