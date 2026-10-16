@@ -422,7 +422,7 @@ input, textarea { font: inherit; }
   background: var(--wa-header); color: var(--wa-text); font-size: 16px;
 }
 .drawer-header .icon-btn { font-size: 26px; }
-.profile-body { padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.profile-body { padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; overflow-x: hidden; }
 .profile-body label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--wa-teal); }
 .profile-body input {
   padding: 10px 12px; border: none; border-bottom: 2px solid var(--wa-border);
@@ -433,10 +433,11 @@ input, textarea { font: inherit; }
 .avatar-upload { text-align: center; cursor: pointer; color: var(--wa-text-2) !important; }
 .avatar-upload small { display: block; margin-top: 10px; }
 .profile-verified {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0;
   background: var(--wa-blue-soft); color: var(--wa-blue-text); border-radius: 8px;
-  padding: 9px 12px; font-size: 13.5px; font-weight: 500;
+  padding: 9px 12px; font-size: 13.5px; font-weight: 500; text-align: left;
 }
+.profile-verified > span:last-child { min-width: 0; }
 
 /* ---------- call ---------- */
 .call-modal {
@@ -666,6 +667,7 @@ input, textarea { font: inherit; }
 .profile-section { display: flex; flex-direction: column; gap: 6px; }
 .ps-label { font-size: 11.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--wa-accent-text); }
 .profile-section input, .profile-section textarea {
+  width: 100%; max-width: 100%;
   padding: 11px 13px; border: 1px solid var(--wa-border); border-radius: 11px;
   outline: none; background: var(--wa-input-bg); color: var(--wa-text); font-size: 15px;
   font-family: inherit; resize: none; transition: border .15s, box-shadow .15s, background .15s;
@@ -675,11 +677,14 @@ input, textarea { font: inherit; }
 }
 .profile-section input:disabled { color: var(--wa-text-2); background: var(--wa-bg); }
 .ps-counter { align-self: flex-end; font-size: 11px; color: var(--wa-text-2); }
-.profile-facts { display: flex; flex-direction: column; background: var(--wa-bg); border-radius: 13px; padding: 4px 14px; }
-.fact { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--wa-dash); font-size: 13.5px; }
+.profile-facts { display: flex; flex-direction: column; background: var(--wa-bg); border-radius: 13px; padding: 4px 14px; overflow: hidden; }
+.fact { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--wa-dash); font-size: 13.5px; min-width: 0; }
 .fact:last-child { border-bottom: none; }
-.fact span { color: var(--wa-text-2); }
-.fact strong { font-weight: 600; text-align: right; min-width: 0; }
+.fact span { color: var(--wa-text-2); flex-shrink: 0; white-space: nowrap; }
+.fact strong {
+  font-weight: 600; text-align: right; min-width: 0; max-width: 60%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-ghost {
   border: 1px solid var(--wa-border); background: var(--wa-panel); padding: 12px; border-radius: 26px;
@@ -740,7 +745,6 @@ input, textarea { font: inherit; }
   .msg { max-width: 82%; }
   .messages { padding: 14px 10px; }
   #localVideo { width: 120px; height: 90px; }
-  .profile-facts .fact strong { max-width: 60%; }
 }
 @keyframes slideInRightMobile { from { transform: translateY(26px); opacity: .4; } to { transform: none; opacity: 1; } }
 
@@ -2662,12 +2666,14 @@ html[data-accent="batu"][data-theme="dark"]   { --wa-accent-text: #94a3b8; --wa-
 .cc-go .ico { width: 22px; height: 22px; }
 
 /* ================= baris link undangan / link kontak ================= */
-.invite-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.invite-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; min-width: 0; }
 .invite-row input {
-  flex: 1; min-width: 0; padding: 9px 11px; border-radius: 10px; font-size: 12.5px;
+  flex: 1 1 0; width: 100%; min-width: 0; padding: 9px 11px; border-radius: 10px; font-size: 12.5px;
   border: 1px solid var(--wa-border, #e9edef); background: var(--wa-input-bg, #fafbfc);
   color: var(--wa-text, #111b21); font-family: ui-monospace, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
 }
+.invite-row .icon-btn { flex-shrink: 0; }
 .invite-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .invite-actions .btn-ghost { flex: 1; min-width: 120px; justify-content: center; }
 .wp-hint { font-size: 11.5px; color: var(--wa-text-2, #667781); line-height: 1.5; margin-top: 8px; }
