@@ -16,7 +16,9 @@
     "test:storage-save": "node test/storage-save.js",
     "test:storage-manage": "node test/storage-manage.js",
     "test:db-fallback": "node test/db-fallback.js",
-    "test:db-chunks": "node test/db-chunks.js"
+    "test:db-chunks": "node test/db-chunks.js",
+    "test:status-upload": "node test/status-upload.js",
+    "test:admin-notify": "node test/admin-notify.js"
   },
   "keywords": [
     "whatsapp-clone",

@@ -1585,7 +1585,8 @@ function showNotifCard(data) {
   });
   layer.appendChild(card);
   while (layer.children.length > 3) dismissNotif(layer.firstElementChild, true);
-  if (NOTIF.sound) notifSound();
+  // silent = pemanggil sudah membunyikan bunyi sendiri (mis. bunyi khusus admin)
+  if (NOTIF.sound && !data.silent) notifSound();
   try { navigator.vibrate && navigator.vibrate([50, 30, 50]); } catch { /* getar tidak tersedia */ }
   card._t = setTimeout(() => dismissNotif(card), 5200);
   card.addEventListener('mouseenter', () => clearTimeout(card._t));
@@ -1636,6 +1637,28 @@ function notifSound() {
       o.stop(t + delay + .22);
     });
   } catch { beep('notif'); }
+}
+
+// bunyi khusus panel admin (pendaftar baru, persetujuan, blokir):
+// empat nada naik berbeda jelas dari notifikasi pesan biasa
+function adminAlert() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    [[784, 0], [987.77, .1], [1318.5, .2], [1567.98, .3]].forEach(([freq, delay]) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(.0001, t + delay);
+      g.gain.exponentialRampToValueAtTime(.2, t + delay + .015);
+      g.gain.exponentialRampToValueAtTime(.0001, t + delay + .17);
+      o.start(t + delay);
+      o.stop(t + delay + .21);
+    });
+    try { navigator.vibrate && navigator.vibrate([40, 60, 40, 60, 80]); } catch { /* getar tak tersedia */ }
+  } catch { beep('out'); }
 }
 
 function urlB64ToUint8Array(base64String) {
@@ -1794,7 +1817,7 @@ function ncRenderBell() {
 function ncItemHtml(i) {
   const face = i.icon
     ? `<img src="${esc(i.icon)}" alt="">`
-    : `<span>${esc(i.kind === 'status' ? '◉' : i.kind === 'system' ? '★' : i.kind === 'call' ? '☎' : (i.title || '?').charAt(0).toUpperCase())}</span>`;
+    : `<span>${esc(i.kind === 'status' ? '◉' : i.kind === 'system' ? '★' : i.kind === 'admin' ? '⚑' : i.kind === 'call' ? '☎' : (i.title || '?').charAt(0).toUpperCase())}</span>`;
   return `
   <button type="button" class="nc-item${i.read ? '' : ' unread'}" data-nc="${esc(i.id)}">
     <span class="nc-ico avatar">${face}</span>
@@ -1860,6 +1883,7 @@ function ncClick(id) {
   ncRenderBell();
   closeDrawers();
   if (item.chatId && S.activeChatId !== item.chatId) openChat(item.chatId);
+  else if (item.kind === 'admin' && S.me && S.me.role === 'admin') openAdminPanel();
 }
 
 $('btnNotifCenter').addEventListener('click', ncOpen);
@@ -2031,16 +2055,41 @@ async function uploadFileChunked(file, onProgress = () => {}) {
   return { url: done.url, name: file.name, size: file.size, mime: file.type, type: done.type };
 }
 
+/* Unggah multipart lewat server. Batas permintaan di hosting 4,5MB, di lokal 2GB. */
+function uploadViaServer(file, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+    xhr.setRequestHeader('Authorization', `Bearer ${S.token}`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && typeof onProgress === 'function') onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else { const err = new Error(data.error || 'Upload gagal'); err.status = xhr.status; reject(err); }
+      } catch { const err = new Error('Upload gagal'); err.status = xhr.status; reject(err); }
+    };
+    xhr.onerror = () => { const err = new Error('Gagal terhubung ke server'); err.status = 0; reject(err); };
+    const fd = new FormData();
+    fd.append('file', file);
+    xhr.send(fd);
+  });
+}
+
+// batas body permintaan Vercel (4,5MB) -> multipart ditahan lebih rendah di server
+const HOSTED_MULTIPART_LIMIT = 4 * 1024 * 1024;
+
 async function uploadFile(file, onProgress = () => {}) {
   // di hosting file dikirim langsung ke Blob (lolos batas 4,5MB per request);
   // bila endpoint tanda tangan tidak ada (mode lokal) -> upload lewat server
   let sign = null;
+  let signErr = null;
   try {
     sign = await api('/api/uploads/sign', {
       method: 'POST',
       body: { name: file.name, size: file.size, mime: file.type },
     });
-  } catch { /* mode lokal / gagal -> lanjut upload server */ }
+  } catch (err) { signErr = err; }
 
   if (sign && sign.presignedUrl) {
     try {
@@ -2052,23 +2101,22 @@ async function uploadFile(file, onProgress = () => {}) {
     }
   }
 
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload');
-    xhr.setRequestHeader('Authorization', `Bearer ${S.token}`);
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable && typeof onProgress === 'function') onProgress(e.loaded / e.total); };
-    xhr.onload = () => {
-      try {
-        const data = JSON.parse(xhr.responseText);
-        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-        else reject(new Error(data.error || 'Upload gagal'));
-      } catch { reject(new Error('Upload gagal')); }
-    };
-    xhr.onerror = () => reject(new Error('Gagal terhubung ke server'));
-    const fd = new FormData();
-    fd.append('file', file);
-    xhr.send(fd);
-  });
+  // 501 = hosting tanpa Blob (mode lokal, unggah ke disk 2GB).
+  // Selain itu tanda tangan gagal (mis. store disuspend): jalur multipart
+  // dibatasi ~4MB sehingga file besar wajib lewat potongan.
+  const localNoBlob = !!signErr && signErr.status === 501;
+  if (!localNoBlob && file.size > HOSTED_MULTIPART_LIMIT) {
+    return uploadFileChunked(file, onProgress);
+  }
+
+  try {
+    return await uploadViaServer(file, onProgress);
+  } catch (err) {
+    // server menolak ukuran / koneksi putus -> cadangan terakhir lewat potongan
+    const st = err && err.status;
+    if (!st || st === 413 || st >= 500) return uploadFileChunked(file, onProgress);
+    throw err;
+  }
 }
 
 async function uploadAndSend(file, text, chatId, opts = {}) {
@@ -4803,19 +4851,49 @@ document.addEventListener('click', (e) => {
   void admAction(btn.dataset.act, btn.dataset.id, name);
 });
 
+// peristiwa admin yang layak ditonjolkan: kartu notifikasi + bunyi khusus
+const ADMIN_ALERT_EVENTS = new Set(['registered', 'approved', 'rejected', 'banned', 'unbanned']);
+
 // peristiwa real-time dari server (pendaftaran, masuk/daring, blokir)
 function onAdminEvent(ev) {
   if (!ev || !ev.type) return;
   const who = ev.user?.name || ev.name || ev.user?.email || '';
   const label = ADMIN_EVENT_LABEL[ev.type];
   const drawerOpen = $('adminDrawer') && !$('adminDrawer').classList.contains('hidden');
-  if (!drawerOpen) {
-    if (ev.type === 'registered') toast(`${who} mendaftar — menunggu persetujuan`);
+  const isAlert = ADMIN_ALERT_EVENTS.has(ev.type);
+  const title = ev.type === 'registered' ? 'Pendaftar baru' : 'Panel admin';
+  const body = `${who} ${label || 'memperbarui akun'}`;
+  const payload = { title, body, tag: 'wa-admin', silent: true };
+
+  // tersimpan di pusat notifikasi (badge lonceng) supaya tak terlewat.
+  // ref memuat waktu peristiwa: tab lain yang menerima event identik tidak
+  // menduplikasi, sedangkan peristiwa berulang tetap tercatat terpisah.
+  if (isAlert || ev.type === 'login') {
+    const at = ev.at || Date.now();
+    ncAdd({
+      kind: 'admin',
+      title,
+      body,
+      ref: `admin-${ev.type}-${ev.user?.id || ev.userId || who}-${at}`,
+      at,
+    });
+  }
+
+  // bunyi khusus panel admin — berbeda dari nada pesan masuk
+  if (isAlert && NOTIF.sound) adminAlert();
+
+  if (drawerOpen) {
+    if (label) admMsg('admMsg', body, ev.type === 'rejected' || ev.type === 'banned');
+    clearTimeout(adm.timer);
+    adm.timer = setTimeout(refreshAdminMonitor, 250);
     return;
   }
-  if (label) admMsg('admMsg', `${who} ${label}`, ev.type === 'rejected' || ev.type === 'banned');
-  clearTimeout(adm.timer);
-  adm.timer = setTimeout(refreshAdminMonitor, 250);
+
+  // panel tertutup: kartu notifikasi ala WhatsApp, lalu notifikasi sistem
+  const visible = document.visibilityState === 'visible';
+  const focused = visible && document.hasFocus();
+  if (isAlert && visible) showNotifCard(payload);
+  if (!focused) void showSystemNotif(payload);
 }
 
 function renderAdmStats(stats) {
@@ -5757,7 +5835,7 @@ function renderStatusPreview() {
   if (media) {
     box.style.background = '#0b141a';
     box.innerHTML = media.type === 'video'
-      ? `<video src="${esc(media.url)}" muted playsinline></video>`
+      ? `<video src="${esc(media.url)}" muted playsinline controls preload="metadata"></video>`
       : `<img src="${esc(media.url)}" alt="">`;
   } else {
     box.style.background = S.statusBg;
@@ -5917,6 +5995,17 @@ function showStory() {
     story.video = video;
     video.addEventListener('ended', nextStory, { once: true });
     video.addEventListener('error', nextStory, { once: true });
+    // bilah progres mengikuti durasi video nyata (bukan timer tetap 7 detik)
+    const tick = () => {
+      if (story.video !== video || !bar) return;
+      const d = video.duration;
+      const p = Number.isFinite(d) && d > 0 ? Math.min(1, video.currentTime / d) : 0;
+      bar.style.setProperty('--p', `${p * 100}%`);
+    };
+    video.addEventListener('loadedmetadata', tick);
+    video.addEventListener('timeupdate', tick);
+    video.addEventListener('seeked', tick);
+    tick();
     return;
   }
 
