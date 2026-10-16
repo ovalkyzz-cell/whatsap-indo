@@ -255,6 +255,33 @@ async function startApp() {
   void syncMissedCalls(); // riwayat panggilan tak terjawab -> pusat notifikasi
   updateComposerButtons();
   connectSocket();
+  void handleDeepLinks(); // ?join=<kode grup> & ?u=<id kontak>
+}
+
+/* deep link: ?join=<kode> -> bergabung ke grup; ?u=<id> -> buka chat kontak.
+   Berjalan setelah sesi valid; parameter dibersihkan dari URL agar tidak
+   terproses ulang saat reload. */
+async function handleDeepLinks() {
+  const params = new URLSearchParams(location.search);
+  const join = params.get('join');
+  const u = params.get('u');
+  if (!join && !u) return;
+  // bersihkan URL tanpa reload
+  try {
+    const clean = location.pathname + (params.toString() ? '' : '') + location.hash;
+    history.replaceState(null, '', clean);
+  } catch { /* abaikan */ }
+
+  if (join) {
+    try {
+      const data = await api(`/api/chats/join/${encodeURIComponent(join)}`, { method: 'POST' });
+      await loadChats();
+      if (data.chatId) openChat(data.chatId);
+      toast(data.already ? `Anda sudah anggota grup ${data.name || ''}` : `Berhasil bergabung ke grup ${data.name || ''} ✓`);
+    } catch (err) { toast(err.message); }
+  } else if (u) {
+    await openChatWithUser(u);
+  }
 }
 
 function renderMe() {
@@ -346,7 +373,12 @@ function previewText(chat) {
   const m = chat.lastMessage;
   if (!m) return 'Mulai percakapan';
   if (m.deleted) return 'Pesan dihapus';
-  const kind = { image: '📷 ', video: '🎬 ', audio: '🎵 ', file: '📄 ' }[m.type] || '';
+  if (m.type === 'contact') {
+    let name = 'Kontak';
+    try { name = (JSON.parse(m.body) || {}).name || 'Kontak'; } catch { /* body bukan JSON */ }
+    return '👤 ' + name;
+  }
+  const kind = { image: '📷 ', video: '🎬 ', audio: '🎵 ', file: '📄 ', sticker: '🏷️ ' }[m.type] || '';
   return kind + (m.body || m.mediaName || '');
 }
 
@@ -620,6 +652,8 @@ function highlightCode(code, lang) {
 function inlineMsgHtml(text) {
   if (!text) return '';
   let h = esc(text).replace(/`([^`\n]+)`/g, '<code class="mi">$1</code>');
+  // tag semua anggota: @all/@semua/@everyone tampil sebagai chip mention
+  h = h.replace(/(^|\s)@(all|everyone|semua|semuanya|anggota)\b/gi, '$1<span class="mention-chip">@$2</span>');
   h = h.split(/(<[^>]+>)/g).map((seg) => {
     if (seg.startsWith('<')) return seg;
     return seg.replace(/https?:\/\/[^\s<>"']+/g, (m) => {
@@ -852,6 +886,7 @@ function replyPreviewHtml(m) {
   else if (rp.type === 'video') body = '🎬 Video';
   else if (rp.type === 'audio') body = '🎤 Pesan suara';
   else if (rp.type === 'file') body = '📎 Berkas';
+  else if (rp.type === 'contact') body = '👤 Kontak';
   else if (rp.type === 'sticker') body = `😀 ${String(rp.body || 'Stiker').slice(0, 40)}`;
   else body = String(rp.body || '').slice(0, 140) || 'Pesan';
   return `<button type="button" class="reply-quote" data-jump="${esc(m.replyTo)}" title="Ke pesan asli">
@@ -860,6 +895,22 @@ function replyPreviewHtml(m) {
       <strong>${esc(name)}</strong>
       <small>${esc(body)}</small>
     </span>
+  </button>`;
+}
+
+/* kartu kontak: pesan berbagi kontak (body = JSON {userId,name,email,avatar}) */
+function contactCardHtml(m) {
+  let c = null;
+  try { c = JSON.parse(m.body); } catch { c = null; }
+  if (!c || !c.userId) return `<div class="contact-card broken">Kontak tidak valid</div>`;
+  const initial = esc((c.name || '?').charAt(0).toUpperCase());
+  return `<button type="button" class="contact-card" data-opencontact="${esc(c.userId)}">
+    <span class="cc-avatar">${c.avatar ? `<img src="${esc(c.avatar)}" alt="">` : initial}</span>
+    <span class="cc-info">
+      <strong>${esc(c.name || 'Kontak')}</strong>
+      <small>${esc(c.email || '')}</small>
+    </span>
+    <span class="cc-go"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-chat" /></svg></span>
   </button>`;
 }
 
@@ -894,8 +945,10 @@ function messageHtml(m, chat, opts = {}) {
           <span class="file-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg></span>
           <span class="msg-file-info"><strong>${esc(m.mediaName || 'file')}</strong><small>${esc(fmtSize(m.mediaSize))}</small></span>
         </a>`;
+      } else if (m.type === 'contact') {
+        inner += contactCardHtml(m);
       }
-      if (m.body) inner += renderMsgBody(m.body);
+      if (m.body && m.type !== 'contact') inner += renderMsgBody(m.body);
     }
   }
 
@@ -956,6 +1009,8 @@ async function onMessagesClick(e) {
   }
   const voBtn = e.target.closest('[data-vo]');
   if (voBtn) { openViewOnce(voBtn.dataset.vo); return; }
+  const contactBtn = e.target.closest('[data-opencontact]');
+  if (contactBtn) { await openChatWithUser(contactBtn.dataset.opencontact); return; }
   const playBtn = e.target.closest('.ap-play');
   if (playBtn) toggleAudioPlayer(playBtn.closest('.audio-player'));
 }
@@ -981,6 +1036,7 @@ function setReply(m) {
   else if (rp.type === 'video') preview = '🎬 Video';
   else if (rp.type === 'audio') preview = '🎤 Pesan suara';
   else if (rp.type === 'file') preview = '📎 Berkas';
+  else if (rp.type === 'contact') preview = '👤 Kontak';
   else preview = String(rp.body || '').slice(0, 120) || 'Pesan';
   $('replyBarPreview').textContent = preview;
   $('replyBar').classList.remove('hidden');
@@ -1502,11 +1558,15 @@ function buildNotifPayload(m) {
   const chat = S.chats.find((c) => c.id === m.chatId);
   const isGroup = !!chat && chat.type === 'group';
   const sender = m.senderName || (chat ? chatTitle(chat) : 'Pesan baru');
-  const kind = { image: '📷 Foto', video: '🎬 Video', audio: '🎵 Pesan suara', file: '📄 File' }[m.type];
+  const kind = { image: '📷 Foto', video: '🎬 Video', audio: '🎵 Pesan suara', file: '📄 File', sticker: '🏷️ Stiker' }[m.type];
   let body;
   if (m.deleted) body = 'Pesan dihapus';
   else if (m.viewOnce) body = `📷 ${m.type === 'video' ? 'Video' : 'Foto'} sekali lihat`;
-  else if (m.body) body = kind ? `${kind} • ${m.body}` : m.body;
+  else if (m.type === 'contact') {
+    let n = 'Kontak';
+    try { n = (JSON.parse(m.body) || {}).name || 'Kontak'; } catch { /* bukan JSON */ }
+    body = `👤 ${n}`;
+  } else if (m.body) body = kind ? `${kind} • ${m.body}` : m.body;
   else body = kind || 'Pesan baru';
   return {
     title: isGroup ? `${sender} @ ${chatTitle(chat)}` : sender,
@@ -1945,6 +2005,30 @@ async function sendMessage() {
   clearReply();
 }
 
+/* buka / buat chat langsung dengan pengguna tertentu (dipakai kartu kontak & ?u=) */
+async function openChatWithUser(userId) {
+  if (!userId || userId === (S.me && S.me.id)) { toast('Tidak bisa membuka chat dengan diri sendiri di sini'); return; }
+  try {
+    const data = await api('/api/chats/direct', { method: 'POST', body: { peerId: userId } });
+    await loadChats();
+    openChat(data.chat.id);
+    closeDrawers();
+  } catch (err) { toast(err.message); }
+}
+
+/* kirim kartu kontak ke chat aktif (body = JSON kontak) */
+function sendContact(contact) {
+  const chatId = S.activeChatId;
+  if (!chatId || !contact || !contact.userId) return;
+  const payload = {
+    userId: contact.userId,
+    name: contact.name || null,
+    email: contact.email || null,
+    avatar: contact.avatar || null,
+  };
+  sendViaSocket({ chatId, type: 'contact', body: JSON.stringify(payload) });
+}
+
 function updateComposerButtons() {
   if (rec) return;
   const hasText = !!$('messageInput').value.trim();
@@ -2195,6 +2279,19 @@ $('attachMenu').querySelectorAll('button').forEach((b) => {
       input.accept = 'image/*,video/*';
       input.value = '';
       input.click();
+      return;
+    }
+    if (kind === 'contact') {
+      // chat pribadi -> bagikan kontak lawan bicara; grup -> bagikan kontak Anda
+      const chat = currentChat();
+      if (!chat) return;
+      if (chat.type === 'group') {
+        sendContact({ userId: S.me.id, name: S.me.name, email: S.me.email, avatar: S.me.avatar });
+      } else if (chat.peer && chat.peer.id) {
+        sendContact({ userId: chat.peer.id, name: chat.peer.name, email: chat.peer.email, avatar: chat.peer.avatar });
+      } else {
+        toast('Kontak lawan bicara belum dimuat');
+      }
       return;
     }
     S.viewOncePending = false;
@@ -4594,9 +4691,33 @@ function openProfile() {
   $('factPlan').style.color = prem.active ? '#0a6ed1' : '';
   $('factJoined').textContent = fmtDate(S.me.createdAt);
   $('factId').textContent = S.me.id || '—';
+  // link kontak pribadi: ?u=<id> -> penerima langsung bisa membuka chat
+  const clInput = $('myContactLink');
+  if (clInput) {
+    const origin = location.origin;
+    clInput.value = S.me.id ? `${origin}/?u=${S.me.id}` : '—';
+  }
   $('profileMsg').classList.add('hidden');
   openDrawer('profileDrawer');
 }
+
+// salin / bagikan link kontak dari drawer profil
+$('btnCopyContactLink') && $('btnCopyContactLink').addEventListener('click', async () => {
+  const v = $('myContactLink') && $('myContactLink').value;
+  if (!v || v === '—') return;
+  const ok = await copyToClipboard(v);
+  toast(ok ? 'Link kontak disalin' : 'Gagal menyalin');
+});
+$('btnShareContactLink') && $('btnShareContactLink').addEventListener('click', async () => {
+  const v = $('myContactLink') && $('myContactLink').value;
+  if (!v || v === '—') return;
+  if (navigator.share) {
+    try { await navigator.share({ title: `Hubungi ${S.me.name || 'saya'}`, text: 'Obrolan lewat RTC-Core:', url: v }); } catch { /* dibatalkan */ }
+  } else {
+    const ok = await copyToClipboard(v);
+    toast(ok ? 'Link disalin — tempel di mana saja' : 'Gagal menyalin');
+  }
+});
 
 $('btnCloseProfile').addEventListener('click', closeDrawers);
 $('btnOpenWallpaper').addEventListener('click', openWallpaper);
@@ -6251,6 +6372,18 @@ async function openGroupInfo() {
           <div class="search-wrap"><input type="search" id="giSearch" placeholder="Cari nama / email..." /></div>
           <div class="chat-list" id="giResults"></div>
         </div>` : ''}
+      <div class="profile-section" id="giInviteSection">
+        <span class="ps-label">Link undangan grup</span>
+        <div class="invite-row">
+          <input type="text" id="giInviteLink" readonly value="Memuat link..." />
+          <button class="icon-btn" id="giInviteCopy" type="button" title="Salin link"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-copy" /></svg></button>
+        </div>
+        <div class="invite-actions">
+          <button class="btn-ghost" id="giInviteShare" type="button">Bagikan</button>
+          ${isAdmin ? '<button class="btn-ghost" id="giInviteReset" type="button">Regenerate</button>' : ''}
+        </div>
+        <p class="wp-hint">Siapa pun yang membuka link ini (dan sudah punya akun aktif) bisa langsung bergabung ke grup.</p>
+      </div>
       <div class="ps-label" style="padding:0 4px 8px">Anggota</div>
       <div class="member-list" id="giMembers"></div>
       <button class="btn-ghost danger" id="giLeave"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-exit" /></svg> Keluar dari grup</button>`;
@@ -6347,6 +6480,42 @@ async function openGroupInfo() {
         }, 300);
       });
     }
+
+    // link undangan grup: muat sekali, salin/bagikan/regenerate
+    const inviteLinkInput = body.querySelector('#giInviteLink');
+    const loadInvite = async (regenerate) => {
+      try {
+        const data = await api(`/api/chats/${chat.id}/invite`, { method: 'POST', body: { regenerate } });
+        if (inviteLinkInput) inviteLinkInput.value = data.link || '';
+        return data.link || '';
+      } catch (err) {
+        if (inviteLinkInput) inviteLinkInput.value = 'Gagal memuat link';
+        return '';
+      }
+    };
+    loadInvite(false);
+    const invCopy = body.querySelector('#giInviteCopy');
+    if (invCopy) invCopy.addEventListener('click', async () => {
+      const ok = await copyToClipboard(inviteLinkInput.value);
+      toast(ok ? 'Link undangan disalin' : 'Gagal menyalin');
+    });
+    const invShare = body.querySelector('#giInviteShare');
+    if (invShare) invShare.addEventListener('click', async () => {
+      const link = inviteLinkInput.value;
+      if (!link || link.startsWith('Gagal')) return;
+      if (navigator.share) {
+        try { await navigator.share({ title: `Gabung grup ${chat.name}`, text: `Undangan ke grup ${chat.name}:`, url: link }); } catch { /* dibatalkan */ }
+      } else {
+        const ok = await copyToClipboard(link);
+        toast(ok ? 'Link disalin — tempel di mana saja' : 'Gagal menyalin');
+      }
+    });
+    const invReset = body.querySelector('#giInviteReset');
+    if (invReset) invReset.addEventListener('click', async () => {
+      if (!confirm('Regenerate link? Link lama otomatis tidak berlaku.')) return;
+      await loadInvite(true);
+      toast('Link undangan baru dibuat ✓');
+    });
 
     body.querySelector('#giLeave').addEventListener('click', async () => {
       try {

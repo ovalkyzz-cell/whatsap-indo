@@ -477,6 +477,7 @@
             <button data-kind="audio"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-audio" /></svg> Audio</button>
             <button data-kind="file"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-doc" /></svg> Dokumen</button>
             <button data-kind="sticker"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-emoji" /></svg> Stiker</button>
+            <button data-kind="contact"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-users" /></svg> Kontak</button>
             <button data-kind="viewonce"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-viewonce" /></svg> Sekali lihat</button>
           </div>
           <div class="sticker-panel hidden" id="stickerPanel">
@@ -1028,6 +1029,18 @@
           <div class="fact"><span>Paket</span><strong id="factPlan">—</strong></div>
           <div class="fact"><span>Bergabung</span><strong id="factJoined">—</strong></div>
           <div class="fact"><span>ID Pengguna</span><strong class="mono" id="factId">—</strong></div>
+        </div>
+
+        <div class="profile-section">
+          <span class="ps-label">Link Kontak Saya</span>
+          <div class="invite-row">
+            <input type="text" id="myContactLink" readonly value="—" />
+            <button class="icon-btn" id="btnCopyContactLink" type="button" title="Salin link kontak"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-copy" /></svg></button>
+          </div>
+          <div class="invite-actions">
+            <button class="btn-ghost" id="btnShareContactLink" type="button">Bagikan</button>
+          </div>
+          <p class="wp-hint">Bagikan link ini supaya orang lain bisa langsung mengobrol dengan Anda.</p>
         </div>
 
         <button class="btn-primary" id="btnSaveProfile">Simpan Perubahan</button>

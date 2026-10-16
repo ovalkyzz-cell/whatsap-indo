@@ -1065,6 +1065,56 @@ app.post('/api/chats/:id/leave', auth.requireAuth, ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
+/* ---------- link undangan grup ----------
+   Admin grup membuat/mendapatkan kode undangan (bisa di-regenerate -> link
+   lama otomatis mati). Anggota lain (sudah punya & disetujui akun) cukup
+   membuka ?join=<code> lalu bergabung lewat POST /api/chats/join/:code. */
+function makeInviteCode() {
+  const raw = crypto.randomBytes(6).toString('base64url').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return ('RTC' + raw).slice(0, 10);
+}
+
+app.post('/api/chats/:id/invite', auth.requireAuth, ah(async (req, res) => {
+  const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
+  if (!chat || chat.type !== 'group') return res.status(404).json({ error: 'Grup tidak ditemukan' });
+  if (!(await helpers.isGroupAdmin(chat.id, req.user.id))) {
+    return res.status(403).json({ error: 'Hanya admin grup yang bisa membuat link undangan' });
+  }
+  const regenerate = !!req.body?.regenerate;
+  let code = chat.invite_code;
+  if (!code || regenerate) {
+    // hindari tabrakan kode antar grup
+    for (let i = 0; i < 8; i += 1) {
+      const cand = makeInviteCode();
+      const clash = await db.get('SELECT 1 AS x FROM chats WHERE invite_code = ?', cand);
+      if (!clash) { code = cand; break; }
+    }
+    await db.run('UPDATE chats SET invite_code = ? WHERE id = ?', code, chat.id);
+  }
+  const origin = req.get('origin') || `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
+  res.json({ ok: true, code, link: `${origin}/?join=${code}`, regenerated: regenerate || !chat.invite_code });
+}));
+
+app.post('/api/chats/join/:code', auth.requireAuth, ah(async (req, res) => {
+  const code = String(req.params.code || '').trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: 'Kode undangan kosong' });
+  const chat = await db.get(`SELECT * FROM chats WHERE invite_code = ? AND type = 'group'`, code);
+  if (!chat) return res.status(404).json({ error: 'Link undangan tidak valid atau sudah dicabut' });
+  if (await helpers.isMember(chat.id, req.user.id)) {
+    return res.json({ ok: true, chatId: chat.id, already: true, name: chat.name });
+  }
+  const count = await db.get('SELECT COUNT(*) AS n FROM chat_members WHERE chat_id = ?', chat.id);
+  if (Number(count.n) >= 1024) return res.status(400).json({ error: 'Grup sudah penuh (maksimal 1024 anggota)' });
+  await db.run(
+    `INSERT INTO chat_members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)`,
+    chat.id,
+    req.user.id,
+    Date.now()
+  );
+  await emitToUsers(await helpers.getChatMemberIds(chat.id), 'chat:updated', { chatId: chat.id, joined: req.user.id });
+  res.json({ ok: true, chatId: chat.id, name: chat.name });
+}));
+
 app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
   if (!(await helpers.isMember(req.params.id, req.user.id))) {
     return res.status(403).json({ error: 'Bukan anggota chat ini' });
@@ -2571,8 +2621,10 @@ async function handleSend(user, payload) {
     }
   }
 
-  const cleanType = ['text', 'image', 'video', 'audio', 'file', 'sticker'].includes(type) ? type : 'text';
-  if (cleanType === 'text' && !String(body).trim()) throw new Error('Pesan kosong');
+  // 'contact' = kartu kontak (payload JSON di body, tanpa media) — perlakukan seperti teks
+  const TEXT_LIKE = ['text', 'contact'];
+  const cleanType = ['text', 'contact', 'image', 'video', 'audio', 'file', 'sticker'].includes(type) ? type : 'text';
+  if (TEXT_LIKE.includes(cleanType) && !String(body).trim()) throw new Error('Pesan kosong');
 
   // proteksi akun: batasi laju pengiriman supaya tidak terdeteksi sebagai spam
   if (!floodGuard(`msg:${user.id}`, 30, 10_000)) {
@@ -2597,8 +2649,8 @@ async function handleSend(user, payload) {
 
   const id = crypto.randomUUID();
   const now = Date.now();
-  const mediaUrl = cleanType === 'text' ? null : media?.url || null;
-  if (cleanType !== 'text' && !mediaUrl) throw new Error('Media tidak ditemukan');
+  const mediaUrl = TEXT_LIKE.includes(cleanType) ? null : media?.url || null;
+  if (!TEXT_LIKE.includes(cleanType) && !mediaUrl) throw new Error('Media tidak ditemukan');
   // URL media dari klien dipercaya apa adanya -> wajib lolos validasi yang sama
   // dengan avatar/status supaya skema berbahaya (javascript:, data:, domain luar)
   // tidak pernah tersimpan lalu dirender sebagai tautan di layar semua anggota
@@ -2631,7 +2683,7 @@ async function handleSend(user, payload) {
   // --- kuota storage NYATA: reservasi atomik ukuran media sebelum pesan disimpan.
   // Hanya media unggahan (foto/video/audio/file) menempati kuota; pesan teks
   // dan stiker (aset sistem SVG) bebas — stiker tidak menempati storage paket.
-  const mediaSize = (cleanType !== 'text' && cleanType !== 'sticker' && media?.size)
+  const mediaSize = (!TEXT_LIKE.includes(cleanType) && cleanType !== 'sticker' && media?.size)
     ? Math.max(0, Math.round(Number(media.size) || 0))
     : 0;
   let storageReserved = 0;
@@ -2696,22 +2748,31 @@ async function handleSend(user, payload) {
 
   // penerima yang tidak punya koneksi aktif -> notifikasi push (aplikasi tertutup/offline)
   const offline = members.filter((uid) => uid !== user.id && !deliveredTo.includes(uid));
-  if (offline.length) {
-    const chatRow = await db.get('SELECT type, name FROM chats WHERE id = ?', chatId);
-    const kindLabel = { image: 'Foto', video: 'Video', audio: 'Pesan suara', file: 'File' };
-    let preview = cleanType === 'text' ? String(text).slice(0, 140) : (kindLabel[cleanType] || 'Pesan');
+  const chatMeta = await db.get('SELECT type, name FROM chats WHERE id = ?', chatId);
+  const isGroupChat = chatMeta && chatMeta.type === 'group';
+  // tag semua anggota: pesan grup berisi @all/@semua/@everyone -> notifikasi
+  // diarahkan ke SELURUH anggota (bukan hanya yang offline)
+  const mentionsAll = isGroupChat
+    && (cleanType === 'text' || cleanType === 'contact')
+    && /(^|\s)@(all|everyone|semua|semuanya|anggota)\b/i.test(String(body || text || ''));
+  const notifyTargets = mentionsAll ? members.filter((uid) => uid !== user.id) : offline;
+  if (notifyTargets.length) {
+    const kindLabel = { image: 'Foto', video: 'Video', audio: 'Pesan suara', file: 'File', contact: 'Kontak' };
+    let preview = TEXT_LIKE.includes(cleanType) ? String(text).slice(0, 140) : (kindLabel[cleanType] || 'Pesan');
     if (cleanViewOnce) preview = 'Foto sekali lihat';
+    if (mentionsAll) preview = `@all ${preview}`.slice(0, 160);
     const payload = {
-      title: chatRow && chatRow.type === 'group' ? `${user.name} @ ${chatRow.name}` : user.name,
+      title: isGroupChat ? `${user.name} @ ${chatMeta.name}` : user.name,
       body: preview,
       chatId,
       messageId: id,
+      mentionsAll,
       icon: user.priv_avatar ? null : user.avatar || null,
       tag: `msg-${chatId}`,
       url: `/?chat=${chatId}`,
     };
     await Promise.race([
-      pushNotify(offline, payload),
+      pushNotify(notifyTargets, payload),
       new Promise((resolve) => setTimeout(() => resolve(0), 2500)),
     ]);
   }

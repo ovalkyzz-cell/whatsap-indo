@@ -540,6 +540,7 @@ const TABLE_MIGRATIONS = {
   chats: [
     ['avatar', 'TEXT', 'TEXT'],
     ['created_by', 'TEXT', 'TEXT'],
+    ['invite_code', 'TEXT', 'TEXT'],
   ],
   chat_members: [
     ['archived', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],

@@ -21,6 +21,23 @@ const { storeBuffer } = require('./upload');
 const BASE = String(process.env.MAZVAL_API_BASE || 'https://api-mazval.zone.id').replace(/\/+$/, '');
 const API_KEY = String(process.env.MAZVAL_API_KEY || '');
 const API_TIMEOUT = Number(process.env.MAZVAL_API_TIMEOUT) || 45000;
+
+// Petunjuk untuk admin bila API key bermasalah (kosong / tidak valid / tidak aktif):
+// ditempelkan ke pesan error bot supaya langsung jelas harus memperbarui MAZVAL_API_KEY.
+const API_KEY_HINT = 'Admin: perbarui env MAZVAL_API_KEY (key aktif dari api-mazval.zone.id) lalu redeploy.';
+
+// deteksi error autentikasi/key dari API -> pesan lebih jelas & dapat ditindaklanjuti
+function friendlyApiError(message, status) {
+  const msg = String(message || '');
+  if (/api key tidak valid|api key required|invalid or inactive|unauthorized|tidak aktif/i.test(msg)
+    || status === 401 || status === 403) {
+    return `API key bot ditolak (${msg || 'tidak valid'}). ${API_KEY_HINT}`;
+  }
+  if (/rate limit|daily rate|429/i.test(msg) || status === 429) {
+    return `${msg || 'Batas harian API tercapai.'} Coba lagi nanti.`;
+  }
+  return msg || `Permintaan gagal (HTTP ${status}).`;
+}
 // AI: timeout lebih panjang karena api-mazval melakukan fallback internal hingga ±75 detik,
 // sedangkan total waktu satu pertanyaan dibatasi AI_BUDGET supaya admin tidak menunggu lama
 const AI_TIMEOUT = Math.max(Number(process.env.MAZVAL_API_TIMEOUT) || 45000, 75000);
@@ -193,9 +210,9 @@ async function callApi(path, params, opts) {
   let body = null;
   try { body = await res.json(); } catch { body = null; }
 
-  if (body && body.success === false) throw new Error(body.error || 'Permintaan ditolak API.');
+  if (body && body.success === false) throw new Error(friendlyApiError(body.error, res.status));
   if (!res.ok) {
-    throw new Error((body && (body.error || body.message)) || `Permintaan gagal (HTTP ${res.status}).`);
+    throw new Error(friendlyApiError((body && (body.error || body.message)) || '', res.status));
   }
   return body || {};
 }
@@ -225,8 +242,8 @@ async function callApiBuffer(path, params, opts) {
   if (ct.includes('json')) {
     let body = null;
     try { body = await res.json(); } catch { body = null; }
-    if (body && body.success === false) throw new Error(body.error || 'Permintaan ditolak API.');
-    if (!res.ok) throw new Error((body && (body.error || body.message)) || `Permintaan gagal (HTTP ${res.status}).`);
+    if (body && body.success === false) throw new Error(friendlyApiError(body.error, res.status));
+    if (!res.ok) throw new Error(friendlyApiError((body && (body.error || body.message)) || '', res.status));
   } else if (!res.ok) {
     throw new Error(`Permintaan gagal (HTTP ${res.status}).`);
   }

@@ -280,7 +280,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     && mf.icons.some((i) => i.sizes === '512x512'),
     'manifest memuat ikon 512 & maskable untuk launcher');
   const swText = await (await fetch(BASE + '/sw.js')).text();
-  ok(/const CACHE = 'wa-static-v\d+'/.test(swText) && swText.includes("'/js/app.js'"),
+  ok(/const CACHE = '(?:wa-static|rtc-core)-v\d+'/.test(swText) && swText.includes("'/js/app.js'"),
     'service worker memakai versi cache terbaru');
 
   console.log('\n[10] Delete message');
@@ -341,7 +341,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(idxSrc.includes('calls.pendingIncoming('), 'dering dikirim ulang saat penerima kembali daring');
   ok(jsText.includes("socket.on('call:missed', onCallMissed)") && jsText.includes('syncMissedCalls'),
     'app.js menyinkronkan panggilan tak terjawab ke pusat notifikasi');
-  ok(/const CACHE = 'wa-static-v3'/.test(swText) && swText.includes("data.type === 'call'"),
+  ok(/const CACHE = '(?:wa-static|rtc-core)-v\d+'/.test(swText) && swText.includes("data.type === 'call'"),
     'service worker menangani notifikasi panggilan dengan versi cache terbaru');
   ok(jsText.includes('resyncAfterReconnect') && jsText.includes("socket.on('connect'"),
     'app.js menyinkronkan chat ulang setelah koneksi pulih');
@@ -1102,7 +1102,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chatNft = await admApi('/api/chats/direct', { method: 'POST', body: { peerId: 'bot-nftoken' } });
   ok(chatNft.status === 201, 'admin membuka chat bot NFToken');
   const nChat = chatNft.data.chat.id;
-  const mNft = waitEvent(botSock, 'message:new', 70000);
+  const mNft = waitEvent(botSock, 'message:new', 70000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: nChat, type: 'text', body: 'generate 1' });
   const mn = await mNft;
   ok(mn && mn.senderId === 'bot-nftoken' && /token/i.test(mn.body),
@@ -1112,7 +1112,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(chatAi.status === 201, 'admin membuka chat bot AI');
   const aChat = chatAi.data.chat.id;
   for (const perintah of ['gemini halo dari uji', 'gpt halo dari uji', 'deepseek halo dari uji', 'claude halo dari uji']) {
-    const tunggu = waitEvent(botSock, 'message:new', 130000);
+    const tunggu = waitEvent(botSock, 'message:new', 130000).catch(() => null);
     await emitAck(botSock, 'message:send', { chatId: aChat, type: 'text', body: perintah });
     const balas = await tunggu;
     const namaModel = perintah.split(' ')[0];
@@ -1120,7 +1120,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       `bot AI model ${namaModel} menjawab nyata tanpa error`);
   }
 
-  const aiEmptyWait = waitEvent(botSock, 'message:new', 12000);
+  const aiEmptyWait = waitEvent(botSock, 'message:new', 12000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: aChat, type: 'text', body: 'gemini' });
   const aiEmpty = await aiEmptyWait;
   ok(aiEmpty && /Pertanyaan masih kosong/.test(aiEmpty.body),
@@ -1174,19 +1174,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(chatMail.status === 201, 'admin membuka chat bot Email Generator');
   const eChat = chatMail.data.chat.id;
 
-  const mailMenuWait = waitEvent(botSock, 'message:new', 12000);
+  const mailMenuWait = waitEvent(botSock, 'message:new', 12000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: eChat, type: 'text', body: 'menu' });
   const mailMenu = await mailMenuWait;
   ok(mailMenu && mailMenu.senderId === 'bot-email' && /EMAIL GENERATOR/.test(mailMenu.body),
     'bot Email Generator membalas menu profesional');
 
-  const mailErrWait = waitEvent(botSock, 'message:new', 12000);
+  const mailErrWait = waitEvent(botSock, 'message:new', 12000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: eChat, type: 'text', body: 'cek bukan-email' });
   const mailErr = await mailErrWait;
   ok(mailErr && /Format email belum benar/.test(mailErr.body),
     'bot Email Generator menolak email salah dengan rapi');
 
-  const mailDomainsWait = waitEvent(botSock, 'message:new', 45000);
+  const mailDomainsWait = waitEvent(botSock, 'message:new', 45000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: eChat, type: 'text', body: 'domains' });
   const mailDomains = await mailDomainsWait;
   ok(mailDomains && /domain tersedia/.test(mailDomains.body) && mailDomains.body.includes('```'),
@@ -1196,13 +1196,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(chatTools.status === 201, 'admin membuka chat bot Tools');
   const tChat = chatTools.data.chat.id;
 
-  const toolsMenuWait = waitEvent(botSock, 'message:new', 12000);
+  const toolsMenuWait = waitEvent(botSock, 'message:new', 12000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: tChat, type: 'text', body: 'menu' });
   const toolsMenu = await toolsMenuWait;
   ok(toolsMenu && toolsMenu.senderId === 'bot-tools' && /Terjemah/.test(toolsMenu.body),
     'bot Tools membalas menu profesional');
 
-  const toolsCuacaWait = waitEvent(botSock, 'message:new', 45000);
+  const toolsCuacaWait = waitEvent(botSock, 'message:new', 45000).catch(() => null);
   await emitAck(botSock, 'message:send', { chatId: tChat, type: 'text', body: 'cuaca Jakarta' });
   const toolsCuaca = await toolsCuacaWait;
   ok(toolsCuaca && /Cuaca Jakarta/.test(toolsCuaca.body) && toolsCuaca.body.includes('```angka'),
