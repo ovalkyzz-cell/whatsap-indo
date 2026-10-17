@@ -92,7 +92,10 @@ async function isGroupAdmin(chatId, userId) {
   const chat = await db.get('SELECT type FROM chats WHERE id = ?', chatId);
   if (!chat) return false;
   if (chat.type !== 'group') return false;
-  return (await chatRole(chatId, userId)) === 'admin';
+  if ((await chatRole(chatId, userId)) === 'admin') return true;
+  // admin situs selalu dianggap admin grup: kelola anggota/bot/grup tanpa kendala
+  const user = await db.get('SELECT role, email FROM users WHERE id = ?', userId);
+  return isAdmin(user);
 }
 
 async function userMap(ids) {

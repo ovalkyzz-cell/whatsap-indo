@@ -566,7 +566,8 @@ function updateChatStatus() {
     $('chatStatus').textContent = 'sedang mengetik...';
   } else if (chat.type === 'group') {
     const botNote = chat.bot ? ` • 🤖 ${chat.bot.name}` : '';
-    $('chatStatus').textContent = `${chat.memberCount || 0} anggota${chat.role === 'admin' ? ' • Anda admin' : ''}${botNote}`;
+    const youAdmin = chat.role === 'admin' || (S.me && S.me.role === 'admin') ? ' • Anda admin' : '';
+    $('chatStatus').textContent = `${chat.memberCount || 0} anggota${youAdmin}${botNote}`;
   } else if (peer && peer.online) {
     $('chatStatus').textContent = 'online';
   } else if (peer) {
@@ -574,6 +575,36 @@ function updateChatStatus() {
   } else {
     $('chatStatus').textContent = 'grup';
   }
+  syncBotMentionButton(chat);
+}
+
+/* pintu @mention: tampil hanya di grup yang punya bot & pengguna boleh memakai bot */
+function syncBotMentionButton(chat) {
+  const btn = $('btnBotMention');
+  if (!btn) return;
+  const canUse = !!(S.me && (S.me.role === 'admin' || (S.me.premium && S.me.premium.active)));
+  const show = !!(chat && chat.type === 'group' && chat.bot && canUse);
+  btn.classList.toggle('hidden', !show);
+}
+
+function insertBotMention() {
+  const chat = currentChat();
+  if (!chat || !chat.bot) return;
+  const ta = $('messageInput');
+  const mention = `@${chat.bot.name} `;
+  const start = typeof ta.selectionStart === 'number' ? ta.selectionStart : ta.value.length;
+  const end = typeof ta.selectionEnd === 'number' ? ta.selectionEnd : start;
+  // jangan duplikat kalau baris sudah diawali sebutan bot yang sama
+  const already = new RegExp(`@${chat.bot.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  if (already.test(ta.value)) {
+    ta.focus();
+    toast(`Sebutkan perintah setelah @${chat.bot.name}`);
+    return;
+  }
+  ta.value = ta.value.slice(0, start) + mention + ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = start + mention.length;
+  ta.dispatchEvent(new Event('input'));
 }
 
 function currentChat() {
@@ -1961,6 +1992,7 @@ ncRenderBell();
 
 /* ================= send ================= */
 $('btnSend').addEventListener('click', sendMessage);
+$('btnBotMention').addEventListener('click', insertBotMention);
 $('messageInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
@@ -6351,7 +6383,7 @@ async function openGroupInfo() {
   try {
     const data = await api(`/api/chats/${chat.id}/members`);
     const members = data.members || [];
-    const isAdmin = chat.role === 'admin';
+    const isAdmin = chat.role === 'admin' || !!(S.me && S.me.role === 'admin');
     body.innerHTML = `
       <div class="group-hero">
         <div class="gi-avatar-wrap">

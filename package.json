@@ -8,7 +8,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "admin": "node admin/server.js",
-    "test": "node test/crop.js && node test/calls.js && node test/antispam.js && node test/callflow.js && node test/groupbot.js && node test/e2e.js",
+    "test": "node test/crop.js && node test/calls.js && node test/antispam.js && node test/callflow.js && node test/groupbot.js && node test/admingroup.js && node test/e2e.js",
     "test:crop": "node test/crop.js",
     "test:calls": "node test/calls.js",
     "test:antispam": "node test/antispam.js",
@@ -20,7 +20,8 @@
     "test:db-chunks": "node test/db-chunks.js",
     "test:status-upload": "node test/status-upload.js",
     "test:admin-notify": "node test/admin-notify.js",
-    "test:groupbot": "node test/groupbot.js"
+    "test:groupbot": "node test/groupbot.js",
+    "test:admingroup": "node test/admingroup.js"
   },
   "keywords": [
     "rtc-core",

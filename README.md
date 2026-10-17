@@ -138,6 +138,7 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:calls` | **26 passed, 0 failed** |
 | `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
 | `npm run test:groupbot` | **27 passed, 0 failed** (pasang/keluarkan bot grup, diam untuk non-premium, balas real-time saat disebut/dibalas, maks 1 bot) |
+| `npm run test:admingroup` | **19 passed, 0 failed** (site admin kelola grup milik orang lain tanpa 403, pasang bot, chat bot real-time; anggota biasa tetap ditolak) |
 | `npm test` (e2e) | **344 passed, 15 failed** |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan

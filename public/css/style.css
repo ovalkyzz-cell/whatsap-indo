@@ -360,6 +360,12 @@ input, textarea { font: inherit; }
 }
 .send-btn { background: var(--wa-teal-dark); color: #fff; font-size: 18px; }
 .send-btn:hover { background: var(--wa-teal); }
+/* pintu @mention bot di composer: sekali ketik langsung menyebut bot grup */
+.bot-mention {
+  color: var(--wa-teal-dark); font-weight: 800; font-size: 17px;
+  background: var(--wa-hover-soft); border-radius: 50%;
+}
+.bot-mention:hover { background: var(--wa-teal); color: #fff; }
 .attach-menu {
   position: absolute; bottom: 64px; left: 12px; background: var(--wa-panel); border-radius: 12px;
   box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; z-index: 20;
