@@ -652,6 +652,7 @@ input, textarea { font: inherit; }
   border-radius: 16px;
   padding: 2px 14px;
   box-shadow: 0 1px 3px rgba(11, 20, 26, .06);
+  overflow: hidden; /* jaminan keras: tidak ada isi yang bisa keluar kartu */
 }
 html[data-theme="dark"] .contact-body .contact-card { box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
 .contact-row { display: flex; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--wa-border); align-items: flex-start; }
@@ -674,6 +675,10 @@ html[data-theme="dark"] .contact-body .contact-card { box-shadow: 0 2px 8px rgba
 }
 /* ID Pengguna: monospace rapi, wrap di tanda - , tidak pernah keluar kartu */
 .contact-row .mono { font-size: 12.5px; letter-spacing: .3px; line-height: 1.6; font-weight: 500; }
+/* Enkripsi (baris terakhir): deskripsi lembut — tidak menonjol, wrap alami di dalam kartu */
+.contact-card .contact-row:last-child strong {
+  font-size: 13px; font-weight: 400; color: var(--wa-text-2); line-height: 1.55;
+}
 .contact-actions { display: flex; gap: 10px; }
 .contact-actions .btn-ghost { flex: 1; }
 
