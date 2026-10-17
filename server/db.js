@@ -177,6 +177,25 @@ CREATE TABLE IF NOT EXISTS status_views (
 );
 CREATE INDEX IF NOT EXISTS idx_status_views_viewer ON status_views (viewer_id, at);
 
+CREATE TABLE IF NOT EXISTS status_tags (
+  status_id TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  at        BIGINT NOT NULL,
+  PRIMARY KEY (status_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_status_tags_user ON status_tags (user_id, at);
+
+CREATE TABLE IF NOT EXISTS status_comments (
+  id         TEXT PRIMARY KEY,
+  status_id  TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL,
+  reply_to   TEXT REFERENCES status_comments(id) ON DELETE SET NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_status_comments_status ON status_comments (status_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_status_comments_user ON status_comments (user_id, created_at);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id         TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -417,6 +436,25 @@ CREATE TABLE IF NOT EXISTS status_views (
   PRIMARY KEY (status_id, viewer_id)
 );
 CREATE INDEX IF NOT EXISTS idx_status_views_viewer ON status_views (viewer_id, at);
+
+CREATE TABLE IF NOT EXISTS status_tags (
+  status_id TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  at        INTEGER NOT NULL,
+  PRIMARY KEY (status_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_status_tags_user ON status_tags (user_id, at);
+
+CREATE TABLE IF NOT EXISTS status_comments (
+  id         TEXT PRIMARY KEY,
+  status_id  TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL,
+  reply_to   TEXT REFERENCES status_comments(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_status_comments_status ON status_comments (status_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_status_comments_user ON status_comments (user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id         TEXT PRIMARY KEY,

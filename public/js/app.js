@@ -168,6 +168,7 @@ function logout(callServer = true, message) {
   const hadFile = !!(S.pendingFile || S.viewOncePending);
   S.messages = {}; S.more = {}; S.loaded = {}; S.typing = {}; S.peerCache = {};
   S.statusFeed = []; S.pendingFile = null; S.viewOncePending = false;
+  S.storyComments = []; S.storyReplyTo = null; S.storyCmtLoaded = null;
   S.groupDraft = { name: '', members: [] }; S.everConnected = false;
   if (hadFile) clearAttachPreview();
   UI.chatId = null; UI.hasMore = true; UI.loadingOlder = false;
@@ -1507,6 +1508,62 @@ function connectSocket() {
         at: Date.now(),
       });
     }
+  });
+
+  // fitur tag: seseorang menyebut saya di statusnya
+  socket.on('status:tagged', ({ byName } = {}) => {
+    const who = byName || 'Seseorang';
+    toast(`${who} menandai Anda di status`);
+    ncAdd({
+      kind: 'status',
+      title: 'Ditandai di status',
+      body: `${who} menyebut Anda di status baru`,
+      chatId: null,
+      at: Date.now(),
+    });
+    if (sideTab === 'status') loadStatus().catch(() => {});
+  });
+
+  // komentar masuk / dibalas di status yang sedang dibuka atau status milik saya
+  socket.on('status:comment', ({ statusId, comment, byName, isReply } = {}) => {
+    const who = byName || 'Seseorang';
+    const active = currentStoryStatus();
+    if (active && active.id === statusId && comment) {
+      if (S.storyCmtLoaded === active.id) {
+        S.storyComments = S.storyComments || [];
+        if (!S.storyComments.some((c) => c.id === comment.id)) S.storyComments.push(comment);
+        active.commentCount = S.storyComments.length;
+        renderStoryComments();
+      } else {
+        active.commentCount = Number(active.commentCount || 0) + 1;
+        $('storyCmtCount').textContent = String(active.commentCount);
+      }
+    }
+    const feedSt = findFeedStatus(statusId);
+    if (feedSt && feedSt.isMine && comment && comment.userId !== S.me?.id) {
+      if (!(active && active.id === statusId)) feedSt.commentCount = Number(feedSt.commentCount || 0) + 1;
+      toast(isReply ? `${who} membalas komentar di status Anda` : `${who} mengomentari status Anda`);
+      ncAdd({
+        kind: 'status',
+        title: 'Komentar status',
+        body: `${who}: ${String(comment.body || '').slice(0, 80)}`,
+        chatId: null,
+        at: Date.now(),
+      });
+      if (sideTab === 'status') loadStatus().catch(() => {});
+    }
+  });
+
+  socket.on('status:comment:deleted', ({ statusId, commentId } = {}) => {
+    const active = currentStoryStatus();
+    if (active && active.id === statusId) {
+      S.storyComments = (S.storyComments || []).filter((c) => c.id !== commentId);
+      if (S.storyCmtLoaded === active.id) active.commentCount = S.storyComments.length;
+      else active.commentCount = Math.max(0, Number(active.commentCount || 1) - 1);
+      renderStoryComments();
+    }
+    const feedSt = findFeedStatus(statusId);
+    if (feedSt) feedSt.commentCount = Math.max(0, Number(feedSt.commentCount || 0) - 1);
   });
 
   // premium / peran admin berubah (diberikan lewat panel admin)
@@ -6001,7 +6058,49 @@ function updateNavBadges() {
 const STATUS_BG = ['#008069', '#1d6fd1', '#7c3aed', '#d5504f', '#c2410c', '#111b21'];
 S.statusBg = STATUS_BG[0];
 S.statusDraft = { media: null };
+S.statusTags = [];
 initStatusColors();
+
+/* ---- tag status: pilih pengguna yang ditandai ---- */
+let statusTagUsers = null;
+
+function renderStatusTagList() {
+  const list = $('statusTagList');
+  if (!statusTagUsers) { list.innerHTML = '<div class="status-tag-hint">Memuat kontak...</div>'; return; }
+  if (!statusTagUsers.length) { list.innerHTML = '<div class="status-tag-hint">Belum ada kontak untuk ditandai.</div>'; return; }
+  list.innerHTML = statusTagUsers.map((u) => `
+    <button type="button" class="status-tag-item ${S.statusTags.includes(u.id) ? 'picked' : ''}" data-taguser="${u.id}">
+      <span class="avatar"><span>${esc((u.name || '?').charAt(0).toUpperCase())}</span></span>
+      <span><strong>${esc(u.name)}${badge(u.verified)}</strong><small>${esc(u.email || '')}</small></span>
+      <span class="status-tag-check">✓</span>
+    </button>`).join('');
+  list.querySelectorAll('[data-taguser]').forEach((b) => {
+    const u = statusTagUsers.find((x) => x.id === b.dataset.taguser);
+    if (u) setAvatar(b.querySelector('.avatar'), { name: u.name, avatar: u.avatar });
+    b.addEventListener('click', () => toggleStatusTag(b.dataset.taguser));
+  });
+}
+
+function renderStatusTagChips() {
+  const wrap = $('statusTagChips');
+  wrap.classList.toggle('hidden', !S.statusTags.length);
+  wrap.innerHTML = S.statusTags.map((id) => {
+    const u = (statusTagUsers || []).find((x) => x.id === id);
+    return `<span class="tag-chip">@ ${esc(u ? u.name : 'Pengguna')}<button type="button" class="tag-x" data-untag="${id}" aria-label="Hapus tanda">✕</button></span>`;
+  }).join('');
+  wrap.querySelectorAll('[data-untag]').forEach((b) => b.addEventListener('click', () => toggleStatusTag(b.dataset.untag)));
+}
+
+function toggleStatusTag(id) {
+  const i = S.statusTags.indexOf(id);
+  if (i >= 0) S.statusTags.splice(i, 1);
+  else {
+    if (S.statusTags.length >= 10) { toast('Maksimal 10 orang yang bisa ditandai'); return; }
+    S.statusTags.push(id);
+  }
+  renderStatusTagChips();
+  renderStatusTagList();
+}
 
 function fmtStatusTime(ts) {
   const d = new Date(ts), now = new Date();
@@ -6044,6 +6143,10 @@ function renderStatusPreview() {
 function openStatusComposer() {
   $('statusText').value = '';
   S.statusDraft = { media: null };
+  S.statusTags = [];
+  $('statusTagPanel').classList.add('hidden');
+  $('btnStatusTag').setAttribute('aria-pressed', 'false');
+  renderStatusTagChips();
   S.statusBg = STATUS_BG[0];
   document.querySelectorAll('.status-color').forEach((x, i) => x.classList.toggle('active', i === 0));
   $('statusMediaNote').classList.add('hidden');
@@ -6109,7 +6212,7 @@ function statusRowHtml(group, gi, si, s, isMine, unread) {
        data-name="${esc(u.name)}" data-avatar="${esc(u.avatar || '')}">
     <div class="avatar status-avatar"><span>${esc((u.name || '?').charAt(0).toUpperCase())}</span></div>
     <div class="chat-item-body">
-      <div class="chat-item-top"><strong>${esc(u.name)}${badge(u.verified)}</strong></div>
+      <div class="chat-item-top"><strong>${esc(u.name)}${badge(u.verified)}</strong>${!isMine && s && s.taggedMe ? '<span class="status-tagged-chip">＠ Anda ditandai</span>' : ''}</div>
       <div class="chat-item-bottom"><div class="chat-item-preview">${esc(sub)}</div></div>
     </div>
     ${isMine ? '<span class="status-add"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-plus" /></svg></span>' : ''}
@@ -6140,6 +6243,9 @@ function stopStoryTimer() {
 
 function closeStory() {
   stopStoryTimer();
+  $('storyComments').classList.add('hidden');
+  clearStoryReply();
+  S.storyCmtLoaded = null;
   $('storyViewer').classList.add('hidden');
   loadStatus().catch(() => {});
 }
@@ -6155,12 +6261,19 @@ function showStory() {
 
   setAvatar($('storyAvatar'), { name: g.user.name, avatar: g.user.avatar });
   $('storyName').textContent = g.user.name + (s.isMine ? ' (Anda)' : '');
-  $('storyTime').textContent = fmtStatusTime(s.createdAt);
   $('storyCaption').textContent = s.body || '';
   $('storyCaption').classList.toggle('hidden', !s.body);
   $('btnDeleteStory').classList.toggle('hidden', !s.isMine);
   $('storyViews').classList.toggle('hidden', !s.isMine);
   if (s.isMine) $('storyViews').textContent = `👁 ${s.viewCount} dilihat`;
+  $('storyTime').textContent = fmtStatusTime(s.createdAt) + (s.taggedMe ? ' • menyebut Anda' : '');
+  $('storyCmtCount').textContent = String(s.commentCount || 0);
+  $('scCount').textContent = String(s.commentCount || 0);
+  S.storyComments = [];
+  S.storyCmtLoaded = null;
+  clearStoryReply();
+  $('storyComments').classList.add('hidden');
+  syncStoryReplyForm();
 
   $('storyProgress').innerHTML = g.statuses.map((_, i) =>
     `<i class="${i < story.si ? 'done' : i === story.si ? 'active' : ''}"></i>`
@@ -6259,9 +6372,161 @@ $('btnDeleteStory').addEventListener('click', async () => {
   } catch (err) { toast(err.message); }
 });
 
+/* ---- komentar status: buka panel, kirim, balas, hapus ---- */
+function currentStoryStatus() {
+  const g = story.groups[story.gi];
+  return g && g.statuses[story.si] ? g.statuses[story.si] : null;
+}
+
+function findFeedStatus(id) {
+  for (const g of S.statusFeed || []) {
+    for (const s of g.statuses || []) if (s.id === id) return s;
+  }
+  return null;
+}
+
+function syncStoryReplyForm() {
+  const st = currentStoryStatus();
+  const show = st && !st.isMine ? true : !!S.storyReplyTo;
+  $('storyReplyForm').classList.toggle('hidden', !show);
+}
+
+async function loadStoryComments() {
+  const st = currentStoryStatus();
+  if (!st) return;
+  S.storyCmtLoaded = null;
+  try {
+    const data = await api(`/api/status/${st.id}/comments`);
+    if (currentStoryStatus() !== st) return;
+    S.storyComments = data.comments || [];
+    S.storyCmtLoaded = st.id;
+    st.commentCount = S.storyComments.length;
+    renderStoryComments();
+  } catch (err) { /* status mungkin kedaluwarsa */ }
+}
+
+function renderStoryComments() {
+  const list = $('scList');
+  const comments = S.storyComments || [];
+  const st = currentStoryStatus();
+  $('scCount').textContent = String(comments.length);
+  if (st) $('storyCmtCount').textContent = String(st.commentCount || 0);
+  if (!comments.length) {
+    list.innerHTML = '<div class="sc-empty">Belum ada komentar. Jadilah yang pertama!</div>';
+    return;
+  }
+  list.innerHTML = comments.map((c) => `
+    <div class="sc-item" data-cmt="${c.id}">
+      <span class="avatar"><span>${esc((c.name || '?').charAt(0).toUpperCase())}</span></span>
+      <div class="sc-body-wrap">
+        <div class="sc-meta"><strong>${esc(c.name || 'Pengguna')}${badge(c.verified)}</strong><small>${fmtStatusTime(c.createdAt)}</small></div>
+        ${c.replyTo ? `<div class="sc-quote"><strong>Balasan untuk ${esc(c.replyToName || 'seseorang')}</strong><small>${esc(c.replyToBody || '')}</small></div>` : ''}
+        <div class="sc-text">${esc(c.body)}</div>
+        <div class="sc-actions">
+          <button type="button" data-reply="${c.id}">Balas</button>
+          ${(c.mine || (st && st.isMine)) ? `<button type="button" class="danger" data-delcmt="${c.id}">Hapus</button>` : ''}
+        </div>
+      </div>
+    </div>`).join('');
+  list.querySelectorAll('.sc-item').forEach((item) => {
+    const c = comments.find((x) => x.id === item.dataset.cmt);
+    if (c) setAvatar(item.querySelector('.avatar'), { name: c.name, avatar: c.avatar });
+    const rb = item.querySelector('[data-reply]');
+    if (rb) rb.addEventListener('click', () => setStoryReply(c));
+    const del = item.querySelector('[data-delcmt]');
+    if (del) del.addEventListener('click', () => deleteStoryComment(item.dataset.cmt));
+  });
+}
+
+function setStoryReply(c) {
+  S.storyReplyTo = c;
+  $('storyReplyName').textContent = c.name || 'Pengguna';
+  $('storyReplyBody').textContent = c.body || '';
+  $('storyReplyQuote').classList.remove('hidden');
+  syncStoryReplyForm();
+  $('storyReplyInput').focus();
+}
+
+function clearStoryReply() {
+  S.storyReplyTo = null;
+  $('storyReplyQuote').classList.add('hidden');
+  $('storyReplyName').textContent = '';
+  $('storyReplyBody').textContent = '';
+  syncStoryReplyForm();
+}
+
+$('btnOpenComments').addEventListener('click', () => {
+  const panel = $('storyComments');
+  const willOpen = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !willOpen);
+  if (willOpen) {
+    S.storyComments = [];
+    syncStoryReplyForm();
+    loadStoryComments();
+  } else {
+    clearStoryReply();
+  }
+});
+$('btnCloseComments').addEventListener('click', () => {
+  $('storyComments').classList.add('hidden');
+  clearStoryReply();
+});
+$('btnCancelReply').addEventListener('click', clearStoryReply);
+
+$('storyReplyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const st = currentStoryStatus();
+  if (!st) return;
+  const body = $('storyReplyInput').value.trim();
+  if (!body) return;
+  try {
+    const payload = { body };
+    if (S.storyReplyTo) payload.replyTo = S.storyReplyTo.id;
+    const data = await api(`/api/status/${st.id}/comments`, { method: 'POST', body: payload });
+    $('storyReplyInput').value = '';
+    S.storyComments = S.storyComments || [];
+    if (!S.storyComments.some((c) => c.id === data.comment.id)) S.storyComments.push(data.comment);
+    S.storyCmtLoaded = st.id;
+    st.commentCount = S.storyComments.length;
+    renderStoryComments();
+    clearStoryReply();
+  } catch (err) { toast(err.message); }
+});
+
+async function deleteStoryComment(id) {
+  const st = currentStoryStatus();
+  if (!st) return;
+  try {
+    await api(`/api/status/${st.id}/comments/${id}`, { method: 'DELETE' });
+    S.storyComments = (S.storyComments || []).filter((c) => c.id !== id);
+    if (S.storyCmtLoaded === st.id) st.commentCount = S.storyComments.length;
+    else st.commentCount = Math.max(0, Number(st.commentCount || 1) - 1);
+    renderStoryComments();
+  } catch (err) { toast(err.message); }
+}
+
 $('statusText').addEventListener('input', renderStatusPreview);
 $('btnCloseStatus').addEventListener('click', closeDrawers);
 $('btnStatusMedia').addEventListener('click', () => $('statusInput').click());
+
+$('btnStatusTag').addEventListener('click', async () => {
+  const panel = $('statusTagPanel');
+  const open = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !open);
+  $('btnStatusTag').setAttribute('aria-pressed', open ? 'true' : 'false');
+  if (open && statusTagUsers === null) {
+    renderStatusTagList();
+    try {
+      const data = await api('/api/contacts?limit=100');
+      statusTagUsers = (data.users || []).filter((u) => u.id !== S.me?.id);
+    } catch (err) {
+      statusTagUsers = [];
+      toast(err.message);
+    }
+    renderStatusTagList();
+    renderStatusTagChips();
+  }
+});
 
 $('statusInput').addEventListener('change', async () => {
   const file = $('statusInput').files[0];
@@ -6292,10 +6557,11 @@ $('btnPostStatus').addEventListener('click', async () => {
   errBox.classList.add('hidden');
   try {
     let payload;
+    const tags = (S.statusTags || []).slice(0, 10);
     if (media) {
-      payload = { type: media.type === 'video' ? 'video' : 'image', media: { url: media.url, name: media.name, mime: media.mime }, body };
+      payload = { type: media.type === 'video' ? 'video' : 'image', media: { url: media.url, name: media.name, mime: media.mime }, body, tags };
     } else {
-      payload = { type: 'text', body, bg: S.statusBg };
+      payload = { type: 'text', body, bg: S.statusBg, tags };
     }
     await api('/api/status', { method: 'POST', body: payload });
     closeDrawers();

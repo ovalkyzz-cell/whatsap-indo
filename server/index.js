@@ -1452,7 +1452,7 @@ app.get('/api/messages/media/:id', auth.requireAuth, ah(async (req, res) => {
 // ---------- status (status wa) ----------
 const STATUS_TTL = 24 * 60 * 60 * 1000;
 
-function serializeStatus(row, viewerId, viewCount) {
+function serializeStatus(row, viewerId, viewCount, extra = {}) {
   return {
     id: row.id,
     userId: row.user_id,
@@ -1470,6 +1470,9 @@ function serializeStatus(row, viewerId, viewCount) {
     name: row.name || null,
     avatar: row.priv_avatar ? null : row.avatar || null,
     verified: auth.verifiedOf({ role: row.u_role, premium_until: row.u_until, email: row.u_email }),
+    tags: Array.isArray(extra.tags) ? extra.tags : [],
+    taggedMe: !!extra.taggedMe,
+    commentCount: Number(extra.commentCount) || 0,
   };
 }
 
@@ -1521,6 +1524,36 @@ app.post('/api/status', auth.requireAuth, ah(async (req, res) => {
     now + STATUS_TTL
   );
   const row = await db.get('SELECT * FROM statuses WHERE id = ?', id);
+
+  // fitur tag: tandai pengguna lain di status (maks 10, non-diri, akun valid)
+  let tagIds = [];
+  if (Array.isArray(req.body?.tags) && req.body.tags.length) {
+    const requested = [...new Set(req.body.tags.filter((t) => typeof t === 'string' && t))].slice(0, 10);
+    if (requested.length) {
+      const found = await db.all(
+        `SELECT id FROM users WHERE id IN (${requested.map(() => '?').join(',')}) AND id <> ? AND banned = 0`,
+        ...requested,
+        req.user.id
+      );
+      tagIds = found.map((r) => r.id);
+      for (const uid of tagIds) {
+        await db.run(
+          'INSERT INTO status_tags (status_id, user_id, at) VALUES (?, ?, ?) ON CONFLICT (status_id, user_id) DO NOTHING',
+          id,
+          uid,
+          now
+        );
+      }
+      if (tagIds.length) {
+        await emitToUsers(tagIds, 'status:tagged', {
+          statusId: id,
+          byId: req.user.id,
+          byName: req.user.name || req.user.email,
+        });
+      }
+    }
+  }
+
   // status bersifat privat: tidak diumumkan ke kontak mana pun
   if (!req.user.priv_status) {
     await emitToUsers(await contactIds(req.user.id), 'status:new', { userId: req.user.id });
@@ -1529,7 +1562,8 @@ app.post('/api/status', auth.requireAuth, ah(async (req, res) => {
     status: serializeStatus(
       { ...row, u_role: req.user.role, u_until: req.user.premium_until, u_email: req.user.email },
       req.user.id,
-      0
+      0,
+      { tags: tagIds, taggedMe: false, commentCount: 0 }
     ),
   });
 }));
@@ -1551,6 +1585,25 @@ app.get('/api/status', auth.requireAuth, ah(async (req, res) => {
     : [];
   const countMap = new Map(myCounts.map((r) => [r.status_id, r.n]));
 
+  const [myTagRows, myCmtRows] = mineIds.length
+    ? await Promise.all([
+        db.all(
+          `SELECT status_id, user_id FROM status_tags WHERE status_id IN (${mineIds.map(() => '?').join(',')})`,
+          ...mineIds
+        ),
+        db.all(
+          `SELECT status_id, COUNT(*) AS n FROM status_comments WHERE status_id IN (${mineIds.map(() => '?').join(',')}) GROUP BY status_id`,
+          ...mineIds
+        ),
+      ])
+    : [[], []];
+  const myTagsBy = new Map();
+  for (const r of myTagRows) {
+    if (!myTagsBy.has(r.status_id)) myTagsBy.set(r.status_id, []);
+    myTagsBy.get(r.status_id).push(r.user_id);
+  }
+  const myCmtBy = new Map(myCmtRows.map((r) => [r.status_id, r.n]));
+
   const groups = [];
   if (mine.length) {
     const user = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
@@ -1561,7 +1614,8 @@ app.get('/api/status', auth.requireAuth, ah(async (req, res) => {
         serializeStatus(
           { ...r, u_role: user.role, u_until: user.premium_until, u_email: user.email },
           req.user.id,
-          countMap.get(r.id)
+          countMap.get(r.id),
+          { tags: myTagsBy.get(r.id) || [], taggedMe: false, commentCount: myCmtBy.get(r.id) || 0 }
         )
       ),
     });
@@ -1598,6 +1652,24 @@ app.get('/api/status', auth.requireAuth, ah(async (req, res) => {
     ]);
     const countBy = new Map(counts.map((r) => [r.status_id, r.n]));
     const viewedSet = new Set(views.map((r) => r.status_id));
+    const [tagRows, cmtRows] = ids.length
+      ? await Promise.all([
+          db.all(
+            `SELECT status_id, user_id FROM status_tags WHERE status_id IN (${ids.map(() => '?').join(',')})`,
+            ...ids
+          ),
+          db.all(
+            `SELECT status_id, COUNT(*) AS n FROM status_comments WHERE status_id IN (${ids.map(() => '?').join(',')}) GROUP BY status_id`,
+            ...ids
+          ),
+        ])
+      : [[], []];
+    const tagBy = new Map();
+    for (const r of tagRows) {
+      if (!tagBy.has(r.status_id)) tagBy.set(r.status_id, []);
+      tagBy.get(r.status_id).push(r.user_id);
+    }
+    const cmtBy = new Map(cmtRows.map((r) => [r.status_id, r.n]));
     const byUser = new Map();
     for (const row of rows) {
       if (!byUser.has(row.user_id)) {
@@ -1615,7 +1687,64 @@ app.get('/api/status', auth.requireAuth, ah(async (req, res) => {
         groups.push(byUser.get(row.user_id));
       }
       row.viewerHasViewed = viewedSet.has(row.id);
-      byUser.get(row.user_id).statuses.push(serializeStatus(row, req.user.id, countBy.get(row.id)));
+      const rowTags = tagBy.get(row.id) || [];
+      byUser.get(row.user_id).statuses.push(
+        serializeStatus(row, req.user.id, countBy.get(row.id), {
+          tags: rowTags,
+          taggedMe: rowTags.includes(req.user.id),
+          commentCount: cmtBy.get(row.id) || 0,
+        })
+      );
+    }
+  }
+
+  // status pengguna mana pun yang menandai saya — ikut tampil agar tag selalu terlihat
+  const taggedOnly = await db.all(
+    `SELECT s.*, u.name, u.avatar, u.email AS u_email, u.role AS u_role,
+            u.premium_until AS u_until, u.priv_avatar
+     FROM statuses s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.expires_at > ? AND s.user_id <> ?
+       AND s.id IN (SELECT status_id FROM status_tags WHERE user_id = ?)
+     ORDER BY s.created_at DESC`,
+    Date.now(),
+    req.user.id,
+    req.user.id
+  );
+  const seenIds = new Set(groups.flatMap((g) => g.statuses.map((s) => s.id)));
+  const newTaggedRows = taggedOnly.filter((r) => !seenIds.has(r.id));
+  if (newTaggedRows.length) {
+    const nids = newTaggedRows.map((r) => r.id);
+    const nCounts = await db.all(
+      `SELECT status_id, COUNT(*) AS n FROM status_comments WHERE status_id IN (${nids.map(() => '?').join(',')}) GROUP BY status_id`,
+      ...nids
+    );
+    const nCmt = new Map(nCounts.map((r) => [r.status_id, r.n]));
+    const gBy = new Map();
+    for (const row of newTaggedRows) {
+      if (!gBy.has(row.user_id)) {
+        const g = {
+          user: {
+            id: row.user_id,
+            name: row.name,
+            avatar: row.priv_avatar ? null : row.avatar,
+            verified: auth.verifiedOf({ role: row.u_role, premium_until: row.u_until, email: row.u_email }),
+            online: false,
+          },
+          isSelf: false,
+          statuses: [],
+        };
+        gBy.set(row.user_id, g);
+        groups.push(g);
+      }
+      row.viewerHasViewed = false;
+      gBy.get(row.user_id).statuses.push(
+        serializeStatus(row, req.user.id, 0, {
+          tags: [req.user.id],
+          taggedMe: true,
+          commentCount: nCmt.get(row.id) || 0,
+        })
+      );
     }
   }
 
@@ -1658,6 +1787,141 @@ app.delete('/api/status/:id', auth.requireAuth, ah(async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Status tidak ditemukan' });
   if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Bukan status Anda' });
   await db.run('DELETE FROM statuses WHERE id = ?', row.id);
+  res.json({ ok: true });
+}));
+
+// ---------- komentar status: kirim, balas, hapus ----------
+async function statusCommentRow(id) {
+  return db.get(
+    `SELECT c.*, u.name, u.avatar, u.email AS u_email, u.role AS u_role,
+            u.premium_until AS u_until, u.priv_avatar
+     FROM status_comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?`,
+    id
+  );
+}
+
+function serializeStatusComment(row, viewerId, parentRow) {
+  return {
+    id: row.id,
+    statusId: row.status_id,
+    userId: row.user_id,
+    name: row.name || null,
+    avatar: row.priv_avatar ? null : row.avatar || null,
+    verified: auth.verifiedOf({ role: row.u_role, premium_until: row.u_until, email: row.u_email }),
+    body: vault.decrypt(row.body),
+    replyTo: row.reply_to || null,
+    replyToName: parentRow ? parentRow.name || null : null,
+    replyToBody: parentRow ? vault.decrypt(parentRow.body) : null,
+    createdAt: row.created_at,
+    mine: row.user_id === viewerId,
+  };
+}
+
+async function canViewStatus(s, viewerId) {
+  if (s.user_id === viewerId) return true;
+  const [contact, tagged] = await Promise.all([
+    db.get(
+      `SELECT 1 AS x FROM chat_members m1
+       JOIN chat_members m2 ON m2.chat_id = m1.chat_id
+       WHERE m1.user_id = ? AND m2.user_id = ? LIMIT 1`,
+      viewerId,
+      s.user_id
+    ),
+    db.get('SELECT 1 AS x FROM status_tags WHERE status_id = ? AND user_id = ? LIMIT 1', s.id, viewerId),
+  ]);
+  return !!(contact || tagged);
+}
+
+app.get('/api/status/:id/comments', auth.requireAuth, ah(async (req, res) => {
+  const s = await db.get('SELECT * FROM statuses WHERE id = ?', req.params.id);
+  if (!s || s.expires_at < Date.now()) return res.status(404).json({ error: 'Status tidak ditemukan' });
+  if (!(await canViewStatus(s, req.user.id))) {
+    return res.status(403).json({ error: 'Anda tidak punya akses ke status ini' });
+  }
+  const rows = await db.all(
+    `SELECT c.*, u.name, u.avatar, u.email AS u_email, u.role AS u_role,
+            u.premium_until AS u_until, u.priv_avatar
+     FROM status_comments c JOIN users u ON u.id = c.user_id
+     WHERE c.status_id = ? ORDER BY c.created_at ASC`,
+    s.id
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  res.json({
+    comments: rows.map((r) =>
+      serializeStatusComment(r, req.user.id, r.reply_to ? byId.get(r.reply_to) || null : null)
+    ),
+  });
+}));
+
+app.post('/api/status/:id/comments', auth.requireAuth, ah(async (req, res) => {
+  const body = String(req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Tulis komentar dulu' });
+  const s = await db.get('SELECT * FROM statuses WHERE id = ?', req.params.id);
+  if (!s || s.expires_at < Date.now()) return res.status(404).json({ error: 'Status tidak ditemukan' });
+  if (!(await canViewStatus(s, req.user.id))) {
+    return res.status(403).json({ error: 'Anda tidak punya akses ke status ini' });
+  }
+  if (!floodGuard(`scomment:${req.user.id}`, 30, 3_600_000)) {
+    return res.status(429).json({ error: 'Terlalu banyak komentar. Coba lagi nanti.' });
+  }
+  const isOwner = s.user_id === req.user.id;
+  let parent = null;
+  const replyTo = req.body?.replyTo ? String(req.body.replyTo) : null;
+  if (replyTo) {
+    parent = await db.get('SELECT * FROM status_comments WHERE id = ? AND status_id = ?', replyTo, s.id);
+    if (!parent) return res.status(400).json({ error: 'Komentar yang dibalas tidak ditemukan' });
+  } else if (isOwner) {
+    return res.status(400).json({ error: 'Gunakan tombol Balas untuk membalas komentar di status Anda' });
+  }
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  await db.run(
+    'INSERT INTO status_comments (id, status_id, user_id, body, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    id,
+    s.id,
+    req.user.id,
+    vault.encrypt(body),
+    replyTo,
+    now
+  );
+  const row = await statusCommentRow(id);
+  const parentFull = parent ? await statusCommentRow(parent.id) : null;
+  const comment = serializeStatusComment(row, req.user.id, parentFull);
+
+  const notify = new Set([s.user_id]);
+  if (parent) notify.add(parent.user_id);
+  notify.delete(req.user.id);
+  if (notify.size) {
+    await emitToUsers([...notify], 'status:comment', {
+      statusId: s.id,
+      comment,
+      byName: req.user.name || req.user.email,
+      isReply: !!replyTo,
+    });
+  }
+  res.status(201).json({ comment });
+}));
+
+app.delete('/api/status/:id/comments/:cid', auth.requireAuth, ah(async (req, res) => {
+  const c = await db.get(
+    'SELECT * FROM status_comments WHERE id = ? AND status_id = ?',
+    req.params.cid,
+    req.params.id
+  );
+  if (!c) return res.status(404).json({ error: 'Komentar tidak ditemukan' });
+  const s = await db.get('SELECT user_id FROM statuses WHERE id = ?', req.params.id);
+  const owner = s ? s.user_id : null;
+  if (c.user_id !== req.user.id && owner !== req.user.id) {
+    return res.status(403).json({ error: 'Bukan komentar Anda' });
+  }
+  await db.run('DELETE FROM status_comments WHERE id = ?', c.id);
+  const targets = new Set([req.user.id, c.user_id]);
+  if (owner) targets.add(owner);
+  await emitToUsers([...targets], 'status:comment:deleted', {
+    statusId: req.params.id,
+    commentId: c.id,
+  });
   res.json({ ok: true });
 }));
 

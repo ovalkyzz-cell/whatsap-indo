@@ -565,8 +565,13 @@
         <div class="status-preview" id="statusPreview"><span>Tulis status Anda...</span></div>
         <textarea id="statusText" rows="3" maxlength="500" placeholder="Apa yang sedang Anda pikirkan?"></textarea>
         <div class="status-colors" id="statusColors"></div>
+        <div class="status-tag-panel hidden" id="statusTagPanel">
+          <div class="status-tag-chips hidden" id="statusTagChips"></div>
+          <div class="status-tag-list" id="statusTagList"></div>
+        </div>
         <div class="status-actions">
           <button class="btn-ghost" id="btnStatusMedia"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-image" /></svg> Foto / Video</button>
+          <button class="btn-ghost" id="btnStatusTag" type="button" aria-pressed="false">@ Tandai</button>
           <button class="btn-primary" id="btnPostStatus">Bagikan Status</button>
         </div>
         <p class="status-media-note hidden" id="statusMediaNote"></p>
@@ -1230,10 +1235,31 @@
     <p class="story-caption" id="storyCaption"></p>
     <button class="story-nav prev" id="storyPrev" aria-label="Sebelumnya">‹</button>
     <button class="story-nav next" id="storyNext" aria-label="Berikutnya">›</button>
-    <footer class="story-foot">
+    <footer class="story-foot" id="storyFoot">
       <span id="storyViews" class="hidden">👁 0</span>
+      <button class="story-cmt-btn" id="btnOpenComments" type="button" aria-label="Komentar status">💬 <span id="storyCmtCount">0</span></button>
       <button class="btn-ghost danger story-del hidden" id="btnDeleteStory"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-trash" /></svg> Hapus status</button>
     </footer>
+    <div class="story-comments hidden" id="storyComments">
+      <header class="sc-head">
+        <strong>Komentar <span class="sc-count" id="scCount">0</span></strong>
+        <button class="icon-btn" id="btnCloseComments" type="button" aria-label="Tutup komentar">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="sc-list" id="scList"><div class="sc-empty">Belum ada komentar. Jadilah yang pertama!</div></div>
+      <form class="story-reply-form" id="storyReplyForm">
+        <div class="srf-quote hidden" id="storyReplyQuote">
+          <div class="srf-quote-text">
+            <strong id="storyReplyName"></strong>
+            <small id="storyReplyBody"></small>
+          </div>
+          <button type="button" class="srf-cancel" id="btnCancelReply" aria-label="Batalkan balasan">✕</button>
+        </div>
+        <input type="text" id="storyReplyInput" placeholder="Kirim komentar..." maxlength="500" autocomplete="off" />
+        <button type="submit" class="send-btn" id="storyReplySend" aria-label="Kirim komentar"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-send" /></svg></button>
+      </form>
+    </div>
   </div>
 
   <!-- ============ VIEWER MEDIA PENYIMPANAN ============ -->
