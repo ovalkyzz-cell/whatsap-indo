@@ -407,7 +407,7 @@ function renderChatListNow() {
     const mine = last && last.senderId === S.me.id;
     // di grup preview juga menampilkan centang pesan siapa pun agar
     // status baca terakhir terlihat seluruh anggota
-    const showTicks = !last.deleted && (mine || c.type === 'group');
+    const showTicks = !!last && !last.deleted && (mine || c.type === 'group');
     const ticks = showTicks ? tickHtml(last.status === 'sent' && !mine ? 'delivered' : last.status) : '';
     const nameBadge = badge(c.peer?.verified);
     const isGroup = c.type === 'group';
