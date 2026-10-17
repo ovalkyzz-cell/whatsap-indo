@@ -1375,21 +1375,28 @@ async function markChatRead(chatId, userId) {
   // tetapi pengirim tidak pernah menerima tanda "dibaca"
   const reader = await db.get('SELECT priv_receipts FROM users WHERE id = ?', userId);
   if (reader && reader.priv_receipts) return;
+  // pembatas: hanya 300 pesan terbaru yang disiarkan agar grup besar tidak
+  // membanjiri koneksi; pesan lebih lama tetap mendapat status "read" saat dimuat ulang
   const rows = await db.all(
-    `SELECT m.id, m.sender_id FROM messages m
+    `SELECT m.id FROM messages m
      WHERE m.chat_id = ? AND m.sender_id <> ?
        AND EXISTS (SELECT 1 FROM message_status s
-                   WHERE s.message_id = m.id AND s.user_id = ? AND s.status = 'read')`,
+                   WHERE s.message_id = m.id AND s.user_id = ? AND s.status = 'read')
+     ORDER BY m.created_at DESC LIMIT 300`,
     chatId,
     userId,
     userId
   );
+  if (!rows.length) return;
+  // status baca disiarkan ke SELURUH anggota chat (bukan hanya pengirim pesan):
+  // di grup, centang biru hasil pembacaan admin/anggota harus terlihat semua anggota
+  const targets = (await helpers.getChatMemberIds(chatId)).filter((uid) => uid !== userId);
   await dispatch(
-    rows.map((r) => ({
-      userId: r.sender_id,
+    targets.flatMap((uid) => rows.map((r) => ({
+      userId: uid,
       event: 'message:status',
       payload: { messageId: r.id, chatId, status: 'read' },
-    }))
+    })))
   );
 }
 

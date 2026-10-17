@@ -38,6 +38,26 @@ function friendlyApiError(message, status) {
   }
   return msg || `Permintaan gagal (HTTP ${status}).`;
 }
+
+// error konfigurasi/key: percobaan ulang tidak akan membalikkan keadaan
+// (masalahnya di sisi admin, bukan di jaringan) -> ditandai `permanent`
+// supaya rantai model AI berhenti seketika, bukan menghabiskan ±2 menit
+// retry yang sia-sia lalu membalas pesan "semua model gangguan" yang membingungkan
+function keyApiError(message, status) {
+  const text = String(message || '');
+  const err = new Error(friendlyApiError(text, status));
+  if (status === 401 || status === 403
+    || /api key|invalid or inactive|unauthorized|tidak aktif|MAZVAL_API_KEY/i.test(text)) {
+    err.permanent = true;
+  }
+  return err;
+}
+
+function missingKeyError() {
+  const err = new Error(`Konfigurasi API bot belum lengkap (MAZVAL_API_KEY belum diatur). ${API_KEY_HINT}`);
+  err.permanent = true;
+  return err;
+}
 // AI: timeout lebih panjang karena api-mazval melakukan fallback internal hingga ±75 detik,
 // sedangkan total waktu satu pertanyaan dibatasi AI_BUDGET supaya admin tidak menunggu lama
 const AI_TIMEOUT = Math.max(Number(process.env.MAZVAL_API_TIMEOUT) || 45000, 75000);
@@ -178,7 +198,7 @@ function angkaFence(value) {
 /* ---------- pemanggilan API api-mazval ---------- */
 
 async function callApi(path, params, opts) {
-  if (!API_KEY) throw new Error('Konfigurasi API bot belum lengkap (MAZVAL_API_KEY belum diatur).');
+  if (!API_KEY) throw missingKeyError();
   const url = new URL(BASE + path);
   url.searchParams.set('apikey', API_KEY);
 
@@ -210,9 +230,9 @@ async function callApi(path, params, opts) {
   let body = null;
   try { body = await res.json(); } catch { body = null; }
 
-  if (body && body.success === false) throw new Error(friendlyApiError(body.error, res.status));
+  if (body && body.success === false) throw keyApiError(body.error, res.status);
   if (!res.ok) {
-    throw new Error(friendlyApiError((body && (body.error || body.message)) || '', res.status));
+    throw keyApiError((body && (body.error || body.message)) || '', res.status);
   }
   return body || {};
 }
@@ -220,7 +240,7 @@ async function callApi(path, params, opts) {
 // versi biner callApi: untuk endpoint yang mengembalikan file langsung
 // (kode PNG codesnap, arsip zip npm2zip) alih-alih JSON
 async function callApiBuffer(path, params, opts) {
-  if (!API_KEY) throw new Error('Konfigurasi API bot belum lengkap (MAZVAL_API_KEY belum diatur).');
+  if (!API_KEY) throw missingKeyError();
   const url = new URL(BASE + path);
   for (const [key, value] of Object.entries(params || {})) {
     if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
@@ -242,8 +262,8 @@ async function callApiBuffer(path, params, opts) {
   if (ct.includes('json')) {
     let body = null;
     try { body = await res.json(); } catch { body = null; }
-    if (body && body.success === false) throw new Error(friendlyApiError(body.error, res.status));
-    if (!res.ok) throw new Error(friendlyApiError((body && (body.error || body.message)) || '', res.status));
+    if (body && body.success === false) throw keyApiError(body.error, res.status);
+    if (!res.ok) throw keyApiError((body && (body.error || body.message)) || '', res.status);
   } else if (!res.ok) {
     throw new Error(`Permintaan gagal (HTTP ${res.status}).`);
   }
@@ -631,6 +651,7 @@ async function aiReply(raw) {
   const errors = [];
   let answer = null;
   let used = active;
+  let permanent = null;
 
   for (const candidate of chain) {
     const tries = candidate.path === active.path ? 3 : 1;
@@ -643,10 +664,22 @@ async function aiReply(raw) {
         used = candidate;
       } catch (err) {
         errors.push(`${candidate.label}: ${String((err && err.message) || err).slice(0, 160)}`);
+        // key kosong / ditolak: semua model pasti gagal sama -> berhenti sekarang
+        if (err && err.permanent) { permanent = err; break; }
       }
     }
-    if (answer) break;
+    if (answer || permanent) break;
     await aiDelay(8000);
+  }
+
+  if (!answer && permanent) {
+    // masalah konfigurasi tidak akan membaik dengan menunggu: jelaskan seketika
+    // supaya pengguna langsung tahu penyebabnya, bukan mengira AI "tidak respon"
+    return [
+      '⚠️ AI belum bisa menjawab — konfigurasi bot bermasalah',
+      '',
+      String(permanent.message),
+    ].join('\n');
   }
 
   if (!answer) {
@@ -2226,6 +2259,7 @@ async function aiSpecReply(spec, raw) {
   const errors = [];
   let answer = null;
   let used = cmd;
+  let permanent = null;
 
   for (const candidate of chain) {
     const tries = candidate.path === cmd.path ? 3 : 1;
@@ -2238,10 +2272,19 @@ async function aiSpecReply(spec, raw) {
         used = candidate;
       } catch (err) {
         errors.push(`${candidate.label}: ${String((err && err.message) || err).slice(0, 160)}`);
+        if (err && err.permanent) { permanent = err; break; }
       }
     }
-    if (answer) break;
+    if (answer || permanent) break;
     await aiDelay(8000);
+  }
+
+  if (!answer && permanent) {
+    return [
+      '⚠️ AI belum bisa menjawab — konfigurasi bot bermasalah',
+      '',
+      String(permanent.message),
+    ].join('\n');
   }
 
   if (!answer) {

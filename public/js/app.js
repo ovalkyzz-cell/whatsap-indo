@@ -405,7 +405,10 @@ function renderChatListNow() {
     const last = c.lastMessage;
     const time = last ? fmtListTime(last.createdAt) : '';
     const mine = last && last.senderId === S.me.id;
-    const ticks = mine && !last.deleted ? tickHtml(last.status) : '';
+    // di grup preview juga menampilkan centang pesan siapa pun agar
+    // status baca terakhir terlihat seluruh anggota
+    const showTicks = !last.deleted && (mine || c.type === 'group');
+    const ticks = showTicks ? tickHtml(last.status === 'sent' && !mine ? 'delivered' : last.status) : '';
     const nameBadge = badge(c.peer?.verified);
     const isGroup = c.type === 'group';
     return `
@@ -984,7 +987,11 @@ function messageHtml(m, chat, opts = {}) {
     }
   }
 
-  const ticks = out && !m.deleted ? tickHtml(m.status) : '';
+  // di grup centang tampil di SEMUA pesan (milik sendiri maupun anggota lain)
+  // supaya status baca terlihat oleh seluruh anggota
+  let tickStatus = m.status;
+  if (!out && tickStatus === 'sent') tickStatus = 'delivered'; // pesan masuk pasti sudah sampai ke layar ini
+  const ticks = !m.deleted && (out || chat.type === 'group') ? tickHtml(tickStatus) : '';
   let progress = '';
   if (m.status === 'sending' && m.mediaSize != null) {
     progress = `<div class="uploading-label">Mengunggah ${m._progress || 0}% • ${esc(fmtSize(m.mediaSize))}</div>
