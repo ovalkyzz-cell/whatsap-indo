@@ -6582,7 +6582,7 @@ $('btnCloseComments').addEventListener('click', () => {
   $('storyComments').classList.add('hidden');
   clearStoryReply();
 });
-$('btnCancelReply').addEventListener('click', clearStoryReply);
+$('btnCancelStoryReply').addEventListener('click', clearStoryReply); // tombol ✕ di form komentar story
 
 $('storyReplyForm').addEventListener('submit', async (e) => {
   e.preventDefault();

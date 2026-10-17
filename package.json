@@ -8,7 +8,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "admin": "node admin/server.js",
-    "test": "node test/crop.js && node test/calls.js && node test/antispam.js && node test/callflow.js && node test/groupbot.js && node test/groupbotfull.js && node test/admingroup.js && node test/adminread.js && node test/statuscx.js && node test/renderlist.js && node test/backbtn.js && node test/e2e.js",
+    "test": "node test/crop.js && node test/calls.js && node test/antispam.js && node test/callflow.js && node test/groupbot.js && node test/groupbotfull.js && node test/admingroup.js && node test/adminread.js && node test/statuscx.js && node test/renderlist.js && node test/backbtn.js && node test/xbuttons.js && node test/e2e.js",
+    "test:xbuttons": "node test/xbuttons.js",
     "test:crop": "node test/crop.js",
     "test:calls": "node test/calls.js",
     "test:antispam": "node test/antispam.js",
@@ -55,6 +56,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "jsdom": "^30.1.3",
     "socket.io-client": "^4.8.4"
   }
 }
