@@ -567,6 +567,10 @@
         <div class="status-colors" id="statusColors"></div>
         <div class="status-tag-panel hidden" id="statusTagPanel">
           <div class="status-tag-chips hidden" id="statusTagChips"></div>
+          <div class="status-tag-tabs" role="tablist">
+            <button type="button" class="status-tag-tab active" data-tagtab="users" role="tab">Kontak</button>
+            <button type="button" class="status-tag-tab" data-tagtab="groups" role="tab">Grup</button>
+          </div>
           <div class="status-tag-list" id="statusTagList"></div>
         </div>
         <div class="status-actions">
@@ -1237,7 +1241,7 @@
     <button class="story-nav next" id="storyNext" aria-label="Berikutnya">›</button>
     <footer class="story-foot" id="storyFoot">
       <span id="storyViews" class="hidden">👁 0</span>
-      <button class="story-cmt-btn" id="btnOpenComments" type="button" aria-label="Komentar status">💬 <span id="storyCmtCount">0</span></button>
+      <button class="story-cmt-btn" id="btnOpenComments" type="button" aria-label="Komentar status"><svg viewBox="0 0 24 24" class="story-cmt-ico" aria-hidden="true"><path d="M4.2 5.4A2.7 2.7 0 0 1 6.9 2.7h10.2a2.7 2.7 0 0 1 2.7 2.7v7.4a2.7 2.7 0 0 1-2.7 2.7h-6.1l-4.55 3.5a.85.85 0 0 1-1.37-.68l.1-2.82H6.9a2.7 2.7 0 0 1-2.7-2.7V5.4z" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round"/><path d="M12 6.15l1.28 2.6 2.87.42-2.07 2.02.49 2.86L12 12.77l-2.57 1.35.49-2.86-2.07-2.02 2.87-.42L12 6.15z" fill="currentColor"/></svg> <span id="storyCmtCount">0</span></button>
       <button class="btn-ghost danger story-del hidden" id="btnDeleteStory"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-trash" /></svg> Hapus status</button>
     </footer>
     <div class="story-comments hidden" id="storyComments">

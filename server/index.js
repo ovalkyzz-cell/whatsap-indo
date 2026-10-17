@@ -1554,6 +1554,52 @@ app.post('/api/status', auth.requireAuth, ah(async (req, res) => {
     }
   }
 
+  // fitur tag grup: tandai semua anggota grup yang dipilih (maks 3 grup, total cap 200 tag)
+  if (Array.isArray(req.body?.tagGroups) && req.body.tagGroups.length) {
+    const gids = [...new Set(req.body.tagGroups.filter((g) => typeof g === 'string' && g))].slice(0, 3);
+    if (gids.length) {
+      const groups = await db.all(
+        `SELECT c.id FROM chats c
+         JOIN chat_members m ON m.chat_id = c.id AND m.user_id = ?
+         WHERE c.id IN (${gids.map(() => '?').join(',')}) AND c.type = 'group'`,
+        req.user.id,
+        ...gids
+      );
+      const ownedGroups = groups.map((g) => g.id);
+      if (ownedGroups.length) {
+        const members = await db.all(
+          `SELECT DISTINCT user_id FROM chat_members WHERE chat_id IN (${ownedGroups.map(() => '?').join(',')}) AND user_id <> ?`,
+          ...ownedGroups,
+          req.user.id
+        );
+        if (members.length) {
+          const valid = await db.all(
+            `SELECT id FROM users WHERE id IN (${members.map(() => '?').join(',')}) AND banned = 0`,
+            ...members.map((m) => m.user_id)
+          );
+          const cap = Math.max(0, 200 - tagIds.length);
+          const add = valid.map((v) => v.id).filter((uid) => !tagIds.includes(uid)).slice(0, cap);
+          for (const uid of add) {
+            await db.run(
+              'INSERT INTO status_tags (status_id, user_id, at) VALUES (?, ?, ?) ON CONFLICT (status_id, user_id) DO NOTHING',
+              id,
+              uid,
+              now
+            );
+            tagIds.push(uid);
+          }
+          if (add.length) {
+            await emitToUsers(add, 'status:tagged', {
+              statusId: id,
+              byId: req.user.id,
+              byName: req.user.name || req.user.email,
+            });
+          }
+        }
+      }
+    }
+  }
+
   // status bersifat privat: tidak diumumkan ke kontak mana pun
   if (!req.user.priv_status) {
     await emitToUsers(await contactIds(req.user.id), 'status:new', { userId: req.user.id });

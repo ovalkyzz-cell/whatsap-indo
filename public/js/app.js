@@ -94,6 +94,14 @@ function mediaBroken(el) {
   }
 }
 
+/* media selesai dimuat: tinggi bubble bisa melonjak -> bila sedang di bawah,
+   ikut turun ke pesan terakhir supaya posisi baca tidak meleset */
+function mediaLoaded() {
+  if (!UI.nearBottom) return;
+  const box = $('messages');
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
 /* ================= API ================= */
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -549,6 +557,12 @@ async function openChat(chatId) {
   UI.hasMore = S.more[chatId] !== false;
   UI.loadingOlder = false;
   renderMessages();
+  // kunci posisi pesan terakhir: render pertama + frame berikutnya (tinggi layout bisa berubah seketika)
+  requestAnimationFrame(() => {
+    const box = $('messages');
+    if (box && UI.nearBottom) box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(() => { if (box && UI.nearBottom) box.scrollTop = box.scrollHeight; });
+  });
   markRead(chatId);
   ncMarkChatRead(chatId);
   $('messageInput').focus();
@@ -969,11 +983,11 @@ function messageHtml(m, chat, opts = {}) {
       if (m.body) inner += renderMsgBody(m.body);
     } else {
       if (m.type === 'sticker' && m.mediaUrl) {
-        inner += `<div class="msg-sticker"><img src="${esc(m.mediaUrl)}" alt="${esc(m.body || 'Stiker')}" loading="lazy" onerror="mediaBroken(this)"></div>`;
+        inner += `<div class="msg-sticker"><img src="${esc(m.mediaUrl)}" alt="${esc(m.body || 'Stiker')}" loading="lazy" onload="mediaLoaded()" onerror="mediaBroken(this)"></div>`;
       } else if (m.type === 'image' && m.mediaUrl) {
-        inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy" onerror="mediaBroken(this)"></a></div>`;
+        inner += `<div class="msg-media"><a href="${esc(m.mediaUrl)}" target="_blank" rel="noopener"><img src="${esc(m.mediaUrl)}" alt="${esc(m.mediaName || '')}" loading="lazy" onload="mediaLoaded()" onerror="mediaBroken(this)"></a></div>`;
       } else if (m.type === 'video' && m.mediaUrl) {
-        inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata" onerror="mediaBroken(this)"></video></div>`;
+        inner += `<div class="msg-media"><video src="${esc(m.mediaUrl)}" controls preload="metadata" onloadedmetadata="mediaLoaded()" onerror="mediaBroken(this)"></video></div>`;
       } else if (m.type === 'audio' && m.mediaUrl) {
         inner += audioPlayerHtml(m);
       } else if (m.type === 'file' && m.mediaUrl) {
@@ -5928,6 +5942,8 @@ function closeViewOnce() {
 function bindEdgeBack() {
   let st = null;
   const view = () => $('appView');
+  const EASE_OUT = 'cubic-bezier(.22,1,.36,1)'; // close: cepat lalu pelan (spring keluar)
+  const EASE_BACK = 'cubic-bezier(.32,.72,0,1)'; // batal: kembali mengikuti jari (spring balik)
   document.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
     const t = e.touches[0];
@@ -5939,62 +5955,114 @@ function bindEdgeBack() {
     // drawer/panel lain sedang menutupi layar -> gesture tepi dibiarkan untuk mereka
     if (drawerOpen && !voOpen && !storyOpen) return;
     if (!view().classList.contains('chat-open') && !voOpen) return;
-    st = { x: t.clientX, y: t.clientY, active: false, dx: 0 };
+    st = { x: t.clientX, y: t.clientY, t0: performance.now(), lastX: t.clientX, lastT: performance.now(), active: false, dx: 0, vx: 0 };
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
     if (!st) return;
     const t = e.touches[0];
     const dx = t.clientX - st.x;
     const dy = Math.abs(t.clientY - st.y);
+    const now = performance.now();
     if (!st.active) {
       // tentukan arah setelah jarak cukup; geser ke kanan dominan -> aktif
-      if (dx > 14 && dx > dy * 1.2) st.active = true;
+      if (dx > 10 && dx > dy * 1.15) st.active = true;
       else if (dx < -8 || dy > 16) { st = null; return; }
       else return;
     }
     if (e.cancelable) e.preventDefault();
     st.dx = dx;
+    // kecepatan sentuh (px/ms) utk trigger usapan cepat ala WA
+    const dt = now - st.lastT;
+    if (dt > 0) st.vx = (t.clientX - st.lastX) / dt;
+    st.lastX = t.clientX;
+    st.lastT = now;
     const v = view();
     const over = $('voViewer') && !$('voViewer').classList.contains('hidden');
     const d = Math.max(0, Math.min(window.innerWidth * 0.85, dx));
-    if (over) $('voViewer').style.transform = `translateX(${d}px)`;
-    else {
+    if (over) {
+      const el = $('voViewer');
+      el.style.willChange = 'transform, opacity';
+      el.style.transition = 'none';
+      el.style.transform = `translateX(${d}px)`;
+      el.style.opacity = String(Math.max(0.25, 1 - (d / window.innerWidth) * 0.45));
+    } else {
+      v.style.willChange = 'transform, opacity';
       v.style.transition = 'none';
       v.style.transform = `translateX(${d}px)`;
+      // parallax: view sedikit redup mengikuti jari (rasa native)
+      v.style.opacity = String(Math.max(0.4, 1 - (d / window.innerWidth) * 0.5));
     }
   }, { passive: false });
   const finish = () => {
     if (!st) return;
-    const fired = st.active && st.dx >= 72;
     const over = $('voViewer') && !$('voViewer').classList.contains('hidden');
     const v = view();
+    // trigger: jarak cukup ATAU usapan cepat (velocity tinggi walau jarak sedang)
+    const fired = st.active && (st.dx >= 72 || (st.vx > 0.55 && st.dx > 28));
+    const resetStyles = (el) => {
+      el.style.transition = '';
+      el.style.transform = '';
+      el.style.opacity = '';
+      el.style.willChange = '';
+    };
     if (over) {
       const el = $('voViewer');
-      el.style.transition = 'transform .18s ease, opacity .18s ease';
+      el.style.transition = `transform .26s ${EASE_OUT}, opacity .26s ${EASE_OUT}`;
       if (fired) { el.style.transform = 'translateX(100%)'; el.style.opacity = '0'; }
+      else { el.style.transform = ''; el.style.opacity = ''; }
       setTimeout(() => {
-        el.style.transition = '';
-        el.style.transform = '';
-        el.style.opacity = '';
+        resetStyles(el);
         if (fired) closeViewOnce();
-      }, fired ? 190 : 0);
+      }, fired ? 270 : 0);
     } else if (v.classList.contains('chat-open')) {
-      v.style.transition = 'transform .18s ease';
-      v.style.transform = fired ? 'translateX(100%)' : '';
+      v.style.transition = `transform .26s ${EASE_OUT}, opacity .26s ${EASE_OUT}`;
       if (fired) {
+        v.style.transform = 'translateX(100%)';
+        v.style.opacity = '0';
         setTimeout(() => {
-          v.style.transition = '';
-          v.style.transform = '';
+          resetStyles(v);
           closeChat();
-        }, 185);
+        }, 265);
       } else {
-        setTimeout(() => { v.style.transition = ''; }, 190);
+        v.style.transition = `transform .24s ${EASE_BACK}, opacity .24s ${EASE_BACK}`;
+        v.style.transform = '';
+        v.style.opacity = '';
+        setTimeout(() => { resetStyles(v); }, 250);
       }
     }
     st = null;
   };
   document.addEventListener('touchend', finish);
   document.addEventListener('touchcancel', finish);
+}
+
+// keyboard: composer tidak boleh tertutup keyboard (visualViewport, rasa app native)
+// ukur jarak nyata composer vs tepi keyboard -> aman dari dobel-offset saat 100dvh ikut mengecil
+function bindViewportKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const apply = () => {
+    const kb = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
+    const open = kb > 90;
+    document.documentElement.classList.toggle('kb-open', open);
+    let inset = 0;
+    if (open) {
+      const composer = document.querySelector('#appView.chat-open .composer') || document.querySelector('.composer');
+      if (composer) {
+        const r = composer.getBoundingClientRect();
+        const covered = r.bottom - (vv.height + (vv.offsetTop || 0));
+        if (covered > 4) inset = Math.min(covered, kb);
+      }
+    }
+    document.documentElement.style.setProperty('--kb-inset', inset + 'px');
+    // saat keyboard muncul, tetap di posisi pesan terakhir bila memang sedang di bawah
+    if (open && S.activeChatId && UI.nearBottom) {
+      const box = $('messages');
+      if (box) box.scrollTop = box.scrollHeight;
+    }
+  };
+  vv.addEventListener('resize', apply);
+  vv.addEventListener('scroll', apply);
 }
 
 window.addEventListener('keydown', (e) => {
@@ -6059,13 +6127,36 @@ const STATUS_BG = ['#008069', '#1d6fd1', '#7c3aed', '#d5504f', '#c2410c', '#111b
 S.statusBg = STATUS_BG[0];
 S.statusDraft = { media: null };
 S.statusTags = [];
+S.statusTagGroups = [];
+S.statusTagTab = 'users';
 initStatusColors();
 
-/* ---- tag status: pilih pengguna yang ditandai ---- */
+/* ---- tag status: pilih pengguna / grup yang ditandai ---- */
 let statusTagUsers = null;
+
+function renderStatusTagTabs() {
+  document.querySelectorAll('.status-tag-tab').forEach((t) =>
+    t.classList.toggle('active', t.dataset.tagtab === S.statusTagTab));
+}
 
 function renderStatusTagList() {
   const list = $('statusTagList');
+  if (S.statusTagTab === 'groups') {
+    const groups = (S.chats || []).filter((c) => c.type === 'group');
+    if (!groups.length) { list.innerHTML = '<div class="status-tag-hint">Belum ada grup untuk ditandai.</div>'; return; }
+    list.innerHTML = groups.map((g) => `
+      <button type="button" class="status-tag-item ${S.statusTagGroups.includes(g.id) ? 'picked' : ''}" data-taggroup="${g.id}">
+        <span class="avatar"><span>${esc((g.name || 'G').charAt(0).toUpperCase())}</span></span>
+        <span><strong>${esc(g.name || 'Grup')}</strong><small>${esc(String(g.memberCount || ''))}</small></span>
+        <span class="status-tag-check">✓</span>
+      </button>`).join('');
+    list.querySelectorAll('[data-taggroup]').forEach((b) => {
+      const g = groups.find((x) => x.id === b.dataset.taggroup);
+      if (g) setAvatar(b.querySelector('.avatar'), { name: g.name, avatar: g.avatar });
+      b.addEventListener('click', () => toggleStatusTagGroup(b.dataset.taggroup));
+    });
+    return;
+  }
   if (!statusTagUsers) { list.innerHTML = '<div class="status-tag-hint">Memuat kontak...</div>'; return; }
   if (!statusTagUsers.length) { list.innerHTML = '<div class="status-tag-hint">Belum ada kontak untuk ditandai.</div>'; return; }
   list.innerHTML = statusTagUsers.map((u) => `
@@ -6083,12 +6174,18 @@ function renderStatusTagList() {
 
 function renderStatusTagChips() {
   const wrap = $('statusTagChips');
-  wrap.classList.toggle('hidden', !S.statusTags.length);
-  wrap.innerHTML = S.statusTags.map((id) => {
+  const groups = (S.chats || []).filter((c) => c.type === 'group' && S.statusTagGroups.includes(c.id));
+  wrap.classList.toggle('hidden', !S.statusTags.length && !groups.length);
+  const userChips = S.statusTags.map((id) => {
     const u = (statusTagUsers || []).find((x) => x.id === id);
     return `<span class="tag-chip">@ ${esc(u ? u.name : 'Pengguna')}<button type="button" class="tag-x" data-untag="${id}" aria-label="Hapus tanda">✕</button></span>`;
   }).join('');
+  const groupChips = groups.map((g) =>
+    `<span class="tag-chip">@ ${esc(g.name || 'Grup')}<button type="button" class="tag-x" data-untaggroup="${g.id}" aria-label="Hapus tanda grup">✕</button></span>`
+  ).join('');
+  wrap.innerHTML = userChips + groupChips;
   wrap.querySelectorAll('[data-untag]').forEach((b) => b.addEventListener('click', () => toggleStatusTag(b.dataset.untag)));
+  wrap.querySelectorAll('[data-untaggroup]').forEach((b) => b.addEventListener('click', () => toggleStatusTagGroup(b.dataset.untaggroup)));
 }
 
 function toggleStatusTag(id) {
@@ -6097,6 +6194,17 @@ function toggleStatusTag(id) {
   else {
     if (S.statusTags.length >= 10) { toast('Maksimal 10 orang yang bisa ditandai'); return; }
     S.statusTags.push(id);
+  }
+  renderStatusTagChips();
+  renderStatusTagList();
+}
+
+function toggleStatusTagGroup(id) {
+  const i = S.statusTagGroups.indexOf(id);
+  if (i >= 0) S.statusTagGroups.splice(i, 1);
+  else {
+    if (S.statusTagGroups.length >= 3) { toast('Maksimal 3 grup yang bisa ditandai'); return; }
+    S.statusTagGroups.push(id);
   }
   renderStatusTagChips();
   renderStatusTagList();
@@ -6144,6 +6252,9 @@ function openStatusComposer() {
   $('statusText').value = '';
   S.statusDraft = { media: null };
   S.statusTags = [];
+  S.statusTagGroups = [];
+  S.statusTagTab = 'users';
+  renderStatusTagTabs();
   $('statusTagPanel').classList.add('hidden');
   $('btnStatusTag').setAttribute('aria-pressed', 'false');
   renderStatusTagChips();
@@ -6509,22 +6620,33 @@ $('statusText').addEventListener('input', renderStatusPreview);
 $('btnCloseStatus').addEventListener('click', closeDrawers);
 $('btnStatusMedia').addEventListener('click', () => $('statusInput').click());
 
+document.querySelectorAll('.status-tag-tab').forEach((t) => {
+  t.addEventListener('click', () => {
+    S.statusTagTab = t.dataset.tagtab;
+    renderStatusTagTabs();
+    renderStatusTagList();
+  });
+});
+
 $('btnStatusTag').addEventListener('click', async () => {
   const panel = $('statusTagPanel');
   const open = panel.classList.contains('hidden');
   panel.classList.toggle('hidden', !open);
   $('btnStatusTag').setAttribute('aria-pressed', open ? 'true' : 'false');
-  if (open && statusTagUsers === null) {
+  if (open) {
+    renderStatusTagTabs();
     renderStatusTagList();
-    try {
-      const data = await api('/api/contacts?limit=100');
-      statusTagUsers = (data.users || []).filter((u) => u.id !== S.me?.id);
-    } catch (err) {
-      statusTagUsers = [];
-      toast(err.message);
+    if (statusTagUsers === null) {
+      try {
+        const data = await api('/api/contacts?limit=100');
+        statusTagUsers = (data.users || []).filter((u) => u.id !== S.me?.id);
+      } catch (err) {
+        statusTagUsers = [];
+        toast(err.message);
+      }
+      renderStatusTagList();
+      renderStatusTagChips();
     }
-    renderStatusTagList();
-    renderStatusTagChips();
   }
 });
 
@@ -6558,10 +6680,11 @@ $('btnPostStatus').addEventListener('click', async () => {
   try {
     let payload;
     const tags = (S.statusTags || []).slice(0, 10);
+    const tagGroups = (S.statusTagGroups || []).slice(0, 3);
     if (media) {
-      payload = { type: media.type === 'video' ? 'video' : 'image', media: { url: media.url, name: media.name, mime: media.mime }, body, tags };
+      payload = { type: media.type === 'video' ? 'video' : 'image', media: { url: media.url, name: media.name, mime: media.mime }, body, tags, tagGroups };
     } else {
-      payload = { type: 'text', body, bg: S.statusBg, tags };
+      payload = { type: 'text', body, bg: S.statusBg, tags, tagGroups };
     }
     await api('/api/status', { method: 'POST', body: payload });
     closeDrawers();
@@ -6584,6 +6707,7 @@ $('btnNewGroup').addEventListener('click', () => {
   $('groupName').focus();
 });
 $('btnCloseGroup').addEventListener('click', closeDrawers);
+$('btnCloseGroupInfo').addEventListener('click', closeDrawers);
 
 let groupSearchTimer;
 $('groupSearch').addEventListener('input', () => {
@@ -7004,6 +7128,7 @@ $('btnRecSend').addEventListener('click', () => stopRecording(true));
   bindMessageActions(); // satu listener delegasi untuk semua tombol pesan
   bindMessagesScroll();  // scroll + tombol "ke pesan terbaru"
   bindEdgeBack();        // gesture tepi kiri -> kembali
+  bindViewportKeyboard(); // composer tetap di atas keyboard saat mengetik
   void loadHomeBg();
   void registerSW();
   const deepChat = new URLSearchParams(location.search).get('chat');

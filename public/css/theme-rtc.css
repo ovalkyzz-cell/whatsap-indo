@@ -266,6 +266,7 @@ html[data-accent="mawar"] .msg.out a { color: #ffe4e6; }
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-top: 1px solid rgba(var(--wa-accent-rgb), .14);
+  padding-bottom: calc(8px + var(--kb-inset, 0px));
 }
 .composer textarea {
   background: var(--wa-input-bg);
@@ -352,6 +353,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .status-tag-check { margin-left: auto; color: var(--wa-teal); font-weight: 800; opacity: 0; }
 .status-tag-item.picked .status-tag-check { opacity: 1; }
 .status-tag-hint { font-size: 12px; color: var(--wa-text-2); padding: 4px 2px; }
+.status-tag-tabs { display: flex; gap: 6px; margin: 8px 0 6px; }
+.status-tag-tab {
+  flex: 1; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--wa-border);
+  background: var(--wa-input-bg); color: var(--wa-text-2); font-size: 13px; font-weight: 700;
+  cursor: pointer; transition: background .16s, color .16s, border-color .16s;
+}
+.status-tag-tab.active {
+  background: rgba(var(--wa-accent-rgb), .14); color: var(--wa-teal-dark);
+  border-color: rgba(var(--wa-accent-rgb), .5);
+}
 
 .status-tagged-chip {
   display: inline-block;
@@ -383,6 +394,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 }
 .story-cmt-btn:hover { background: rgba(255, 255, 255, .24); transform: translateY(-1px); }
 .story-cmt-btn:active { transform: scale(.95); }
+.story-cmt-ico { width: 19px; height: 19px; display: block; }
 
 .story-comments {
   position: absolute;
