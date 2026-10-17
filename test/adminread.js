@@ -34,6 +34,7 @@ async function api(path, opts = {}) {
 const ADMIN_EMAIL = 'ovalkyzz@gmail.com';
 const ADMIN_PASSWORD = 'secret123';
 let admToken = null;
+let admId = null;
 
 async function admLogin() {
   let r = await api('/api/auth/register', {
@@ -45,6 +46,7 @@ async function admLogin() {
   }
   if (!r.data || !r.data.token) throw new Error(`admin gagal: ${r.status}`);
   admToken = r.data.token;
+  admId = r.data.user && r.data.user.id;
 }
 
 async function admApi(path, opts = {}) {
@@ -103,9 +105,11 @@ const emitAck = (sock, event, payload) => new Promise((resolve) => {
   const tok1 = a1.data.token, id1 = a1.data.user.id;
   const tok2 = a2.data.token, id2 = a2.data.user.id;
 
-  const rg = await admApi('/api/chats/group', {
+  // pembuat = anggota1 FRESH tiap run (kuota 5 grup/jam milik admin tidak terkuras)
+  const rg = await api('/api/chats/group', {
     method: 'POST',
-    body: { name: `Grup Centang ${stamp}`, memberIds: [id1, id2] },
+    token: tok1,
+    body: { name: `Grup Centang ${stamp}`, memberIds: [admId, id2] },
   });
   ok(rg.status === 201, 'grup dibuat (admin + 2 anggota)');
   const gid = rg.data.chat.id;

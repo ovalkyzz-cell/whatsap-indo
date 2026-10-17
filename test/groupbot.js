@@ -26,6 +26,7 @@ async function api(path, opts = {}) {
 const ADMIN_EMAIL = 'ovalkyzz@gmail.com';
 const ADMIN_PASSWORD = 'secret123';
 let admToken = null;
+let admId = null;
 
 async function admLogin() {
   let r = await api('/api/auth/register', {
@@ -37,6 +38,7 @@ async function admLogin() {
   }
   if (!r.data || !r.data.token) throw new Error(`admin gagal: ${r.status}`);
   admToken = r.data.token;
+  admId = r.data.user && r.data.user.id;
   return admToken;
 }
 
@@ -106,11 +108,14 @@ const isBotMsg = (botId) => (m) => m && m.senderId === botId;
   // bot lokal tanpa API: bot-verif-am menjawab menu secara lokal
   const BOT = 'bot-verif-am';
 
-  const rg = await admApi('/api/chats/group', {
+  // pembuat grup = anggota FRESH tiap run: kuota "maks 5 grup/jam" milik admin
+  // tidak terkuras oleh regresi berulang (admin situs tetap kelola bot sbg admin grup)
+  const rg = await api('/api/chats/group', {
     method: 'POST',
-    body: { name: `Grup Uji Bot ${stamp}`, memberIds: [idFree] },
+    token: tokFree,
+    body: { name: `Grup Uji Bot ${stamp}`, memberIds: [admId] },
   });
-  ok(rg.status === 201 && rg.data.chat?.type === 'group', 'admin membuat grup berisi anggota non-premium');
+  ok(rg.status === 201 && rg.data.chat?.type === 'group', 'anggota membuat grup berisi admin site');
   const gid = rg.data.chat.id;
 
   const addBot = await admApi(`/api/chats/${gid}/members`, { method: 'POST', body: { userId: BOT } });

@@ -595,7 +595,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (let i = 0; i < 40; i++) {
     sockA2.emit('message:send', { chatId, type: 'text', body: `Banjir ${stamp} ${i}` }, (r) => floodResults.push(r));
   }
-  await sleep(1500);
+  // tunggu semua callback ack (polling) — server boleh lambat saat antrean pesan
+  // menumpuk setelah seri uji lain, jangan putuskan berdasarkan tetapan waktu tunggu
+  const floodWait = Date.now() + 8000;
+  while (floodResults.length < 40 && Date.now() < floodWait) await sleep(100);
   const blocked = floodResults.filter((r) => r && r.ok === false);
   ok(floodResults.length === 40, 'every flood message answered');
   ok(blocked.length > 0, `flood rate-limited (${blocked.length}/40 blocked)`);
