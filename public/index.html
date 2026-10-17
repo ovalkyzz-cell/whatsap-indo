@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" data-theme="dark" data-accent="mawar">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -19,16 +19,17 @@
     (function () {
       var theme = null;
       try { theme = localStorage.getItem('wa_theme'); } catch (e) { /* storage diblokir */ }
-      if (theme !== 'dark' && theme !== 'light') {
-        theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-      }
+      if (theme !== 'dark' && theme !== 'light') theme = 'dark';
       document.documentElement.setAttribute('data-theme', theme);
-      // warna bilah jendela aplikasi ikut tema (penting saat dipasang sebagai aplikasi)
+      var accent = null;
+      try { accent = localStorage.getItem('wa_accent'); } catch (e) { /* storage diblokir */ }
+      if (accent !== 'mawar') document.documentElement.setAttribute('data-accent', accent || 'mawar');
       var tc = document.querySelector('meta[name="theme-color"]');
-      if (tc) tc.setAttribute('content', theme === 'dark' ? '#111b21' : '#008069');
+      if (tc) tc.setAttribute('content', theme === 'dark' ? '#111b21' : '#f1ecee');
     })();
   </script>
   <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/theme-rtc.css" />
 </head>
 <body>
 

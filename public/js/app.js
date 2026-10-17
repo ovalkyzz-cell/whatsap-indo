@@ -2581,7 +2581,7 @@ function applyTheme(t) {
 }
 
 function applyAccent(id) {
-  const accent = THEME_ACCENTS.some((a) => a.id === id) ? id : 'teal';
+  const accent = THEME_ACCENTS.some((a) => a.id === id) ? id : 'mawar';
   document.documentElement.setAttribute('data-accent', accent);
   try { localStorage.setItem('wa_accent', accent); } catch (e) { /* storage diblokir */ }
   document.querySelectorAll('.theme-swatch').forEach((s) => s.classList.toggle('active', s.dataset.accent === accent));
@@ -2610,11 +2610,11 @@ function openThemeDrawer() {
 
 /* muat tema tersimpan lalu bangun pemilih warna */
 (function initTheme() {
-  let savedTheme = 'light';
-  let savedAccent = 'teal';
+  let savedTheme = 'dark';
+  let savedAccent = 'mawar';
   try {
-    savedTheme = localStorage.getItem('wa_theme') || 'light';
-    savedAccent = localStorage.getItem('wa_accent') || 'teal';
+    savedTheme = localStorage.getItem('wa_theme') || 'dark';
+    savedAccent = localStorage.getItem('wa_accent') || 'mawar';
   } catch (e) { /* storage diblokir */ }
   applyTheme(savedTheme);
   applyAccent(savedAccent);
@@ -5820,11 +5820,18 @@ $('btnToggleCam').addEventListener('click', () => {
 });
 
 /* ================= misc ui ================= */
+/* mode "layar HP": viewport sempit ATAU container aplikasi 480px (frame desktop) */
+function phoneUI() {
+  if (window.matchMedia('(max-width: 760px)').matches) return true;
+  const v = $('appView');
+  return !!v && v.offsetWidth <= 480;
+}
+
 // kembali ke daftar chat (tombol ‹ di action bar atas percakapan & gesture tepi)
 function closeChat(opts = {}) {
   clearReply();
   const view = $('appView');
-  if (opts.animate && window.matchMedia('(max-width: 760px)').matches) {
+  if (opts.animate && phoneUI()) {
     view.style.transition = 'transform .2s ease';
     view.style.transform = 'translateX(24px)';
     view.style.opacity = '.55';
@@ -5942,7 +5949,7 @@ window.addEventListener('keydown', (e) => {
     closeDrawers();
     if (anyDrawer) return;
     if (!$('attachMenu').classList.contains('hidden')) { $('attachMenu').classList.add('hidden'); return; }
-    if ($('appView').classList.contains('chat-open') && window.matchMedia('(max-width: 760px)').matches) closeChat();
+    if ($('appView').classList.contains('chat-open') && phoneUI()) closeChat();
   }
 });
 
