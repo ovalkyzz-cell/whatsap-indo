@@ -648,9 +648,10 @@ input, textarea { font: inherit; }
 .contact-card { background: var(--wa-panel); border: 1px solid var(--wa-border); border-radius: 14px; padding: 2px 14px; box-shadow: 0 1px 2px rgba(11, 20, 26, .05); }
 .contact-row { display: flex; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--wa-border); align-items: flex-start; }
 .contact-row:last-child { border-bottom: none; }
-.contact-row .cr-ico { font-size: 16px; opacity: .75; line-height: 1.4; }
+.contact-row .cr-ico { font-size: 16px; opacity: .75; line-height: 1.4; flex-shrink: 0; }
+.contact-row > div { flex: 1; min-width: 0; }
 .contact-row small { display: block; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--wa-text-2); margin-bottom: 2px; }
-.contact-row strong { font-size: 14.5px; font-weight: 500; word-break: break-word; }
+.contact-row strong { font-size: 14.5px; font-weight: 500; word-break: break-word; overflow-wrap: anywhere; }
 .contact-actions { display: flex; gap: 10px; }
 .contact-actions .btn-ghost { flex: 1; }
 
@@ -683,12 +684,16 @@ input, textarea { font: inherit; }
   font-weight: 600; text-align: right; min-width: 0;
   max-width: 65%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* ID Pengguna: bertingkat — label di atas, UUID utuh tanpa terpotong */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; overflow-wrap: break-word; word-break: break-word;
+}
+/* ID Pengguna: bertingkat — label di atas, UUID utuh, wrap rapi di dalam kolom */
 .fact.fact-id { flex-direction: column; align-items: stretch; gap: 5px; }
 .fact.fact-id .mono {
-  max-width: 100%; width: 100%; font-size: 12px;
+  max-width: 100%; width: 100%; font-size: 12px; line-height: 1.55;
   text-align: left; letter-spacing: .4px; color: var(--wa-text); font-weight: 500;
+  white-space: normal; overflow: visible;
 }
 .btn-ghost {
   border: 1px solid var(--wa-border); background: var(--wa-panel); padding: 12px; border-radius: 26px;
