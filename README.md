@@ -137,7 +137,8 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:crop` | **22 passed, 0 failed** |
 | `npm run test:calls` | **26 passed, 0 failed** |
 | `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
-| `npm test` (e2e) | **327 passed, 15 failed** |
+| `npm run test:groupbot` | **27 passed, 0 failed** (pasang/keluarkan bot grup, diam untuk non-premium, balas real-time saat disebut/dibalas, maks 1 bot) |
+| `npm test` (e2e) | **344 passed, 15 failed** |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
 `MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
