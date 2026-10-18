@@ -273,6 +273,19 @@ CREATE TABLE IF NOT EXISTS db_file_chunks (
   data    BYTEA NOT NULL,
   PRIMARY KEY (file_id, idx)
 );
+
+-- jejak aksi admin (audit trail konsol server)
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id         TEXT PRIMARY KEY,
+  admin_id   TEXT,
+  admin_name TEXT,
+  action     TEXT NOT NULL,
+  target     TEXT,
+  detail     TEXT,
+  at         BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit (action, at);
 `;
 
 const SQLITE_SCHEMA = `
@@ -533,6 +546,19 @@ CREATE TABLE IF NOT EXISTS db_file_chunks (
   data    BLOB NOT NULL,
   PRIMARY KEY (file_id, idx)
 );
+
+-- jejak aksi admin (audit trail konsol server)
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id         TEXT PRIMARY KEY,
+  admin_id   TEXT,
+  admin_name TEXT,
+  action     TEXT NOT NULL,
+  target     TEXT,
+  detail     TEXT,
+  at         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit (action, at);
 `;
 
 // migrasi kolom per tabel (dijalankan saat boot, aman diulang)

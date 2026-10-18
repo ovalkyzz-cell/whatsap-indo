@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>RTC-Core · Server Console</title>
+<style>
+  :root{
+    --bg:#0b0e11; --panel:#12161b; --panel2:#161b21; --line:#232a32;
+    --txt:#d7dde4; --muted:#8a94a0; --dim:#5f6a77;
+    --acc:#00a884; --acc-dim:#0b3b31; --ok:#3fcf8e; --warn:#e0a53d; --bad:#e05555;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--txt);
+    font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+  }
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .wrap{max-width:1280px; margin:0 auto; padding:18px 20px 40px}
+
+  /* ---------- topbar ---------- */
+  .topbar{display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:4px 2px 16px}
+  .brand{display:flex; align-items:center; gap:10px}
+  .brand-mark{
+    width:30px; height:30px; border:1px solid var(--acc); border-radius:6px;
+    display:grid; place-items:center; color:var(--acc); font:700 13px var(--mono);
+    background:#0d1418;
+  }
+  .brand-name{font-weight:700; letter-spacing:.14em; font-size:13px}
+  .brand-sub{color:var(--muted); font-size:11px; letter-spacing:.22em; text-transform:uppercase}
+  .top-right{margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .pill{
+    display:inline-flex; align-items:center; gap:7px; padding:5px 11px;
+    border:1px solid var(--line); border-radius:999px; background:var(--panel);
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+  }
+  .pill .dot{width:7px; height:7px; border-radius:50%; background:var(--dim)}
+  .pill.live{color:var(--ok); border-color:#1d4a3a} .pill.live .dot{background:var(--ok); box-shadow:0 0 6px var(--ok); animation:pulse 1.6s infinite}
+  .pill.down{color:var(--warn); border-color:#4a3a1d} .pill.down .dot{background:var(--warn)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .btn{
+    appearance:none; border:1px solid var(--line); background:var(--panel2); color:var(--txt);
+    border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer;
+    text-decoration:none; display:inline-flex; align-items:center; gap:7px;
+  }
+  .btn:hover{border-color:#37414d; background:#1a2027}
+  .btn-primary{background:var(--acc-dim); border-color:#14654f; color:#7ee0c4}
+  .btn-primary:hover{background:#0f4a3d; border-color:#1a8a6c}
+  .btn:disabled{opacity:.5; cursor:default}
+
+  /* ---------- stat grid ---------- */
+  .grid-stats{
+    display:grid; gap:10px; grid-template-columns:repeat(4,minmax(0,1fr));
+    margin-bottom:14px;
+  }
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:13px 14px 11px; position:relative; overflow:hidden;
+  }
+  .card .k{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
+  .card .v{font-size:24px; font-weight:650; margin-top:6px; letter-spacing:-.01em}
+  .card .s{font-size:11.5px; color:var(--dim); margin-top:3px}
+  .card .v.flash{animation:flash .7s ease}
+  @keyframes flash{0%{color:var(--acc)}100%{color:var(--txt)}}
+  .card.accent .v{color:var(--acc)}
+
+  /* ---------- panels ---------- */
+  .cols{display:grid; gap:14px; grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
+  .row{display:grid; gap:14px; grid-template-columns:minmax(0,7fr) minmax(0,5fr); margin-top:14px}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:8px}
+  .panel-head{
+    display:flex; align-items:center; gap:10px; padding:11px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  .panel-head h2{margin:0; font-size:11.5px; letter-spacing:.16em; text-transform:uppercase; font-weight:650}
+  .panel-head .hint{margin-left:auto; font-size:11px; color:var(--dim)}
+  .panel-body{padding:13px 14px}
+
+  /* ---------- storage ---------- */
+  .bar-row{display:grid; grid-template-columns:130px minmax(0,1fr) 92px; gap:10px; align-items:center; margin-bottom:9px}
+  .bar-row .lab{font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .bar-track{height:9px; background:#0d1116; border:1px solid var(--line); border-radius:5px; overflow:hidden}
+  .bar-fill{height:100%; background:var(--acc); border-radius:4px; transition:width .5s ease; min-width:2px}
+  .bar-fill.alt{background:#2f8f9e}
+  .bar-fill.alt2{background:#6b7f4a}
+  .bar-val{text-align:right; font-size:12px}
+  .tot-line{display:flex; justify-content:space-between; font-size:12.5px; color:var(--muted); padding-top:6px; border-top:1px dashed var(--line); margin-top:4px}
+  .tot-line b{color:var(--txt)}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px}
+  th{
+    text-align:left; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--dim); font-weight:600; padding:7px 8px; border-bottom:1px solid var(--line);
+  }
+  td{padding:8px; border-bottom:1px solid #1a2027; vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  td.r{text-align:right}
+  .who{display:flex; flex-direction:column; gap:1px}
+  .who .nm{font-weight:600}
+  .who .em{font-size:11px; color:var(--dim)}
+  .chip{
+    display:inline-block; font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    padding:2px 7px; border-radius:4px; border:1px solid var(--line); color:var(--muted);
+  }
+  .chip.ok{color:var(--ok); border-color:#1d4a3a; background:#0e2119}
+  .chip.warn{color:var(--warn); border-color:#4a3a1d; background:#211a0e}
+  .chip.bad{color:var(--bad); border-color:#4a1d1d; background:#210e0e}
+  .mini-bar{display:flex; align-items:center; gap:7px; justify-content:flex-end}
+  .mini-bar .bar-track{width:74px; height:7px}
+  .mini-bar .pct{font-size:11px; color:var(--dim); width:34px; text-align:right}
+
+  ul.recent{list-style:none; margin:8px 0 0; padding:0; max-height:180px; overflow:auto}
+  ul.recent li{
+    display:flex; gap:10px; align-items:baseline; padding:5px 2px; font-size:12px;
+    border-bottom:1px dashed #1a2027;
+  }
+  ul.recent li:last-child{border-bottom:none}
+  ul.recent .t{color:var(--dim); font-family:var(--mono); font-size:11px; flex:0 0 58px}
+  ul.recent .n{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  ul.recent .b{color:var(--muted); font-family:var(--mono); font-size:11.5px}
+
+  /* ---------- feed ---------- */
+  .feed{list-style:none; margin:0; padding:0; height:430px; overflow:auto}
+  .feed li{
+    display:grid; grid-template-columns:60px auto minmax(0,1fr); gap:9px; align-items:baseline;
+    padding:7px 14px; border-bottom:1px solid #171d24; font-size:12.5px;
+  }
+  .feed li:first-child{animation:slidein .35s ease}
+  @keyframes slidein{from{opacity:0; transform:translateY(-4px)}to{opacity:1; transform:none}}
+  .feed .t{color:var(--dim); font-family:var(--mono); font-size:11px}
+  .feed .c{font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; padding:2px 6px; border-radius:4px; border:1px solid var(--line); color:var(--muted); white-space:nowrap}
+  .feed .c.audit{color:#7ee0c4; border-color:#14654f; background:#0b241e}
+  .feed .c.sys{color:#8fb8e0; border-color:#2b3f55; background:#0e1620}
+  .feed .m{color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .feed .m .who2{color:var(--muted)}
+  .feed-empty{padding:26px 14px; color:var(--dim); font-size:12.5px; text-align:center}
+
+  /* ---------- security ---------- */
+  .sec-grid{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px}
+  .sec-item{background:var(--panel2); border:1px solid var(--line); border-radius:7px; padding:10px 12px}
+  .sec-item .k{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim)}
+  .sec-item .v{margin-top:4px; font-size:13px; display:flex; align-items:center; gap:7px}
+  .sec-item .v .ok-dot{width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto}
+  .sec-item .v .warn-dot{width:7px; height:7px; border-radius:50%; background:var(--warn); flex:0 0 auto}
+  .sec-item .v code{font:12px var(--mono); color:#7ee0c4; background:#0d1418; border:1px solid var(--line); border-radius:4px; padding:1px 6px}
+  .export-status{font-size:12px; color:var(--muted); margin-top:9px; min-height:18px}
+  .export-status.ok{color:var(--ok)} .export-status.err{color:var(--bad)}
+
+  .foot{margin-top:16px; color:var(--dim); font-size:11.5px; display:flex; gap:14px; flex-wrap:wrap}
+
+  /* ---------- gate (akses admin) ---------- */
+  .gate{
+    position:fixed; inset:0; background:var(--bg); z-index:60;
+    display:grid; place-items:center; padding:24px;
+  }
+  .gate.hide{display:none}
+  .gate-card{
+    max-width:420px; width:100%; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:30px 28px; text-align:center;
+  }
+  .gate-ic{
+    width:52px; height:52px; margin:0 auto 16px; border:1px solid var(--line);
+    border-radius:10px; display:grid; place-items:center; background:var(--panel2);
+    color:var(--warn); font:700 20px var(--mono);
+  }
+  .gate-card h1{margin:0 0 8px; font-size:17px}
+  .gate-card p{margin:0 0 18px; color:var(--muted); font-size:13px; line-height:1.6}
+  .gate-card .btn{margin:0 4px}
+
+  @media (max-width:980px){
+    .grid-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .cols,.row{grid-template-columns:minmax(0,1fr)}
+    .sec-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .feed{height:320px}
+  }
+  @media (max-width:560px){
+    .grid-stats{grid-template-columns:minmax(0,1fr)}
+    .sec-grid{grid-template-columns:minmax(0,1fr)}
+    .bar-row{grid-template-columns:96px minmax(0,1fr) 76px}
+    .wrap{padding:14px 12px 32px}
+  }
+</style>
+</head>
+<body>
+
+<!-- gerbang akses: hanya admin -->
+<div class="gate hide" id="scGate">
+  <div class="gate-card">
+    <div class="gate-ic">!</div>
+    <h1 id="scGateTitle">Akses terbatas</h1>
+    <p id="scGateText">Menghubungi server…</p>
+    <a class="btn" href="/">Ke Aplikasi</a>
+    <button class="btn" id="scGateRetry" type="button">Coba Lagi</button>
+  </div>
+</div>
+
+<div class="wrap" id="scApp" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">RTC</div>
+      <div>
+        <div class="brand-name">RTC-CORE</div>
+        <div class="brand-sub">Server Console</div>
+      </div>
+    </div>
+    <div class="top-right">
+      <span class="pill" id="scLive"><span class="dot"></span><span id="scLiveText">menyambung</span></span>
+      <span class="pill">uptime <span class="num" id="scUptime" style="color:var(--txt)">–</span></span>
+      <a class="btn" href="/">Ke Aplikasi</a>
+      <button class="btn" type="button" id="scLogout">Keluar</button>
+    </div>
+  </header>
+
+  <section class="grid-stats" id="scStats" aria-label="Statistik server"></section>
+
+  <section class="cols">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Penyimpanan</h2>
+        <span class="hint" id="scStorageHint">memuat…</span>
+      </div>
+      <div class="panel-body">
+        <div id="scStorageBars"></div>
+        <div class="tot-line"><span>Terakun di akun</span><b class="num" id="scStAccounted">–</b></div>
+        <div style="margin-top:14px">
+          <div class="panel-head" style="border:none; padding:0 0 8px">
+            <h2>Konsumen terbesar</h2>
+          </div>
+          <table>
+            <thead><tr><th>Pengguna</th><th>Paket</th><th class="r">Dipakai</th><th class="r">Status</th></tr></thead>
+            <tbody id="scTopUsers"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:14px">
+          <div class="panel-head" style="border:none; padding:0 0 4px">
+            <h2>Unggahan terakhir</h2>
+          </div>
+          <ul class="recent" id="scRecent"></ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Peristiwa langsung</h2>
+        <span class="hint">audit &amp; aktivitas admin</span>
+      </div>
+      <ul class="feed" id="scFeed"></ul>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="panel">
+      <div class="panel-head"><h2>Keamanan &amp; Enkripsi</h2></div>
+      <div class="panel-body">
+        <div class="sec-grid" id="scSecurity"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Ekspor Arsip</h2></div>
+      <div class="panel-body">
+        <p style="margin:0 0 12px; color:var(--muted); font-size:12.5px; line-height:1.65">
+          Mengunduh salinan data akun &amp; storage dalam berkas <b>.rtcenc</b> yang
+          sudah dienkripsi AES-256-GCM di sisi server. Isi mentah tidak pernah
+          melintasi jaringan.
+        </p>
+        <button class="btn btn-primary" type="button" id="scExport">Unduh Arsip Terenkripsi</button>
+        <div class="export-status" id="scExportStatus"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>Konsol terbatas untuk admin · API diproteksi JWT + peran admin</span>
+    <span id="scFootVault">enkripsi at-rest: –</span>
+  </footer>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function () {
+  'use strict';
+  var TOKEN_KEY = 'wa_token';
+  var token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { token = null; }
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------- util ----------
+  function fmtNum(v) { return (Number(v) || 0).toLocaleString('id-ID'); }
+  function fmtBytes(v) {
+    var b = Number(v) || 0;
+    if (b < 1024) return b + ' B';
+    var u = ['KB', 'MB', 'GB', 'TB'], i = -1, x = b;
+    do { x /= 1024; i++; } while (x >= 1024 && i < u.length - 1);
+    return x.toLocaleString('id-ID', { maximumFractionDigits: x >= 100 ? 0 : 1 }) + ' ' + u[i];
+  }
+  function fmtDur(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var d = Math.floor(s / 86400); s -= d * 86400;
+    var h = Math.floor(s / 3600); s -= h * 3600;
+    var m = Math.floor(s / 60); s -= m * 60;
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (d ? d + 'h ' : '') + p(h) + ':' + p(m) + ':' + p(s);
+  }
+  function fmtClock(ts) {
+    var d = new Date(Number(ts) || Date.now());
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    return fetch(path, Object.assign({}, opts, { headers: Object.assign(headers, opts.headers || {}) }))
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok) { var err = new Error(d.error || 'Gagal (' + r.status + ')'); err.status = r.status; throw err; }
+          return d;
+        });
+      });
+  }
+
+  // ---------- gerbang akses ----------
+  function gate(title, text) {
+    $('scGateTitle').textContent = title;
+    $('scGateText').textContent = text;
+    $('scGate').classList.remove('hide');
+    $('scApp').hidden = true;
+  }
+  function openApp() {
+    $('scGate').classList.add('hide');
+    $('scApp').hidden = false;
+  }
+
+  // ---------- kartu statistik ----------
+  var STATS = [
+    { k: 'Pengguna', cls: 'accent', v: function (d) { return fmtNum(d.users.total); },
+      s: function (d) { return fmtNum(d.users.premium) + ' premium · ' + fmtNum(d.users.new24h) + ' baru 24 jam'; } },
+    { k: 'Daring', v: function (d) { return fmtNum(d.users.online); },
+      s: function (d) { return fmtNum(d.sockets) + ' socket aktif · ' + fmtNum(d.users.login24h) + ' masuk 24 jam'; } },
+    { k: 'Menunggu persetujuan', v: function (d) { return fmtNum(d.users.pending); },
+      s: function (d) { return fmtNum(d.users.banned) + ' diblokir · ' + fmtNum(d.users.rejected) + ' ditolak'; } },
+    { k: 'Chat', v: function (d) { return fmtNum(d.chats); },
+      s: function (d) { return fmtNum(d.messages.live) + ' pesan aktif'; } },
+    { k: 'Storage terpakai', v: function (d) { return fmtBytes(d.users.storageUsed); },
+      s: function (d) { return fmtBytes(d.messages.mediaBytes) + ' media chat'; } },
+    { k: 'Memori (RSS)', v: function (d) { return fmtBytes(d.memory.rss); },
+      s: function (d) { return 'heap ' + fmtBytes(d.memory.heapUsed) + ' / ' + fmtBytes(d.memory.heapTotal); } },
+    { k: 'Basis data', v: function (d) { return fmtBytes(d.dbBytes); },
+      s: function (d) { return d.dialect === 'pg' ? 'PostgreSQL' : 'SQLite (lokal)'; } },
+    { k: 'Permintaan/menit', v: function (d) { return fmtNum(d.requests.perMin); },
+      s: function (d) { return fmtNum(d.requests.total) + ' total sejak boot'; } },
+  ];
+  var statEls = [];
+
+  function buildStats() {
+    var box = $('scStats');
+    box.textContent = '';
+    statEls = STATS.map(function (def) {
+      var card = el('div', 'card' + (def.cls ? ' ' + def.cls : ''));
+      var k = el('div', 'k', def.k);
+      var v = el('div', 'v num', '–');
+      var s = el('div', 's', '');
+      card.appendChild(k); card.appendChild(v); card.appendChild(s);
+      box.appendChild(card);
+      return { card: card, v: v, s: s, def: def, last: null };
+    });
+  }
+
+  function renderStats(d) {
+    statEls.forEach(function (ref) {
+      var nv = ref.def.v(d);
+      var ns = ref.def.s(d);
+      if (ref.last !== null && ref.last !== nv) {
+        ref.v.classList.remove('flash');
+        void ref.v.offsetWidth;
+        ref.v.classList.add('flash');
+      }
+      ref.last = nv;
+      ref.v.textContent = nv;
+      ref.s.textContent = ns;
+    });
+    $('scUptime').textContent = fmtDur(d.uptimeMs);
+    if (d.vault) renderVaultLine(d.vault);
+  }
+
+  var KEY_SOURCE = {
+    'env': 'ENCRYPTION_KEY aktif',
+    'env-derived': 'diturunkan dari ENCRYPTION_KEY',
+    'file': 'berkas kunci lokal',
+    'vercel-derived': 'diturunkan dari JWT_SECRET (Vercel)',
+    'unavailable': 'kunci tidak tersedia',
+  };
+
+  function renderVaultLine(v) {
+    var label = KEY_SOURCE[v.keySource] || v.keySource || '–';
+    $('scFootVault').textContent = 'enkripsi at-rest: ' + (v.algo || '–') + ' · ' + label;
+  }
+
+  // ---------- panel keamanan ----------
+  function renderSecurity(ov, auditCount) {
+    var tlsOk = location.protocol === 'https:';
+    var key = ov.vault || {};
+    var keyLabel = KEY_SOURCE[key.keySource] || key.keySource || '–';
+    var keyBad = key.keySource === 'unavailable';
+    var items = [
+      ['Enkripsi at-rest', null, (key.algo || 'aes-256-gcm') + ' · ' + keyLabel, keyBad ? 'warn' : 'ok'],
+      ['Autentikasi', null, 'JWT HS256 + bcrypt (cost 12)', 'ok'],
+      ['Transport', null, tlsOk ? 'HTTPS aktif' : 'HTTP lokal (pengembangan)', tlsOk ? 'ok' : 'warn'],
+      ['Header keamanan', null, 'nosniff · anti-frame · HSTS · noindex', 'ok'],
+      ['Basis data', null, (ov.dialect === 'pg' ? 'PostgreSQL' : 'SQLite') + ' terhubung', 'ok'],
+      ['Jejak audit', null, fmtNum(auditCount) + ' entri tersimpan', 'ok'],
+    ];
+    var box = $('scSecurity');
+    box.textContent = '';
+    items.forEach(function (it) {
+      var d = el('div', 'sec-item');
+      d.appendChild(el('div', 'k', it[0]));
+      var v = el('div', 'v');
+      v.appendChild(el('span', it[3] === 'ok' ? 'ok-dot' : 'warn-dot'));
+      if (it[2] && it[2].indexOf('·') === -1) v.appendChild(el('span', null, it[2]));
+      else {
+        var parts = String(it[2]).split(' · ');
+        v.appendChild(el('span', null, parts[0]));
+        var code = el('code', null, parts.slice(1).join(' · '));
+        v.appendChild(code);
+      }
+      d.appendChild(v);
+      box.appendChild(d);
+    });
+  }
+
+  // ---------- storage ----------
+  function pct(used, quota) {
+    if (!quota || quota <= 0) return null; // tanpa batas
+    return Math.min(100, Math.round((used / quota) * 100));
+  }
+  function statusChip(u) {
+    if (u.status === 'banned') return el('span', 'chip bad', 'diblokir');
+    if (u.status === 'pending') return el('span', 'chip warn', 'menunggu');
+    if (u.status === 'rejected') return el('span', 'chip bad', 'ditolak');
+    return el('span', 'chip ok', 'aktif');
+  }
+
+  function renderStorage(r) {
+    var t = r.totals;
+    var sources = [
+      { label: 'Media chat', bytes: t.chatMediaBytes, cls: '' },
+      { label: 'Penyimpanan', bytes: t.drawerBytes, cls: 'alt' },
+      { label: 'Berkas di DB', bytes: t.dbFileBytes, cls: 'alt2' },
+    ];
+    var max = Math.max.apply(null, sources.map(function (s) { return s.bytes; }).concat([1]));
+    var box = $('scStorageBars');
+    box.textContent = '';
+    sources.forEach(function (s) {
+      var row = el('div', 'bar-row');
+      row.appendChild(el('div', 'lab', s.label));
+      var track = el('div', 'bar-track');
+      var fill = el('div', 'bar-fill' + (s.cls ? ' ' + s.cls : ''));
+      fill.style.width = Math.max(1, Math.round((s.bytes / max) * 100)) + '%';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el('div', 'bar-val num', fmtBytes(s.bytes)));
+      box.appendChild(row);
+    });
+    $('scStAccounted').textContent = fmtBytes(t.accounted);
+    $('scStorageHint').textContent =
+      fmtNum(t.drawerCount + t.dbFileCount) + ' berkas · ' + fmtBytes(t.drawerBytes + t.dbFileBytes);
+
+    // konsumen terbesar
+    var tb = $('scTopUsers');
+    tb.textContent = '';
+    (r.topUsers || []).forEach(function (u) {
+      var tr = el('tr');
+      var tdWho = el('td');
+      var who = el('div', 'who');
+      who.appendChild(el('span', 'nm', u.name || '–'));
+      who.appendChild(el('span', 'em', u.email || ''));
+      tdWho.appendChild(who);
+      tr.appendChild(tdWho);
+      tr.appendChild(el('td', null, u.plan || 'gratis'));
+      var tdU = el('td', 'r');
+      var mb = el('div', 'mini-bar');
+      var track = el('div', 'bar-track');
+      var p = pct(u.used, u.quota);
+      var fill = el('div', 'bar-fill' + (p === null ? ' alt' : ''));
+      fill.style.width = (p === null ? 100 : Math.max(2, p)) + '%';
+      track.appendChild(fill);
+      mb.appendChild(track);
+      mb.appendChild(el('span', 'pct num', p === null ? '∞' : p + '%'));
+      mb.appendChild(el('span', 'num', fmtBytes(u.used)));
+      tdU.appendChild(mb);
+      tr.appendChild(tdU);
+      var tdS = el('td', 'r');
+      tdS.appendChild(statusChip(u));
+      tr.appendChild(tdS);
+      tb.appendChild(tr);
+    });
+
+    // unggahan terakhir
+    var ul = $('scRecent');
+    ul.textContent = '';
+    if (!(r.recentUploads || []).length) {
+      ul.appendChild(el('li', 'feed-empty', 'Belum ada unggahan tercatat.'));
+    }
+    (r.recentUploads || []).forEach(function (f) {
+      var li = el('li');
+      li.appendChild(el('span', 't', fmtClock(f.at)));
+      li.appendChild(el('span', 'n', f.name + ' · ' + (f.user || '')));
+      li.appendChild(el('span', 'b', fmtBytes(f.bytes)));
+      ul.appendChild(li);
+    });
+  }
+
+  // ---------- feed ----------
+  var ACTION_LABEL = {
+    premium_grant: 'Berikan premium', premium_revoke: 'Cabut premium',
+    user_approve: 'Setujui akun', user_reject: 'Tolak akun',
+    user_ban: 'Blokir akun', user_unban: 'Buka blokir akun',
+    ip_ban: 'Blokir IP', ip_unban: 'Buka blokir IP',
+    settings_update: 'Ubah pengaturan', storage_recompute: 'Hitung ulang storage',
+    bot_update: 'Ubah profil bot', export: 'Ekspor arsip',
+  };
+  var EVENT_LABEL = {
+    registered: 'Pendaftaran', login: 'Masuk', logout: 'Keluar',
+    approved: 'Disetujui', rejected: 'Ditolak', banned: 'Diblokir',
+    unbanned: 'Buka blokir', ip_banned: 'IP diblokir',
+    online: 'Daring', offline: 'Luring', audit: 'Audit',
+  };
+
+  function feedAppend(item) {
+    var ul = $('scFeed');
+    var empty = ul.querySelector('.feed-empty');
+    if (empty) empty.remove();
+    var li = el('li');
+    li.appendChild(el('span', 't', fmtClock(item.at)));
+    li.appendChild(el('span', 'c' + (item.kind === 'audit' ? ' audit' : ''), item.chip));
+    var msg = el('span', 'm');
+    if (item.who) msg.appendChild(el('span', 'who2', item.who + ' · '));
+    msg.appendChild(document.createTextNode(item.text));
+    li.appendChild(msg);
+    ul.insertBefore(li, ul.firstChild);
+    while (ul.children.length > 120) ul.removeChild(ul.lastChild);
+  }
+
+  function feedFromAudit(entry) {
+    feedAppend({
+      at: entry.at,
+      kind: 'audit',
+      chip: 'Audit',
+      who: entry.adminName || 'Admin',
+      text: (ACTION_LABEL[entry.action] || entry.action) + (entry.target ? ' · ' + entry.target : ''),
+    });
+  }
+  function feedFromEvent(ev) {
+    if (ev.type === 'audit' && ev.entry) { feedFromAudit(ev.entry); return; }
+    feedAppend({
+      at: ev.at,
+      kind: 'sys',
+      chip: EVENT_LABEL[ev.type] || ev.type,
+      who: (ev.user && (ev.user.name || ev.user.email)) || ev.name || '',
+      text: (ev.user && (ev.user.name || ev.user.email)) || ev.reason || ev.name || 'peristiwa sistem',
+    });
+  }
+
+  // ---------- muat data ----------
+  var overview = null;
+  function loadOverview() {
+    return api('/api/server/overview').then(function (d) { overview = d; renderStats(d); return d; });
+  }
+  function loadStorage() { return api('/api/server/storage').then(renderStorage); }
+  function loadAudit() {
+    return api('/api/server/audit?limit=60').then(function (d) {
+      var ul = $('scFeed');
+      ul.textContent = '';
+      var entries = (d.entries || []).slice().reverse();
+      if (!entries.length) {
+        ul.appendChild(el('li', 'feed-empty', 'Belum ada peristiwa. Tindakan admin akan muncul di sini.'));
+      }
+      entries.forEach(feedFromAudit);
+      return d;
+    });
+  }
+
+  // ---------- socket langsung ----------
+  var socket = null;
+  function setLive(on) {
+    var pill = $('scLive');
+    pill.classList.toggle('live', on);
+    pill.classList.toggle('down', !on);
+    $('scLiveText').textContent = on ? 'langsung' : 'terputus';
+  }
+  function connectSocket() {
+    if (typeof io !== 'function') { setLive(false); return; }
+    socket = io({ auth: { token: token }, reconnection: true, reconnectionDelay: 1500 });
+    socket.on('connect', function () { setLive(true); });
+    socket.on('disconnect', function () { setLive(false); });
+    socket.on('server:stats', function (d) {
+      if (!d || !d.users) return;
+      overview = d;
+      renderStats(d);
+    });
+    socket.on('admin:event', function (ev) {
+      if (ev && ev.type) feedFromEvent(ev);
+    });
+    socket.on('connect_error', function () { setLive(false); });
+  }
+
+  // ---------- ekspor ----------
+  $('scExport').addEventListener('click', function () {
+    var btn = this, status = $('scExportStatus');
+    btn.disabled = true;
+    status.className = 'export-status';
+    status.textContent = 'Menyusun & mengenkripsi arsip…';
+    api('/api/server/export', { method: 'POST' }).then(function (pack) {
+      var blob = new Blob([pack.data], { type: 'application/octet-stream' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = pack.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+      status.className = 'export-status ok';
+      status.textContent =
+        'Selesai · ' + fmtBytes(pack.bytes) + ' → ' + fmtBytes(pack.cipherBytes) +
+        ' terenkripsi · ' + (pack.verified ? 'diverifikasi ✓' : 'verifikasi gagal');
+    }).catch(function (e) {
+      status.className = 'export-status err';
+      status.textContent = e.message || 'Ekspor gagal';
+    }).then(function () { btn.disabled = false; });
+  });
+
+  // ---------- keluar ----------
+  $('scLogout').addEventListener('click', function () {
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* abaikan */ }
+    location.href = '/';
+  });
+  $('scGateRetry').addEventListener('click', function () { location.reload(); });
+
+  // ---------- boot ----------
+  function boot() {
+    if (!token) {
+      gate('Belum masuk', 'Masuk sebagai admin terlebih dahulu lewat aplikasi, lalu buka konsol ini lagi.');
+      return;
+    }
+    api('/api/auth/me').then(function (r) {
+      if (!r.user || r.user.role !== 'admin') {
+        gate('Akses ditolak', 'Konsol Server hanya untuk akun berperan admin. Akun Anda saat ini bukan admin.');
+        return;
+      }
+      openApp();
+      buildStats();
+      setLive(false);
+      return Promise.all([loadOverview(), loadStorage(), loadAudit()]).then(function () {
+        connectSocket();
+      });
+    }).catch(function (e) {
+      if (e.status === 401) {
+        gate('Sesi berakhir', 'Token Anda tidak berlaku lagi. Masuk ulang dari aplikasi.');
+      } else {
+        gate('Tidak terhubung', 'Server tidak merespons. Periksa koneksi lalu coba lagi.');
+      }
+    });
+  }
+
+  // cadangan: segarkan ringkasan walau socket terputus
+  setInterval(function () {
+    if (!$('scApp').hidden) {
+      loadOverview().catch(function () { /* diamkan */ });
+      if (socket && !socket.connected) setLive(false);
+    }
+  }, 15000);
+  setInterval(function () {
+    if (!$('scApp').hidden) loadStorage().catch(function () { /* diamkan */ });
+  }, 60000);
+
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -25,7 +25,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | **Kunci enkripsi** | Diambil dari `ENCRYPTION_KEY` (base64/hex 32 byte) atau dibuat & disimpan persistent di `data/.enc-key` (mode `0600`). Di Vercel tanpa key eksplisit, kunci di-derive dari `JWT_SECRET` agar stabil antar cold-start. |
 | **Password** | Hash **bcrypt** (12 round). |
 | **Sesi / token** | JWT **HS256** dengan algoritma dipatuhi saat verifikasi (token `alg:none` / algoritme lain ditolak). |
-| **Security header global** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener/Resource-Policy`, `Permissions-Policy` (kamera & mikrofon hanya origin sendiri), HSTS di HTTPS, `X-Powered-By` disembunyikan. |
+| **Security header global** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener/Resource-Policy`, `Permissions-Policy` (kamera & mikrofon hanya origin sendiri), `X-Robots-Tag: noindex, nofollow`, HSTS di HTTPS, `X-Powered-By` disembunyikan. |
 | **Anti-spam & brute-force** | Rate-limit auth per IP, 1 akun/IP/24 jam, blokir IP otomatis, limit pesan/status per waktu. |
 
 > Catatan: enkripsi at-rest melindungi data di server (server-side). Ini berbeda dari *end-to-end encryption* — isi pesan tetap diproses di server untuk fitur bot, centang-biru & notifikasi.
@@ -56,6 +56,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
 | Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
 | Penyimpanan hemat RAM | Drawer **Penyimpanan** menampilkan **placeholder** — foto/video/audio **tidak dimuat ke RAM/perangkat sama sekali** saat daftar ditelusuri (nol byte media); konten hanya diambil **on-demand** saat kartu diketuk (tepat satu elemen hidup, video/audio `preload=none`), `src` dilepas saat viewer ditutup; file dibuka **streaming "Buka di Tab" tanpa mengunduh ke galeri** — storage murni di server |
+| Server Console | Halaman **`/server.html`** — konsol pantau **khusus admin**: statistik langsung (pengguna, daring, chat, pesan, storage, memori RSS, ukuran basis data, permintaan/menit) disiarkan event `server:stats` tiap 5 detik + cadangan polling, laporan storage per sumber + konsumen terbesar + unggahan terakhir, **feed jejak audit real-time** (setujui/tolak/blokir akun, premium, pengaturan, blokir IP, ekspor — tersimpan di tabel `admin_audit` & disiarkan `admin:event type=audit`), panel keamanan/enkripsi (algo AES-256-GCM, sumber kunci, transport, header), dan **unduh arsip `.rtcenc` terenkripsi AES-256-GCM** (round-trip diverifikasi di server, tanpa email plaintext di jaringan); gerbang ketat: API `/api/server/*` anon **401** & non-admin **403**, halaman menampilkan kartu akses-ditolak untuk non-admin |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
 | Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas RTC-Core Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
 | Hubungi CS | Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi) langsung **membuka chat** lewat `GET /api/cs` — lolos privasi email & pencarian diri sendiri; saat akun CS sendiri yang menekan, chat diri sendiri (ala *message yourself*) tetap terbuka otomatis |
@@ -145,6 +146,7 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:antispam` | **37 passed, 0 failed** (server sungguhan + `TRUST_PROXY=1`; termasuk pesan blokir disunting admin yang menyebut **nama pendaftar**) |
 | `npm run test:reggreet` | **25 passed, 0 failed** (sapaan halaman daftar: interpolasi `{nama}` live, typewriter, mode blokir beranimasi, wiring panel admin & server — sandbox vm) |
 | `npm run test:storageram` | **29 passed, 0 failed** (daftar penyimpanan **tanpa `<img>/<video>`**, viewer on-demand `preload=none`, buka tab tanpa unduh) |
+| `npm run test:serverconsole` | **57 passed, 0 failed** (server sungguhan port 3461; gerbang 401/403 ketat, overview/storage/audit, aksi admin tercatat & tersiar live `server:stats` + `admin:event audit` via socket, arsip `.rtcenc` terverifikasi tanpa plaintext, header `X-Robots-Tag`) |
 | `npm test` (e2e) | **356 passed, 15 failed** (sama persis 15 kegagalan baseline: 344 + 6 assert tools web + 6 assert teks halaman daftar) |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
@@ -162,7 +164,8 @@ Smoke test storage (`node test/stogetest.js`): **24 passed, 0 failed** — reser
 saat kirim media, release saat hapus, penolakan melebihi kuota, admin tanpa batas, recompute.
 
 Static check pendukung: `eslint` (tanpa error) dan audit `id` DOM
-(280 id di `index.html`, tanpa duplikat, tanpa `$()` yang mengacu ke id tak ada).
+(370 id di `index.html`, 20 id di `server.html`, 14 id di `tools.html` — tanpa duplikat,
+tanpa `$()` yang mengacu ke id tak ada).
 
 ## Panel admin: cek bug + perbaikan satu klik
 
@@ -229,6 +232,9 @@ server/
                # + bot Tools dengan 15 perintah (termasuk delegasi TOOLS_EXTRA)
   toolscatalog.js # katalog & eksekutor 15 tools web (/tools.html): definisi field,
                # validasi allowlist, proxy api-mazval tanpa membocorkan kunci API
+  console.js   # Konsol Server (/server.html): statistik proses & database, laporan
+               # storage per sumber, jejak aksi admin (tabel admin_audit), arsip
+               # ekspor terenkripsi AES-256-GCM lewat vault — semuanya khusus admin
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
@@ -241,6 +247,8 @@ public/
   index.html   # shell SPA (auth, chat, drawer, pusat notifikasi, modal panggilan)
   tools.html   # halaman mandiri 15 tools (kartu + formulir + hasil rapi),
                # memakai token login yang sama & tema tersimpan pengguna
+  server.html  # Konsol Server khusus admin: stat live (server:stats), laporan
+               # storage, feed audit real-time, panel keamanan, ekspor .rtcenc
   css/style.css
   js/app.js    # state, API client, renderer (inkremental), socket, pusat notifikasi, WebRTC
 test/
@@ -262,6 +270,10 @@ test/
                 # diketik, reveal typewriter, mode blokir beranimasi, wiring admin/server
   storageram.js # 29 assert drawer penyimpanan hemat RAM: placeholder tanpa <img>/<video>,
                 # viewer on-demand preload=none, buka tab tanpa atribut unduh
+  serverconsole.js # 57 assert Konsol Server: gerbang API 401/403, bentuk overview &
+                # laporan storage, aksi admin tercatat di audit + tersiar live
+                # (server:stats & admin:event audit) via socket, arsip .rtcenc
+                # terverifikasi tanpa plaintext, header noindex & penanda statis
   bot-reply.js # 116 assert unit test balasan 69 bot, rantai resolver Downloader
                # & katalog 15 tools web (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
@@ -334,6 +346,46 @@ Alur admin: `GET /api/admin/overview { regText }` mengisi textarea saat panel di
 objek/sapaan kosong, 401 tanpa sesi admin). Diuji `npm run test:reggreet` (25 assert),
 seksi [G] `npm run test:antispam` (pesan blokir menyebut *Daffa* sungguhan) & 6 assert
 baru di e2e.
+
+### Server Console (pemantauan real-time, khusus admin)
+
+Layar operasi mandiri di **`/server.html`** (pintu masuk: tombol **Server** di header
+Panel Admin, tab baru). Gerbang ganda: sisi halaman memeriksa `GET /api/auth/me`
+`role === 'admin'` (selain admin hanya melihat kartu *Akses ditolak*), dan seluruh API
+`/api/server/*` memakai `auth.requireAuth + requireAdmin` — anon **401**, pengguna
+biasa **403**.
+
+Yang dipantau (semua dari `server/console.js`):
+
+- **Statistik langsung** — 8 kartu: pengguna (total/premium/baru 24 jam), daring
+  (presence 90 detik + jumlah socket), menunggu persetujuan, chat & pesan hidup,
+  storage terpakai, memori RSS/heap, ukuran basis data (file SQLite atau
+  `pg_database_size`), dan permintaan/menit. Ticker server memancarkan event
+  **`server:stats`** tiap 5 detik ke semua admin tersambung (query di-cache 5 detik,
+  berhenti otomatis saat tidak ada admin online) + cadangan polling 15 detik.
+- **Laporan storage** — total per sumber (media chat, drawer *Penyimpanan*, berkas di
+  DB), rincian per tipe media, 12 konsumen terbesar lengkap dengan bar vs kuota paket
+  (admin = tanpa batas), dan 10 unggahan terakhir.
+- **Jejak audit (`admin_audit`)** — setiap aksi admin sensitif dicatat & disiarkan
+  sebagai `admin:event type='audit'`: berikan/cabut premium, setujui/tolak/blokir/buka
+  blokir akun, ubah pengaturan (paket/background/teks daftar), hitung ulang storage,
+  ubah profil bot, blokir/buka blokir IP, ekspor arsip. Feed *Peristiwa langsung*
+  menggabungkan audit live dengan peristiwa panel admin lainnya; tabel dibatasi
+  5.000 baris terbaru.
+- **Ekspor arsip terenkripsi** — `POST /api/server/export` menyusun JSON data akun
+  (kolom inti + IP/perangkat terakhir), laporan storage & 200 audit terakhir, lalu
+  mengenkripsi **AES-256-GCM** lewat `server/vault.js` (pola `RTC1:…`) dan
+  **memverifikasi round-trip** sebelum dikirim; klien mengunduhnya sebagai
+  `.rtcenc` (batas 25 MB → 413). Email/isi mentah tidak pernah melintasi jaringan.
+- **Panel keamanan** — algoritma & sumber kunci vault (`env` / `file` /
+  `vercel-derived` dari `JWT_SECRET`), JWT HS256 + bcrypt 12, status transport, header
+  keamanan, dialek basis data & jumlah entri audit.
+
+Pelengkap: seluruh respons memasang **`X-Robots-Tag: noindex, nofollow`** (konsol &
+API tidak diindeks mesin pencari). Diuji `npm run test:serverconsole` — **57 assert**
+(server sungguhan port 3461): gerbang 401/403, bentuk overview/storage, aksi admin
+tercatat + tersiar live lewat socket, ticker `server:stats`, arsip terverifikasi tanpa
+plaintext, dan penanda statis halaman.
 
 ### Panggilan (WebRTC)
 

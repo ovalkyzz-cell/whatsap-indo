@@ -18,6 +18,7 @@ const settings = require('./settings');
 const antispam = require('./antispam');
 const bots = require('./bots');
 const referral = require('./referral');
+const serverConsole = require('./console');
 const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile, storedFileExists, storedFileStatus } = require('./upload');
 const { createAdminPanel } = require('../admin/panel');
@@ -52,8 +53,10 @@ app.set(
 // referrer & policy izin (kamera/mikrofon hanya untuk origin sendiri).
 // Header ditambahkan tanpa CSP ketat agar PWA + WebRTC + blob media tidak rusak.
 app.use((req, res, next) => {
+  serverConsole.hitRequest();
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-DNS-Prefetch-Control', 'off');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
@@ -270,6 +273,24 @@ async function adminEvent(type, payload = {}) {
     await emitToUsers(ids, 'admin:event', { type, at: Date.now(), ...payload });
   } catch (err) {
     console.error('admin event:', err.message);
+  }
+}
+
+// jejak aksi admin: disimpan di tabel admin_audit lalu disiarkan ke
+// konsol server (event 'audit') agar terlihat real-time oleh admin lain.
+async function auditLog(req, action, target, detail) {
+  try {
+    const row = await serverConsole.recordAudit(
+      { id: req.user?.id, name: req.user?.name },
+      action,
+      target,
+      detail
+    );
+    if (row) await adminEvent('audit', { entry: row });
+    return row;
+  } catch (err) {
+    console.error('audit log:', err.message);
+    return null;
   }
 }
 
@@ -2082,12 +2103,17 @@ app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, re
     const saved = await settings.setRegText(regText);
     if (!saved) return res.status(400).json({ error: `Teks halaman daftar tidak valid (sapaan wajib berupa teks, maksimal ${settings.REG_TEXT_LIMIT} karakter)` });
   }
+  const touched = [plans !== undefined ? 'paket' : null, homeBg !== undefined ? 'background' : null, regText !== undefined ? 'teks-daftar' : null]
+    .filter(Boolean)
+    .join(', ');
+  if (touched) await auditLog(req, 'settings_update', touched, null);
   res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg(), regText: await settings.getRegText() });
 }));
 
 // hitung ulang storage_used semua pengguna dari catatan pesan (perbaikan drift)
 app.post('/api/admin/storage/recompute', auth.requireAuth, requireAdmin, ah(async (req, res) => {
   const count = await storage.recomputeAll();
+  await auditLog(req, 'storage_recompute', `${count} pengguna`, null);
   res.json({ ok: true, users: count });
 }));
 
@@ -2116,6 +2142,10 @@ app.patch('/api/admin/bots/:id', auth.requireAuth, requireAdmin, ah(async (req, 
   for (const row of chatRows) {
     await emitToUsers(await helpers.getChatMemberIds(row.chat_id), 'chat:updated', { chatId: row.chat_id });
   }
+  const parts = [avatar !== undefined ? 'foto' : null, name !== undefined ? 'nama' : null, about !== undefined ? 'bio' : null]
+    .filter(Boolean)
+    .join(', ');
+  if (parts) await auditLog(req, 'bot_update', bot.name || bot.id, parts);
   res.json({ user: helpers.serializeUser(fresh, req.user.id, { premium: false }) });
 }));
 
@@ -2147,6 +2177,7 @@ app.post('/api/admin/premium', auth.requireAuth, requireAdmin, ah(async (req, re
   );
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', user.id);
   await emitToUser(user.id, 'profile:updated', { id: user.id });
+  await auditLog(req, 'premium_grant', email, `paket ${plan.id}`);
   res.json({ user: adminUser(fresh), plan, stats: await adminStats() });
 }));
 
@@ -2162,6 +2193,7 @@ app.post('/api/admin/premium/revoke', auth.requireAuth, requireAdmin, ah(async (
   );
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', user.id);
   await emitToUser(user.id, 'profile:updated', { id: user.id });
+  await auditLog(req, 'premium_revoke', email, null);
   res.json({ user: adminUser(fresh), stats: await adminStats() });
 }));
 
@@ -2193,6 +2225,7 @@ app.post('/api/admin/users/:id/approve', auth.requireAuth, requireAdmin, ah(asyn
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
   await emitToUser(target.id, 'profile:updated', { id: target.id });
   await adminEvent('approved', { user: adminUser(fresh) });
+  await auditLog(req, 'user_approve', target.email, null);
   res.json({ user: adminUser(fresh) });
 }));
 
@@ -2209,6 +2242,7 @@ app.post('/api/admin/users/:id/reject', auth.requireAuth, requireAdmin, ah(async
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
   await recordLogin({ userId: target.id, email: target.email, ...reqMeta(req), result: 'rejected', detail: reason });
   await adminEvent('rejected', { user: adminUser(fresh) });
+  await auditLog(req, 'user_reject', target.email, reason);
   res.json({ user: adminUser(fresh) });
 }));
 
@@ -2226,6 +2260,7 @@ app.post('/api/admin/users/:id/ban', auth.requireAuth, requireAdmin, ah(async (r
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
   await recordLogin({ userId: target.id, email: target.email, ...reqMeta(req), result: 'banned', detail: reason });
   await adminEvent('banned', { user: adminUser(fresh) });
+  await auditLog(req, 'user_ban', target.email, reason);
   res.json({ user: adminUser(fresh), stats: await adminStats() });
 }));
 
@@ -2238,6 +2273,7 @@ app.post('/api/admin/users/:id/unban', auth.requireAuth, requireAdmin, ah(async 
   );
   const fresh = await db.get('SELECT * FROM users WHERE id = ?', target.id);
   await adminEvent('unbanned', { user: adminUser(fresh) });
+  await auditLog(req, 'user_unban', target.email, null);
   res.json({ user: adminUser(fresh), stats: await adminStats() });
 }));
 
@@ -2257,6 +2293,7 @@ app.post('/api/admin/ip-bans/ban', auth.requireAuth, requireAdmin, ah(async (req
     detail: req.body?.reason,
     actor: req.user.email,
   });
+  await auditLog(req, 'ip_ban', ip, req.body?.reason ? String(req.body.reason).slice(0, 200) : null);
   res.json({ ban });
 }));
 
@@ -2266,6 +2303,7 @@ app.post('/api/admin/ip-bans/unban', auth.requireAuth, requireAdmin, ah(async (r
   if (!ip) return res.status(400).json({ error: 'IP tidak valid' });
   const ok = await antispam.unban(ip);
   if (!ok) return res.status(404).json({ error: 'IP ini tidak sedang diblokir' });
+  await auditLog(req, 'ip_unban', ip, null);
   res.json({ ok: true, ip });
 }));
 
@@ -2304,6 +2342,34 @@ app.get('/api/admin/monitor', auth.requireAuth, requireAdmin, ah(async (req, res
     ipBans: await antispam.listBans(50),
     stats: await adminStats(),
   });
+}));
+
+// ---------- Konsol Server (khusus admin) ----------
+// Ringkasan proses/database untuk layar pemantauan real-time.
+app.get('/api/server/overview', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  res.json(await serverConsole.overview({ sockets: io.engine.clientsCount }));
+}));
+
+// Rincian storage: sumber pemakaian, konsumen terbesar & unggahan terakhir.
+app.get('/api/server/storage', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  res.json(await serverConsole.storageReport());
+}));
+
+// Jejak aksi admin (audit trail) terbaru.
+app.get('/api/server/audit', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+  res.json({ entries: await serverConsole.auditList(limit) });
+}));
+
+// Ekspor arsip data akun & storage — terenkripsi AES-256-GCM (vault),
+// diverifikasi round-trip sebelum diserahkan ke admin.
+app.post('/api/server/export', auth.requireAuth, requireAdmin, ah(async (req, res) => {
+  const pack = await serverConsole.buildExport();
+  if (pack.oversize) {
+    return res.status(413).json({ error: 'Arsip terlalu besar untuk diekspor (batas 25 MB)' });
+  }
+  await auditLog(req, 'export', pack.filename, `arsip terenkripsi ${pack.bytes}B -> ${pack.cipherBytes}B`);
+  res.json(pack);
 }));
 
 // ---------- notifikasi push (Web Push, tetap muncul saat aplikasi ditutup) ----------
@@ -3280,6 +3346,28 @@ async function boot() {
     console.error('bus:', err.message);
   }
 }
+
+// ---------- ticker statistik konsol server ----------
+// Setiap 5 detik ringkasan overview dikirim ke semua admin yang tersambung
+// (event 'server:stats') — dipakai layar /server.html untuk pembaruan live.
+// Hasil di-cache 5 detik supaya query tidak berjalan ganda saat banyak admin.
+let statsCache = { at: 0, data: null };
+setInterval(async () => {
+  try {
+    const ids = await adminIds();
+    if (!ids.length) return;
+    const now = Date.now();
+    if (!statsCache.data || now - statsCache.at > 5000) {
+      statsCache = {
+        at: now,
+        data: await serverConsole.overview({ sockets: io.engine.clientsCount }),
+      };
+    }
+    await emitToUsers(ids, 'server:stats', { at: now, ...statsCache.data });
+  } catch (err) {
+    console.error('server stats ticker:', err.message);
+  }
+}, 5000).unref();
 
 void boot();
 

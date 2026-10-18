@@ -451,6 +451,15 @@ input, textarea { font: inherit; }
   background: var(--wa-header); color: var(--wa-text); font-size: 16px;
 }
 .drawer-header .icon-btn { font-size: 26px; }
+/* pintu masuk Server Console (khusus admin) */
+.adm-oss-link {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border: 1px solid var(--wa-border); border-radius: 8px;
+  background: rgba(255, 255, 255, .06); color: inherit; text-decoration: none;
+  font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+}
+.adm-oss-link:hover { background: rgba(0, 168, 132, .16); border-color: var(--wa-accent-text); }
+.adm-oss-ico { width: 15px; height: 15px; }
 .profile-body { padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
 .profile-body label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--wa-teal); }
 .profile-body input {
