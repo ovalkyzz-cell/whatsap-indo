@@ -164,33 +164,21 @@ router.post('/upload', requireAuth, (req, res) => {
       return res.status(201).json({ url: `/uploads/${req.file.filename}`, ...meta });
     }
 
-    const ext = path.extname(req.file.originalname).slice(0, 16);
-    const pathname = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
-    const { put } = require('@vercel/blob');
+    // Penyimpanan utama: database (Postgres/SQLite). Langsung simpan byttes
+    // ke db_files tanpa lewat Blob — Blob di-hosting gratis sering disuspend
+    // kuota sehingga percuma dicoba. File tetap bisa diunduh penuh via
+    // /api/storage/dbfiles/:id (dukung HTTP Range untuk video besar).
     try {
-      const object = await put(pathname, req.file.buffer, {
-        access: 'public',
-        token: BLOB_TOKEN || undefined,
-        addRandomSuffix: true,
-        contentType: req.file.mimetype || undefined,
-      });
-      return res.status(201).json({ url: object.url, ...meta });
-    } catch (blobErr) {
-      // Blob ditangguhkan/gagal -> cadangan: simpan byttes ke database
-      // (Postgres/SQLite) supaya upload tetap berhasil walau Blob mati.
-      console.error('upload blob:', blobErr.message);
-      try {
-        const id = crypto.randomUUID();
-        await db.run(
-          `INSERT INTO db_files (id, user_id, data, mime, name, size, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          id, req.user.id, req.file.buffer, meta.mime, meta.name, meta.size, Date.now()
-        );
-        return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
-      } catch (dbErr) {
-        console.error('upload db fallback:', dbErr.message);
-        return res.status(500).json({ error: 'Gagal menyimpan file' });
-      }
+      const id = crypto.randomUUID();
+      await db.run(
+        `INSERT INTO db_files (id, user_id, data, mime, name, size, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        id, req.user.id, req.file.buffer, meta.mime, meta.name, meta.size, Date.now()
+      );
+      return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
+    } catch (dbErr) {
+      console.error('upload db:', dbErr.message);
+      return res.status(500).json({ error: 'Gagal menyimpan file' });
     }
   });
 });
