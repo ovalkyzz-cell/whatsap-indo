@@ -3579,6 +3579,8 @@ function updateStBulkBar() {
   if (count) count.textContent = `${stSelected.size} dipilih`;
   const delBtn = $('btnStBulkDelete');
   if (delBtn) delBtn.disabled = stSelected.size === 0;
+  const exBtn = $('btnStBulkExport');
+  if (exBtn && !exBtn.classList.contains('busy')) exBtn.disabled = stSelected.size === 0;
 }
 
 function enterStSelectMode() {
@@ -3631,6 +3633,79 @@ $('btnStBulkDelete').addEventListener('click', async () => {
 });
 
 $('btnStCancel').addEventListener('click', () => exitStSelectMode());
+
+/* ---------- ekspor galeri: semua / terpilih -> satu arsip ZIP ----------
+   api() hanya menerima JSON, jadi unduhan ZIP pakai fetch sendiri:
+   balasan non-JSON (error) tetap dibaca sebagai JSON agar pesan tampil. */
+async function exportGalleryZip(items) {
+  const res = await fetch('/api/storage/export', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(S.token ? { Authorization: `Bearer ${S.token}` } : {}),
+    },
+    body: JSON.stringify(items ? { items } : {}),
+  });
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok || ct.includes('json')) {
+    let data = null;
+    try { data = await res.json(); } catch { /* balasan bukan JSON */ }
+    if (res.status === 401 && S.token) {
+      logout(false, (data && data.error) || 'Sesi berakhir. Silakan masuk kembali.');
+    }
+    const err = new Error((data && data.error) || `Gagal mengekspor (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  let name = 'galeri.zip';
+  const cd = res.headers.get('content-disposition') || '';
+  const m = cd.match(/filename="([^"]+)"/);
+  if (m) name = m[1];
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 8000);
+  return { bytes: blob.size, name };
+}
+
+async function runGalleryExport(btn, items, scopeLabel) {
+  if (!btn || btn.classList.contains('busy')) return;
+  const span = btn.querySelector('span');
+  const oldHtml = span ? span.innerHTML : btn.textContent;
+  btn.classList.add('busy');
+  btn.disabled = true;
+  if (span) span.textContent = 'Menyiapkan…'; else btn.textContent = 'Menyiapkan…';
+  try {
+    const r = await exportGalleryZip(items);
+    toast(`Ekspor ${scopeLabel} selesai — ${fmtBytes(r.bytes)} · ${r.name}`, 3200);
+  } catch (err) {
+    toast(err.message || 'Gagal mengekspor galeri', 3200);
+  } finally {
+    btn.classList.remove('busy');
+    btn.disabled = false;
+    if (span) span.innerHTML = oldHtml; else btn.textContent = oldHtml;
+    if (btn.id === 'btnStBulkExport') updateStBulkBar(); // kembalikan status disabled
+  }
+}
+
+$('btnStExportAll').addEventListener('click', () => {
+  void runGalleryExport($('btnStExportAll'), null, 'semua');
+});
+
+$('btnStBulkExport').addEventListener('click', () => {
+  if (!stSelected.size) return;
+  const items = [...stSelected].map((k) => {
+    const idx = k.indexOf(':');
+    return { kind: k.slice(0, idx), id: k.slice(idx + 1) };
+  });
+  const n = items.length;
+  void runGalleryExport($('btnStBulkExport'), items, `${n} media`);
+});
 
 async function cleanBrokenStorage(btn) {
   if (!confirm('Pindai & hapus semua media yang file-nya rusak/hilang? Kuota akan dibebaskan.')) return;

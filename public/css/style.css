@@ -2187,6 +2187,10 @@ html[data-theme="dark"] .plan-card .plan-cta { box-shadow: 0 8px 18px rgba(0, 0,
 }
 .st-hdr-btn:hover { background: rgba(var(--wa-accent-rgb), .1); }
 .st-hdr-btn.active { background: rgb(var(--wa-accent-rgb)); color: #fff; border-color: rgb(var(--wa-accent-rgb)); }
+.st-export-btn { display: inline-flex; align-items: center; gap: 5px; }
+.st-export-btn .ico { width: 14px; height: 14px; }
+.st-export-btn.busy { opacity: .6; pointer-events: none; }
+@media (max-width: 560px) { .st-export-extra { display: none; } }
 
 .st-progress {
   margin: 12px 14px 0; padding: 12px 14px; border-radius: 14px;
@@ -2224,12 +2228,12 @@ html[data-theme="dark"] .st-progress-bar { background: rgba(255, 255, 255, .12);
 
 .st-bulk-bar {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
   padding: 10px 14px; background: var(--wa-panel); border-top: 1px solid var(--wa-border, rgba(0, 0, 0, .08));
   box-shadow: 0 -4px 16px rgba(0, 0, 0, .08);
 }
 .st-bulk-count { font-size: 13px; font-weight: 600; }
-.st-bulk-actions { display: flex; gap: 8px; }
+.st-bulk-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .st-bulk-btn {
   padding: 7px 12px; border: none; border-radius: 18px; font-size: 12.5px; font-weight: 600;
   cursor: pointer; background: rgba(var(--wa-accent-rgb), .12); color: var(--wa-accent-text, #00a884);
@@ -2238,6 +2242,9 @@ html[data-theme="dark"] .st-progress-bar { background: rgba(255, 255, 255, .12);
 .st-bulk-danger { background: #d64545; color: #fff; }
 .st-bulk-danger:disabled { background: #d64545; }
 .st-bulk-ghost { background: transparent; border: 1px solid rgba(0, 0, 0, .15); color: inherit; }
+.st-bulk-export { background: rgb(var(--wa-accent-rgb)); color: #fff; }
+.st-bulk-export:disabled { background: rgb(var(--wa-accent-rgb)); }
+@media (max-width: 640px) { .storage-body.has-bulk { padding-bottom: 118px; } }
 
 .st-summary {
   margin: 14px; padding: 14px; border-radius: 16px; color: #fff;

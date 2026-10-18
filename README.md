@@ -56,6 +56,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
 | Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
 | Penyimpanan hemat RAM | Drawer **Penyimpanan** menampilkan **placeholder** — foto/video/audio **tidak dimuat ke RAM/perangkat sama sekali** saat daftar ditelusuri (nol byte media); konten hanya diambil **on-demand** saat kartu diketuk (tepat satu elemen hidup, video/audio `preload=none`), `src` dilepas saat viewer ditutup; file dibuka **streaming "Buka di Tab" tanpa mengunduh ke galeri** — storage murni di server |
+| Ekspor Galeri (ZIP) | Tombol **Ekspor Semua** (header drawer Penyimpanan) & **Ekspor Terpilih** (bar mode *Pilih*) mengunduh isi galeri dalam **SATU arsip `.zip`** lewat `POST /api/storage/export` (login wajib, hanya data milik sendiri, satu ekspor berjalan per pengguna): media di-*stream* dari 4 sumber (disk `/uploads`, potongan database `dbfiles`, Blob Vercel, stiker lokal) **tanpa menampung file di RAM**, folder per jenis (`foto/video/audio/berkas`) + sanitasi nama & dedupe, `manifest.json` entri terakhir mencatat item yang dilewati (file hilang/jaringan gagal) — ekspor tak pernah gagal total; batas 5.000 item & 3,8 GB (413) |
 | Server Console | Halaman **`/server.html`** — konsol pantau **khusus admin**: statistik langsung (pengguna, daring, chat, pesan, storage, memori RSS, ukuran basis data, permintaan/menit) disiarkan event `server:stats` tiap 5 detik + cadangan polling, blok **total kapasitas kuota pengguna aktif** beranimasi (angka hitung-naik TB, meter berkelanjutan, warna hijau/kuning/merah sesuai pemakaian, chip premium/gratis/admin-∞), laporan storage per sumber + konsumen terbesar + unggahan terakhir, **feed jejak audit real-time** (setujui/tolak/blokir akun, premium, pengaturan, blokir IP, ekspor — tersimpan di tabel `admin_audit` & disiarkan `admin:event type=audit`), panel keamanan/enkripsi (algo AES-256-GCM, sumber kunci, transport, header), dan **unduh arsip `.rtcenc` terenkripsi AES-256-GCM** (round-trip diverifikasi di server, tanpa email plaintext di jaringan); gerbang ketat: API `/api/server/*` anon **401** & non-admin **403**, halaman menampilkan kartu akses-ditolak untuk non-admin |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
 | Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas RTC-Core Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
@@ -146,6 +147,7 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:antispam` | **37 passed, 0 failed** (server sungguhan + `TRUST_PROXY=1`; termasuk pesan blokir disunting admin yang menyebut **nama pendaftar**) |
 | `npm run test:reggreet` | **25 passed, 0 failed** (sapaan halaman daftar: interpolasi `{nama}` live, typewriter, mode blokir beranimasi, wiring panel admin & server — sandbox vm) |
 | `npm run test:storageram` | **29 passed, 0 failed** (daftar penyimpanan **tanpa `<img>/<video>`**, viewer on-demand `preload=none`, buka tab tanpa unduh) |
+| `npm run test:galleryexport` | **76 passed, 0 failed** (server sungguhan dua port; ekspor semua → 1 ZIP divalidasi `python3 zipfile`: STORE, CRC utuh, `manifest.json` entri terakhir, dedupe nama + sanitasi tanpa `..`, isi identik 4 sumber; ekspor terpilih & media pesan; anon 401; id bodong 404; jalur 413 jumlah & ukuran; tombol statis) |
 | `npm run test:serverconsole` | **62 passed, 0 failed** (server sungguhan port 3461; gerbang 401/403 ketat, overview/storage/audit + **kapasitas kuota aktif**, aksi admin tercatat & tersiar live `server:stats` + `admin:event audit` via socket, arsip `.rtcenc` terverifikasi tanpa plaintext, header `X-Robots-Tag`) |
 | `npm test` (e2e) | **356 passed, 15 failed** (sama persis 15 kegagalan baseline: 344 + 6 assert tools web + 6 assert teks halaman daftar) |
 
@@ -235,6 +237,11 @@ server/
   console.js   # Konsol Server (/server.html): statistik proses & database, laporan
                # storage per sumber, jejak aksi admin (tabel admin_audit), arsip
                # ekspor terenkripsi AES-256-GCM lewat vault — semuanya khusus admin
+  galleryzip.js # ekspor galeri -> 1 ZIP: baris milik sendiri (saved + pesan
+               # terkirim), pembuka 4 sumber (disk/dbfiles/Blob/stiker), nama aman
+               # + dedupe folder per jenis, manifest.json akhir, batas 413
+  zipwriter.js # penulis ZIP streaming tanpa kompresi (STORE): CRC-32 dihitung
+               # sambil mengalir via data descriptor UTF-8, central dir + EOCD
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
@@ -270,6 +277,9 @@ test/
                 # diketik, reveal typewriter, mode blokir beranimasi, wiring admin/server
   storageram.js # 29 assert drawer penyimpanan hemat RAM: placeholder tanpa <img>/<video>,
                 # viewer on-demand preload=none, buka tab tanpa atribut unduh
+  galleryexport.js # 76 assert ekspor galeri -> 1 ZIP streaming (python3 zipfile):
+                # entri per folder, dedupe & nama aman tanpa .., manifest terakhir,
+                # skip sumber hilang, ekspor terpilih/pesan, 401/404/413, statis
   serverconsole.js # 62 assert Konsol Server: gerbang API 401/403, bentuk overview &
                 # laporan storage, aksi admin tercatat di audit + tersiar live
                 # (server:stats & admin:event audit) via socket, arsip .rtcenc
@@ -321,6 +331,32 @@ Ada dua tingkatan:
 
 Layar tanpa login mengambil latar global dari `GET /api/settings/public` (tanpa autentikasi).
 URL divalidasi ketat: hanya path `/uploads/…` atau Blob Vercel (`settings.validBgUrl`).
+
+### Ekspor galeri → satu arsip ZIP
+
+Drawer **Penyimpanan** punya dua pintu ekspor: **Ekspor Semua** (header) mengunduh
+seluruh isi galeri dalam satu berkas `galeri-YYYY-MM-DD.zip`, dan **Ekspor Terpilih**
+(bar mode *Pilih*) mengunduh hanya media yang ditandai. Keduanya memanggil
+`POST /api/storage/export` — wajib login dan hanya media milik sendiri (file tersimpan
++ media pesan yang dikirim sendiri, sama seperti isi layar galeri); server mengunci
+satu ekspor berjalan per pengguna (429 bila klik ganda).
+
+Media di-*stream* langsung ke arsip tanpa menampung berkas di RAM: penulis ZIP kustom
+(`server/zipwriter.js` — metode STORE, CRC-32 dihitung sambil mengalir lewat *data
+descriptor* UTF-8, central dir + EOCD) menyusun empat sumber media: file disk
+`/uploads`, potongan database `/api/storage/dbfiles`, Blob Vercel (difetch streaming),
+dan stiker yang dirender ulang. Berkas masuk folder per jenis (`foto/`, `video/`,
+`audio/`, `berkas/`) dengan sanitasi nama (karakter berbahaya diganti `_`, awalan `..`
+dibuang, panjang dibatasi) + dedupe `(2)`; sumber yang hilang/tak terjangkau
+**dilewati** dan dicatat di `manifest.json` sebagai entri terakhir (hitungan
+`total/exported/skipped` + alasan per item) sehingga satu file bermasalah tidak
+menjatuhkan seluruh ekspor. Batas 5.000 item & 3,8 GB per arsip (413 bila dilewati;
+dapat diturunkan lewat env `EXPORT_MAX_ITEMS`/`EXPORT_MAX_BYTES` untuk pengujian).
+
+Diuji `npm run test:galleryexport` — **76 assert** (server sungguhan dua port; arsip
+divalidasi `python3 zipfile`: CRC utuh, metode STORE, nama tanpa traversal, isi identik
+dengan keempat sumber, manifest tepat; ekspor terpilih & media pesan; anon 401; id
+bodong 404; jalur 413 jumlah + ukuran; tombol/handler statis).
 
 ### Teks halaman daftar (disunting admin)
 

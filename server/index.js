@@ -19,6 +19,7 @@ const antispam = require('./antispam');
 const bots = require('./bots');
 const referral = require('./referral');
 const serverConsole = require('./console');
+const galleryzip = require('./galleryzip');
 const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile, storedFileExists, storedFileStatus } = require('./upload');
 const { createAdminPanel } = require('../admin/panel');
@@ -580,6 +581,38 @@ app.post('/api/storage/bulk-delete', auth.requireAuth, ah(async (req, res) => {
     } catch { failed++; }
   }
   res.json({ deleted, failed, freed });
+}));
+
+// EKSPOR GALERI: seluruh isi galeri (atau item terpilih) menjadi SATU arsip
+// ZIP streaming — hanya media milik pengguna sendiri, khusus yang login.
+// Sumber file hilang dilewati & dicatat di manifest.json (bukan gagal total).
+app.post('/api/storage/export', auth.requireAuth, ah(async (req, res) => {
+  const wanted = Array.isArray(req.body?.items) && req.body.items.length ? req.body.items : null;
+  if (!galleryzip.beginExport(req.user.id)) {
+    return res.status(429).json({ error: 'Ekspor sedang berjalan — tunggu sebentar' });
+  }
+  try {
+    const { rows } = await galleryzip.collect(req.user.id, wanted);
+    if (!rows.length) return res.status(404).json({ error: 'Tidak ada media untuk diekspor' });
+
+    const filename = `galeri-${new Date().toISOString().slice(0, 10)}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.status(200);
+    try {
+      const out = await galleryzip.streamZip(res, rows);
+      console.log(`export: user=${req.user.id} ${out.exported} berkas, ${out.skipped} dilewati, ${out.bytes} byte`);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // klien batal
+      console.error('export zip gagal:', err.message);
+      if (res.headersSent) res.destroy(err);
+      else throw err;
+    }
+  } finally {
+    galleryzip.endExport(req.user.id);
+  }
 }));
 
 // BERSIHKAN FILE RUSAK: pindai media milik user, cek file benar-benar ada di
