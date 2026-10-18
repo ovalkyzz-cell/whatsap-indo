@@ -67,6 +67,23 @@ function blockedError(message) {
   return err;
 }
 
+// ganti {nama}/{name} dengan nama pendaftar (fallback: Pengguna)
+function fillName(text, name) {
+  const who = String(name || '').trim().slice(0, 60) || 'Pengguna';
+  return String(text).replace(/\{nama\}|\{name\}/gi, who);
+}
+
+// pesan blokir bisa disunting admin (kunci settings `reg_text.blocked`);
+// kosong/tak terbaca -> pakai pesan bawaan. Selalu ada {nama} yang terisi.
+async function blockMessage(fallback, name) {
+  let custom = '';
+  try {
+    const saved = await settings.getRegText();
+    custom = saved ? saved.blocked : '';
+  } catch { /* settings belum siap -> pesan bawaan */ }
+  return fillName(custom || fallback, name);
+}
+
 // ambang batas bisa diubah lewat tabel settings (kunci `antispam`)
 async function rules() {
   const out = { ...DEFAULT_RULES };
@@ -189,12 +206,13 @@ async function countFail(ip, windowMs, now = Date.now()) {
 }
 
 // dilemparkan SEBELUM akun dibuat: IP diblokir -> pendaftaran ditolak 403
-async function assertRegisterAllowed(ip) {
+// `name` = nama pendaftar, dipakai mengisi {nama} pada pesan blokir admin
+async function assertRegisterAllowed(ip, name) {
   const norm = normalizeIp(ip);
   if (isLoopback(norm)) return;
 
   const banned = await isBanned(norm);
-  if (banned) throw blockedError();
+  if (banned) throw blockedError(await blockMessage(BLOCKED_MSG, name));
 
   const r = await rules();
   const used = await countOk(norm, r.windowMs);
@@ -204,8 +222,11 @@ async function assertRegisterAllowed(ip) {
       detail: `${used} pendaftaran sukses dari IP ini dalam 24 jam (batas ${r.perIp})`,
     });
     throw blockedError(
-      `IP ini diblokir otomatis: satu IP hanya boleh mendaftarkan ${r.perIp} akun per 24 jam. ` +
-        'Hubungi admin untuk membuka blokir.'
+      await blockMessage(
+        `IP ini diblokir otomatis: satu IP hanya boleh mendaftarkan ${r.perIp} akun per 24 jam. ` +
+          'Hubungi admin untuk membuka blokir.',
+        name
+      )
     );
   }
 
@@ -216,8 +237,11 @@ async function assertRegisterAllowed(ip) {
       detail: `${fails} percobaan pendaftaran gagal dari IP ini dalam 10 menit`,
     });
     throw blockedError(
-      'IP ini diblokir otomatis karena terlalu banyak percobaan pendaftaran gagal. ' +
-        'Hubungi admin untuk membuka blokir.'
+      await blockMessage(
+        'IP ini diblokir otomatis karena terlalu banyak percobaan pendaftaran gagal. ' +
+          'Hubungi admin untuk membuka blokir.',
+        name
+      )
     );
   }
 }
@@ -229,6 +253,7 @@ module.exports = {
   normalizeIp,
   isLoopback,
   blockedError,
+  fillName,
   rules,
   isBanned,
   listBans,

@@ -211,6 +211,44 @@ async function setNftokenLinkBase(input) {
   return set('nftoken_link_base', s || DEFAULT_NFTOKEN_LINK);
 }
 
+/* ---------- teks halaman daftar (disunting admin) ----------
+   greeting : sapaan beranimasi di form daftar; placeholder {nama} diisi
+              otomatis dari kolom Nama oleh klien & oleh server saat blokir.
+   blocked  : pesan tampil saat IP kena blokir anti-spam
+              ('' = pakai pesan bawaan antispam).
+   Disimpan di tabel settings (server-side) sehingga tidak memakai
+   memori/perangkat pengunjung sama sekali. */
+const REG_TEXT_LIMIT = 600;
+const DEFAULT_REG_TEXT = {
+  greeting: 'Selamat datang, {nama}! Lengkapi data di bawah untuk bergabung dengan RTC-Core.',
+  blocked: '',
+};
+
+function cleanRegText(value) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F]/g, '')
+    .trim()
+    .slice(0, REG_TEXT_LIMIT);
+}
+
+async function getRegText() {
+  const saved = await get('reg_text', null);
+  if (!saved || typeof saved !== 'object') return { ...DEFAULT_REG_TEXT };
+  return {
+    greeting: cleanRegText(saved.greeting) || DEFAULT_REG_TEXT.greeting,
+    blocked: cleanRegText(saved.blocked),
+  };
+}
+
+async function setRegText(input) {
+  if (!input || typeof input !== 'object') return null;
+  if (input.greeting === undefined || input.greeting === null) return null;
+  const greeting = cleanRegText(input.greeting);
+  const blocked = cleanRegText(input.blocked);
+  if (!greeting) return null;
+  return set('reg_text', { greeting, blocked });
+}
+
 module.exports = {
   DEFAULT_PLANS,
   EXCLUSIVE_BOTS,
@@ -229,4 +267,8 @@ module.exports = {
   DEFAULT_NFTOKEN_LINK,
   getNftokenLinkBase,
   setNftokenLinkBase,
+  REG_TEXT_LIMIT,
+  DEFAULT_REG_TEXT,
+  getRegText,
+  setRegText,
 };

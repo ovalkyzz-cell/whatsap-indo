@@ -122,6 +122,29 @@ input, textarea { font: inherit; }
 }
 .btn-primary:hover { filter: brightness(1.1); }
 .auth-error { color: var(--wa-danger-text); font-size: 13px; margin-top: 12px; text-align: center; }
+.auth-error.anim { animation: authErrIn .32s var(--ease-out); }
+@keyframes authErrIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* ---------- kartu sapaan halaman daftar (teks disunting admin) ---------- */
+.reg-greet {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin: 0 0 18px; padding: 12px 14px;
+  border: 1px solid var(--wa-border); border-radius: 12px;
+  background: linear-gradient(135deg, rgba(0, 168, 131, .12), rgba(0, 168, 131, .02));
+  animation: regGreetIn .6s var(--ease-out) both;
+}
+.reg-greet-ico { font-size: 15px; line-height: 1.5; animation: regSpark 2.6s ease-in-out infinite; }
+.reg-greet-text { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--wa-text); min-height: 1.55em; }
+.reg-greet.swapping { animation: regGreetIn .35s var(--ease-out); }
+.reg-greet.blocked {
+  background: linear-gradient(135deg, rgba(255, 77, 77, .16), rgba(255, 77, 77, .04));
+  border-color: rgba(255, 77, 77, .4);
+}
+.reg-greet.blocked .reg-greet-ico { animation: none; filter: grayscale(.4); }
+.reg-greet.shake { animation: regGreetIn .3s var(--ease-out), regShake .45s .3s ease; }
+@keyframes regGreetIn { from { opacity: 0; transform: translateY(10px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes regSpark { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.18) rotate(10deg); } }
+@keyframes regShake { 10%, 90% { transform: translateX(-2px); } 30%, 70% { transform: translateX(4px); } 50% { transform: translateX(-4px); } }
 
 /* ---------- app layout ---------- */
 .app {
@@ -1541,6 +1564,14 @@ html[data-theme="dark"] #emptyHomeBg::after { background: rgba(4, 22, 18, .74); 
 .adm-section h4 { font-size: 14px; display: flex; align-items: center; gap: 4px; margin: 4px 0 0; }
 .adm-section h4 .btn-ico { color: var(--wa-accent-text); }
 .adm-note { font-size: 11.5px; color: var(--wa-text-2); margin: 0; line-height: 1.5; }
+.adm-reg-label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--wa-text); }
+.adm-reg-label small { font-weight: 400; font-size: 10.5px; color: var(--wa-text-2); }
+.adm-reg-label textarea {
+  padding: 10px 12px; border: 1px solid var(--wa-border); border-radius: 9px; outline: none;
+  background: var(--wa-input-bg); color: var(--wa-text); font-size: 13px; font-family: inherit;
+  resize: vertical; min-height: 64px; line-height: 1.5; width: 100%; transition: border .15s;
+}
+.adm-reg-label textarea:focus { border-color: var(--wa-teal); }
 .adm-form { display: flex; flex-direction: column; gap: 8px; }
 .adm-form input, .adm-form select, .adm-section > input[type="search"] {
   padding: 11px 12px; border: 1px solid var(--wa-border); border-radius: 9px; outline: none;
@@ -2248,6 +2279,17 @@ html[data-theme="dark"] .st-progress-bar { background: rgba(255, 255, 255, .12);
 .st-play svg { width: 16px; height: 16px; }
 .st-thumb-file { display: grid; place-items: center; color: var(--wa-text-2); }
 .st-thumb-file svg { width: 34px; height: 34px; opacity: .6; }
+/* placeholder hemat RAM: foto/video TIDAK dimuat ke memori perangkat —
+   media baru diambil hanya saat kartu diketuk (lihat openStViewer) */
+.st-thumb-ph {
+  position: relative; display: grid; place-items: center; color: var(--wa-text-2);
+  background: linear-gradient(135deg, rgba(0, 168, 131, .14), rgba(127, 127, 127, .10));
+}
+.st-thumb-ph svg { width: 34px; height: 34px; opacity: .55; }
+.st-thumb-ph.st-ph-video { background: linear-gradient(135deg, rgba(94, 120, 255, .16), rgba(127, 127, 127, .10)); }
+.st-thumb-ph.st-ph-audio { background: linear-gradient(135deg, rgba(255, 176, 32, .16), rgba(127, 127, 127, .10)); }
+.st-thumb-ph.st-ph-file { background: linear-gradient(135deg, rgba(158, 158, 158, .16), rgba(127, 127, 127, .08)); }
+.st-ram-note { margin: 0; text-align: center; font-size: 10.5px; line-height: 1.5; color: var(--wa-text-2); padding: 0 6px; }
 .st-meta { padding: 8px 9px 9px; }
 .st-name { display: block; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-sub { display: block; margin-top: 2px; font-size: 10px; color: var(--wa-text-2); }

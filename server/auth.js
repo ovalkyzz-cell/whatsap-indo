@@ -111,7 +111,7 @@ function publicUser(row) {
 async function register({ email, name, password, ref }, meta = {}) {
   const ip = antispam.normalizeIp(meta.ip);
   // IP diblokir / kuota pendaftaran IP terpakai -> ditolak sebelum ada baris apa pun
-  await antispam.assertRegisterAllowed(ip);
+  await antispam.assertRegisterAllowed(ip, name);
 
   let saved = false;
   try {

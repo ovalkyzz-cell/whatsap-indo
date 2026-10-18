@@ -2007,7 +2007,9 @@ app.delete('/api/status/:id/comments/:cid', auth.requireAuth, ah(async (req, res
 
 // ---------- pengaturan publik (halaman beranda login) ----------
 app.get('/api/settings/public', ah(async (req, res) => {
-  res.json({ homeBg: await settings.getHomeBg() });
+  // regGreet = sapaan form daftar; {nama} diisi klien saat pendaftar mengetik
+  const reg = await settings.getRegText();
+  res.json({ homeBg: await settings.getHomeBg(), regGreet: reg.greeting });
 }));
 
 // ---------- panel admin ----------
@@ -2039,6 +2041,7 @@ app.get('/api/admin/overview', auth.requireAuth, requireAdmin, ah(async (req, re
     stats: await adminStats(),
     plans: await settings.getPlans(),
     homeBg: await settings.getHomeBg(),
+    regText: await settings.getRegText(),
     recent: recent.map((r) => adminUser(r)),
   });
 }));
@@ -2062,11 +2065,11 @@ app.get('/api/admin/users', auth.requireAuth, requireAdmin, ah(async (req, res) 
 }));
 
 app.get('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, res) => {
-  res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg() });
+  res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg(), regText: await settings.getRegText() });
 }));
 
 app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, res) => {
-  const { plans, homeBg } = req.body || {};
+  const { plans, homeBg, regText } = req.body || {};
   if (plans !== undefined) {
     const saved = await settings.setPlans(plans);
     if (!saved) return res.status(400).json({ error: 'Data paket tidak valid (minimal 3 paket, durasi 1-3650 hari, harga, limit & kuota storage wajar)' });
@@ -2075,7 +2078,11 @@ app.put('/api/admin/settings', auth.requireAuth, requireAdmin, ah(async (req, re
     const saved = await settings.setHomeBg(homeBg);
     if (!saved) return res.status(400).json({ error: 'Background beranda tidak valid' });
   }
-  res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg() });
+  if (regText !== undefined) {
+    const saved = await settings.setRegText(regText);
+    if (!saved) return res.status(400).json({ error: `Teks halaman daftar tidak valid (sapaan wajib berupa teks, maksimal ${settings.REG_TEXT_LIMIT} karakter)` });
+  }
+  res.json({ plans: await settings.getPlans(), homeBg: await settings.getHomeBg(), regText: await settings.getRegText() });
 }));
 
 // hitung ulang storage_used semua pengguna dari catatan pesan (perbaikan drift)

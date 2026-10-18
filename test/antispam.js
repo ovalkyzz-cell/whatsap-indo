@@ -30,6 +30,7 @@ const IP_A = '203.0.113.10'; // melewati limit per IP -> diblokir otomatis
 const IP_B = '198.51.100.21'; // dipakai untuk uji email ganda
 const IP_C = '192.0.2.33'; // percobaan gagal beruntun -> diblokir
 const IP_D = '203.0.113.77'; // blokir manual oleh admin
+const IP_E = '198.51.100.201'; // pesan blokir disunting admin (isi {nama})
 
 const stamp = Date.now();
 const mail = (n) => `${n}${stamp}@test.local`;
@@ -298,6 +299,49 @@ async function testPermissions(token) {
   }
 }
 
+async function testCustomBlockText(token) {
+  console.log('\n[G] pesan blokir & sapaan daftar disunting admin (isi {nama})');
+  const set = await req('PUT', '/api/admin/settings', {
+    token,
+    body: { regText: { greeting: `Selamat datang, {nama}! (${stamp})`, blocked: `Jangan spam terus ya {nama}, paham? (${stamp})` } },
+  });
+  ok(set.status === 200 && set.json && /{nama}/.test(String(set.json.regText && set.json.regText.greeting)),
+    `admin mengatur sapaan + pesan blokir halaman daftar -> ${set.status}`);
+
+  const pub = await req('GET', '/api/settings/public');
+  ok(pub.status === 200 && pub.json && String(pub.json.regGreet || '').includes(String(stamp)),
+    'sapaan admin tampil di endpoint publik tanpa login');
+
+  const inv = await req('PUT', '/api/admin/settings', { token, body: { regText: 'campur-aduk' } });
+  ok(inv.status === 400, `regText bukan objek -> ${inv.status} (ditolak)`);
+  const anon = await req('PUT', '/api/admin/settings', { body: { regText: { greeting: 'x', blocked: '' } } });
+  ok(anon.status === 401, `pengaturan teks tanpa token -> ${anon.status}`);
+
+  // IP baru: pendaftaran pertama sukses, percobaan ke-2 diblokir ->
+  // pesan wajib memakai TULISAN admin dan menyebut nama pendaftar
+  const first = await req('POST', '/api/auth/register', {
+    ip: IP_E,
+    body: { email: mail('e1'), name: 'Daffa', password: 'rahasia123' },
+  });
+  ok(first.status === 201, `pendaftaran pertama dari IP_E -> ${first.status}`);
+
+  const blocked = await req('POST', '/api/auth/register', {
+    ip: IP_E,
+    body: { email: mail('e2'), name: 'Daffa', password: 'rahasia123' },
+  });
+  const msg = String((blocked.json && blocked.json.error) || '');
+  ok(blocked.status === 403 && msg.includes(String(stamp)) && msg.includes('Daffa'),
+    `pesan blokir memakai teks admin + nama pendaftar (${msg.slice(0, 70)}…)`);
+
+  // kembalikan ke pesan bawaan
+  const reset = await req('PUT', '/api/admin/settings', {
+    token,
+    body: { regText: { greeting: 'Selamat datang, {nama}! Lengkapi data di bawah untuk bergabung dengan RTC-Core.', blocked: '' } },
+  });
+  ok(reset.status === 200 && reset.json && reset.json.regText && reset.json.regText.blocked === '',
+    'teks daftar dikembalikan bawaan');
+}
+
 let tokenCache = '';
 
 async function cleanup() {
@@ -305,7 +349,7 @@ async function cleanup() {
   try {
     const db = require(path.join(__dirname, '..', 'server', 'db'));
     await db.ready;
-    for (const ip of [IP_A, IP_B, IP_C, IP_D]) {
+    for (const ip of [IP_A, IP_B, IP_C, IP_D, IP_E]) {
       await db.run('DELETE FROM ip_bans WHERE ip = ?', ip);
       await db.run('DELETE FROM reg_logs WHERE ip = ?', ip);
     }
@@ -340,6 +384,7 @@ async function main() {
     await testLoopbackExempt();
     tokenCache = await testUnbanAndManual(tokenCache);
     await testPermissions(tokenCache);
+    await testCustomBlockText(tokenCache);
   } finally {
     await cleanup();
     server.kill('SIGTERM');

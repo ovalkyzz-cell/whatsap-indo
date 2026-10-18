@@ -320,6 +320,11 @@
         <button class="auth-tab" data-tab="register">Daftar</button>
       </div>
 
+      <div class="reg-greet hidden" id="regGreet" aria-live="polite">
+        <span class="reg-greet-ico" aria-hidden="true">✨</span>
+        <p class="reg-greet-text" id="regGreetText"></p>
+      </div>
+
       <form id="loginForm" class="auth-form">
         <label>Email
           <input type="email" name="email" placeholder="nama@email.com" required autocomplete="email" />
@@ -1189,6 +1194,25 @@
           <button class="btn-primary" id="btnSaveHomeBgAdm">Simpan Background</button>
           <p class="auth-error hidden" id="admBgMsg"></p>
         </section>
+
+        <section class="adm-section">
+          <h4><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-edit" /></svg> Teks Halaman Daftar</h4>
+          <p class="adm-note">Sapaan beranimasi di form daftar — tulis <b>{nama}</b> untuk memanggil
+            nama yang diketik pendaftar (misal nama &quot;Daffa&quot; -&gt; kalimat otomatis menyebut Daffa).
+            Pesan blokir anti-spam juga bisa Anda ubah, tampil mencolok saat IP diblokir.</p>
+          <label class="adm-reg-label" for="admRegGreet">Sapaan form daftar
+            <small>otomatis mengganti {nama} dengan nama pendaftar</small>
+            <textarea id="admRegGreet" rows="3" maxlength="600" spellcheck="true"
+              placeholder="Selamat datang, {nama}! Lengkapi data di bawah untuk bergabung dengan RTC-Core."></textarea>
+          </label>
+          <label class="adm-reg-label" for="admRegBlock">Pesan blokir anti-spam
+            <small>tampil saat IP diblokir — kosongkan untuk memakai pesan bawaan</small>
+            <textarea id="admRegBlock" rows="3" maxlength="600" spellcheck="true"
+              placeholder="IP ini diblokir karena aktivitas pendaftaran melanggar aturan. Hubungi admin untuk membuka blokir."></textarea>
+          </label>
+          <button class="btn-primary" id="btnSaveRegText">Simpan Teks Daftar</button>
+          <p class="auth-error hidden" id="admRegMsg"></p>
+        </section>
       </div>
     </div>
   </section>
@@ -1281,7 +1305,7 @@
     <div class="stv-stage" id="stvStage"></div>
     <footer class="stv-foot">
       <button class="icon-btn stv-nav" id="btnStvPrev" title="Sebelumnya"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg></button>
-      <a class="stv-open hidden" id="stvOpen" href="#" target="_blank" rel="noopener">Buka / Unduh</a>
+      <a class="stv-open hidden" id="stvOpen" href="#" target="_blank" rel="noopener">Buka di Tab</a>
       <button class="icon-btn stv-nav stv-next" id="btnStvNext" title="Berikutnya"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg></button>
     </footer>
   </div>

@@ -38,6 +38,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | Sesi | **Satu akun satu device** — login baru mematikan sesi & socket perangkat lama |
 | Persetujuan | Akun baru berstatus **menunggu** — harus disetujui admin sebelum bisa masuk |
 | Anti-spam daftar | **Email satu kali** + **1 akun per IP tiap 24 jam**; pelanggar & gagal beruntun **auto-blokir IP** permanen sampai admin membuka — masuk dengan akun lama tetap diizinkan |
+| Teks halaman daftar | Panel admin → **Teks Halaman Daftar**: admin bebas mengedit **sapaan form daftar** & **pesan blokir anti-spam** (`PUT /api/admin/settings { regText }`, disimpan di tabel `settings` — server-side); placeholder **`{nama}`** terisi otomatis: nama "Daffa" diketik → kalimat langsung menyebut *Daffa* (update live saat mengetik); kartu beranimasi profesional (reveal huruf, ganti halus ber-blur, shake merah saat IP diblokir) tanpa memuat media apa pun ke perangkat |
 | Chat real-time | Socket.IO — pesan, indikator mengetik, status online/terakhir dilihat |
 | Tanda centang | ✓ terkirim → ✓✓ diterima → ✓✓ biru dibaca (read receipt) |
 | Blok kode | Pesan berisi ``` (kode) dirender **ala VS Code**: gutter nomor baris, warna sintaks, **tombol Copy** sekali klik |
@@ -54,6 +55,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | 15 Tools Web | Halaman **`/tools.html`** (item menu *15 Tools Web*): 15 tools api-mazval — Terjemah, Cuaca, Cek IP, QR, npm, Kurs, Kripto, Gempa, Kode Pos, Cek Nomor, Info Negara, Jarak Kota, Jadwal Sholat, Stalk GitHub, OCR — tersusun per kategori, formulir otomatis dari `GET /api/tools/web/list`, eksekusi lewat `POST /api/tools/web/run` (auth + rate limit 30/menit + **kuota bot harian yang sama**; isian divalidasi allowlist per tool, kunci API tetap di server); hasil dirender rapi (kunci–nilai, daftar, pratinjau gambar, blok JSON), user non-premium melihat panel terkunci + daftar paket, tema/aksen mengikuti pengaturan pengguna |
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
 | Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
+| Penyimpanan hemat RAM | Drawer **Penyimpanan** menampilkan **placeholder** — foto/video/audio **tidak dimuat ke RAM/perangkat sama sekali** saat daftar ditelusuri (nol byte media); konten hanya diambil **on-demand** saat kartu diketuk (tepat satu elemen hidup, video/audio `preload=none`), `src` dilepas saat viewer ditutup; file dibuka **streaming "Buka di Tab" tanpa mengunduh ke galeri** — storage murni di server |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
 | Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas RTC-Core Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
 | Hubungi CS | Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi) langsung **membuka chat** lewat `GET /api/cs` — lolos privasi email & pencarian diri sendiri; saat akun CS sendiri yang menekan, chat diri sendiri (ala *message yourself*) tetap terbuka otomatis |
@@ -140,7 +142,10 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
 | `npm run test:groupbot` | **27 passed, 0 failed** (pasang/keluarkan bot grup, diam untuk non-premium, balas real-time saat disebut/dibalas, maks 1 bot) |
 | `npm run test:admingroup` | **19 passed, 0 failed** (site admin kelola grup milik orang lain tanpa 403, pasang bot, chat bot real-time; anggota biasa tetap ditolak) |
-| `npm test` (e2e) | **350 passed, 15 failed** (sama persis dengan baseline kode bersih: 344 + 6 assert baru tools web) |
+| `npm run test:antispam` | **37 passed, 0 failed** (server sungguhan + `TRUST_PROXY=1`; termasuk pesan blokir disunting admin yang menyebut **nama pendaftar**) |
+| `npm run test:reggreet` | **25 passed, 0 failed** (sapaan halaman daftar: interpolasi `{nama}` live, typewriter, mode blokir beranimasi, wiring panel admin & server — sandbox vm) |
+| `npm run test:storageram` | **29 passed, 0 failed** (daftar penyimpanan **tanpa `<img>/<video>`**, viewer on-demand `preload=none`, buka tab tanpa unduh) |
+| `npm test` (e2e) | **356 passed, 15 failed** (sama persis 15 kegagalan baseline: 344 + 6 assert tools web + 6 assert teks halaman daftar) |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
 `MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
@@ -148,8 +153,10 @@ Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model, Email Generator) 
 diverifikasi identik 15/15 pada checkout bersih tanpa perubahan ini.
 Seluruh uji autentikasi, sesi, chat, grup, admin, media, **balasan (reply)**,
 **kuota storage nyata per paket**, panggilan (luring → kirim-ulang → ditolak → tak terjawab),
-notifikasi, PWA, keamanan & **6 assert tools web** (`/tools.html`, daftar/run terproteksi,
-validasi allowlist 400, tool tak dikenal 404, eksekusi terkendali) **lolos semua**.
+notifikasi, PWA, keamanan, **6 assert tools web** (`/tools.html`, daftar/run terproteksi,
+validasi allowlist 400, tool tak dikenal 404, eksekusi terkendali) & **6 assert teks
+halaman daftar** (sapaan `regGreet` publik, simpan `regText`, validasi 400/401, reset)
+**lolos semua**.
 
 Smoke test storage (`node test/stogetest.js`): **24 passed, 0 failed** — reserve atomik
 saat kirim media, release saat hapus, penolakan melebihi kuota, admin tanpa batas, recompute.
@@ -248,8 +255,13 @@ test/
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
                # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot,
                # 20 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan,
-               # 18 bot AI, Wilayah Indonesia & Simbol Provinsi) & tools web
-               # (/tools.html + /api/tools/web/list|run)
+               # 18 bot AI, Wilayah Indonesia & Simbol Provinsi), tools web
+               # (/tools.html + /api/tools/web/list|run) & teks halaman daftar
+               # (regGreet publik + simpan/validasi regText admin)
+  reggreet.js   # 25 assert sapaan halaman daftar: interpolasi {nama} live saat nama
+                # diketik, reveal typewriter, mode blokir beranimasi, wiring admin/server
+  storageram.js # 29 assert drawer penyimpanan hemat RAM: placeholder tanpa <img>/<video>,
+                # viewer on-demand preload=none, buka tab tanpa atribut unduh
   bot-reply.js # 116 assert unit test balasan 69 bot, rantai resolver Downloader
                # & katalog 15 tools web (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
@@ -297,6 +309,31 @@ Ada dua tingkatan:
 
 Layar tanpa login mengambil latar global dari `GET /api/settings/public` (tanpa autentikasi).
 URL divalidasi ketat: hanya path `/uploads/…` atau Blob Vercel (`settings.validBgUrl`).
+
+### Teks halaman daftar (disunting admin)
+
+Panel admin → **Teks Halaman Daftar** mengendalikan dua hal yang tampil di layar
+pendaftaran. Keduanya disimpan server-side (tabel `settings`, kunci `reg_text`,
+`server/settings.js → getRegText/setRegText`, maks 600 karakter) sehingga tidak
+menyimpan apa pun di memori/perangkat pengunjung — hanya teks dari server:
+
+- **Sapaan form daftar** — kartu `#regGreet` di atas formulir, diambil dari
+  `GET /api/settings/public { regGreet }` tanpa autentikasi. Placeholder **`{nama}`**
+  diganti otomatis dengan nama yang sedang diketik pendaftar: mengetik *Daffa* →
+  kalimat langsung menyebut **Daffa** (update live debounce 220ms dengan efek ganti
+  halus, plus reveal huruf demi huruf saat kartu pertama muncul). Teks kosong →
+  kembali ke sapaan bawaan.
+- **Pesan blokir anti-spam** — saat IP ditolak (`403`, `code: ip_diblokir`),
+  `server/antispam.js → blockMessage()` memakai teks admin (juga mendukung `{nama}`)
+  lalu tampil di kartu yang sama dengan aksen merah + animasi shake; kosongkan
+  textarea untuk memakai pesan bawaan. Galat tetap dibawa `err.data.code` sehingga
+  klien bisa membedakan blokir dari error biasa.
+
+Alur admin: `GET /api/admin/overview { regText }` mengisi textarea saat panel dibuka,
+`PUT /api/admin/settings { regText: { greeting, blocked } }` menyimpan (400 bila bukan
+objek/sapaan kosong, 401 tanpa sesi admin). Diuji `npm run test:reggreet` (25 assert),
+seksi [G] `npm run test:antispam` (pesan blokir menyebut *Daffa* sungguhan) & 6 assert
+baru di e2e.
 
 ### Panggilan (WebRTC)
 
@@ -618,10 +655,11 @@ Pendaftaran dikendalikan tiga lapis: modul `server/antispam.js`, tabel `reg_logs
 - **Bersih-bersih** — ledger percobaan yang lebih tua dari 30 hari dihapus berkala.
   Blokir bersifat **permanen** sampai admin membukanya.
 
-Uji otomatis: `npm run test:antispam` (30 pemeriksaan) menjalankan server sungguhan
+Uji otomatis: `npm run test:antispam` (37 pemeriksaan) menjalankan server sungguhan
 dengan `TRUST_PROXY=1` lalu memalsukan `X-Forwarded-For` per kasus — termasuk alur
-blokir otomatis, notifikasi admin, buka blokir, blokir manual, login dari IP terblokir
-dan penolakan non-admin.
+blokir otomatis, notifikasi admin, buka blokir, blokir manual, login dari IP terblokir,
+penolakan non-admin, serta **pesan blokir disunting admin** (`regText.blocked`)
+yang menyebut nama pendaftar sungguhan lewat `{nama}`.
 
 ### Keamanan
 

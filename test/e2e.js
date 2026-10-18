@@ -684,6 +684,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   ok(bgReset.status === 200 && bgReset.data.homeBg.type === 'default', 'background dikembalikan default');
 
+  // ---------- teks halaman daftar (sapaan {nama} + pesan blokir) ----------
+  const rgPub0 = await api('/api/settings/public');
+  ok(rgPub0.status === 200 && typeof rgPub0.data.regGreet === 'string' && rgPub0.data.regGreet.includes('{nama}'),
+    'sapaan daftar publik membawa placeholder {nama}');
+  const rgSet = await api('/api/admin/settings', {
+    method: 'PUT', token: tokAdm,
+    body: { regText: { greeting: `Halo {nama}, selamat datang ${stamp}`, blocked: `Jangan spam ya {nama} ${stamp}` } },
+  });
+  ok(rgSet.status === 200 && rgSet.data.regText.greeting.includes('{nama}'),
+    'admin mengatur sapaan & pesan blokir halaman daftar');
+  const rgPub = await api('/api/settings/public');
+  ok(rgPub.status === 200 && rgPub.data.regGreet.includes(String(stamp)),
+    'sapaan admin tampil di endpoint publik (tanpa login)');
+  const rgBad = await api('/api/admin/settings', { method: 'PUT', token: tokAdm, body: { regText: 'campur-aduk' } });
+  ok(rgBad.status === 400, `regText bukan objek -> ${rgBad.status} (ditolak)`);
+  const rgAnon = await api('/api/admin/settings', { method: 'PUT', body: { regText: { greeting: 'x', blocked: '' } } });
+  ok(rgAnon.status === 401, `pengaturan teks daftar tanpa token -> ${rgAnon.status}`);
+  const rgReset = await api('/api/admin/settings', {
+    method: 'PUT', token: tokAdm,
+    body: { regText: { greeting: 'Selamat datang, {nama}! Lengkapi data di bawah untuk bergabung dengan RTC-Core.', blocked: '' } },
+  });
+  ok(rgReset.status === 200 && rgReset.data.regText.blocked === '', 'teks daftar dikembalikan bawaan');
+
   // ---------- privasi ----------
   await api('/api/me', {
     method: 'PATCH', token: tokA,

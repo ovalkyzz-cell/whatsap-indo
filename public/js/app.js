@@ -144,8 +144,13 @@ function showAuth(err) {
   $('appView').classList.add('hidden');
   $('authView').classList.remove('hidden');
   const e = $('authError');
-  if (err) { e.textContent = err; e.classList.remove('hidden'); }
-  else e.classList.add('hidden');
+  if (err) {
+    e.textContent = err;
+    e.classList.remove('hidden');
+    e.classList.remove('anim'); void e.offsetWidth; e.classList.add('anim'); // animasi ulang tiap muncul
+  } else e.classList.add('hidden');
+  // kartu sapaan mengikuti tab yang sedang aktif
+  showRegGreet(!!document.querySelector('.auth-tab[data-tab="register"].active'));
 }
 
 function showApp() {
@@ -191,12 +196,99 @@ function logout(callServer = true, message) {
   void loadHomeBg(); // kembali ke latar global/bawaan setelah keluar
 }
 
+/* ================= sapaan halaman daftar =================
+   Teks disunting admin (GET /api/settings/public -> regGreet). Placeholder
+   {nama} diganti otomatis dengan nama yang diketik pendaftar; pesan blokir
+   anti-spam (code ip_diblokir) juga tampil di kartu ini. Tidak ada media
+   yang dimuat ke memori perangkat — hanya teks dari server. */
+const REG_GREETING_FALLBACK = 'Selamat datang, {nama}! Lengkapi data di bawah untuk bergabung dengan RTC-Core.';
+let regGreetTpl = REG_GREETING_FALLBACK;
+let regGreetLoaded = false;
+let regGreetRevealed = false;
+let regGreetSwapTimer = null;
+let regGreetTypeTimer = null;
+
+function regGreetRendered() {
+  const input = document.querySelector('#registerForm input[name="name"]');
+  const name = ((input && input.value) || '').trim().slice(0, 40);
+  return regGreetTpl.replace(/\{nama\}|\{name\}/gi, name || 'Pengguna');
+}
+
+function paintRegGreet(mode) {
+  const card = $('regGreet');
+  const out = $('regGreetText');
+  if (!card || !out) return;
+  const txt = regGreetRendered();
+  clearInterval(regGreetTypeTimer); regGreetTypeTimer = null;
+  if (mode === 'type' && !regGreetRevealed && txt.length <= 140) {
+    // reveal huruf demi huruf sekali saat kartu pertama muncul
+    let i = 0;
+    out.textContent = '';
+    regGreetTypeTimer = setInterval(() => {
+      i += 2;
+      out.textContent = txt.slice(0, i);
+      if (i >= txt.length) {
+        clearInterval(regGreetTypeTimer); regGreetTypeTimer = null;
+        regGreetRevealed = true;
+      }
+    }, 16);
+    return;
+  }
+  regGreetRevealed = true;
+  if (mode === 'swap') {
+    card.classList.remove('swapping'); void card.offsetWidth; card.classList.add('swapping');
+  }
+  out.textContent = txt;
+}
+
+async function ensureRegGreet() {
+  if (regGreetLoaded) return;
+  try {
+    const d = await api('/api/settings/public');
+    if (d && typeof d.regGreet === 'string') regGreetTpl = d.regGreet || REG_GREETING_FALLBACK;
+    regGreetLoaded = true;
+    const card = $('regGreet');
+    if (card && !card.classList.contains('hidden')) paintRegGreet(regGreetRevealed ? 'swap' : 'type');
+  } catch { /* offline — pakai sapaan bawaan, coba lagi saat kunjungan berikut */ }
+}
+
+function showRegGreet(on) {
+  const card = $('regGreet');
+  if (!card) return;
+  card.classList.toggle('hidden', !on);
+  if (!on) {
+    clearInterval(regGreetTypeTimer); regGreetTypeTimer = null;
+    return;
+  }
+  card.classList.remove('blocked', 'shake');
+  regGreetRevealed = false;
+  paintRegGreet('type');
+  void ensureRegGreet();
+}
+
+// IP diblokir anti-spam: pesan dari admin tampil di kartu sapaan + animasi
+function showRegBlocked(msg) {
+  document.querySelectorAll('.auth-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === 'register'));
+  $('loginForm').classList.add('hidden');
+  $('registerForm').classList.remove('hidden');
+  $('authError').classList.add('hidden');
+  const card = $('regGreet');
+  if (!card) { showAuth(msg); return; }
+  clearInterval(regGreetTypeTimer); regGreetTypeTimer = null;
+  card.classList.remove('hidden');
+  card.classList.add('blocked');
+  regGreetRevealed = true;
+  $('regGreetText').textContent = msg;
+  card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+}
+
 document.querySelectorAll('.auth-tab').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.auth-tab').forEach((t) => t.classList.toggle('active', t === tab));
     $('loginForm').classList.toggle('hidden', tab.dataset.tab !== 'login');
     $('registerForm').classList.toggle('hidden', tab.dataset.tab !== 'register');
     $('authError').classList.add('hidden');
+    showRegGreet(tab.dataset.tab === 'register');
   });
 });
 
@@ -225,8 +317,22 @@ $('registerForm').addEventListener('submit', async (e) => {
     }
     await bootSession(data);
     if (data.refApplied) toast('Kode undangan diterapkan — selamat datang! 🎁');
-  } catch (err) { showAuth(err.message); }
+  } catch (err) {
+    if (err.data && err.data.code === 'ip_diblokir') { showRegBlocked(err.message); return; }
+    showAuth(err.message);
+  }
 });
+
+// sapaan menyapa pendaftar saat nama diketik (misal "Daffa" -> teks menyebut Daffa)
+const regNameInput = document.querySelector('#registerForm input[name="name"]');
+if (regNameInput) {
+  regNameInput.addEventListener('input', () => {
+    const card = $('regGreet');
+    if (!card || card.classList.contains('hidden') || card.classList.contains('blocked')) return;
+    clearTimeout(regGreetSwapTimer);
+    regGreetSwapTimer = setTimeout(() => { regGreetRevealed = true; paintRegGreet('swap'); }, 220);
+  });
+}
 
 // kode undangan dari link ?ref=WA-MAZ-VAL-XXXX langsung terisi di form daftar
 (function prefillRef() {
@@ -3387,11 +3493,13 @@ function renderStorage(data) {
     <div class="st-breakdown">
       ${['image', 'video', 'audio', 'file'].map((k) => `
         <div class="st-bd-item">
-          <span class="st-bd-ico"><svg viewBox="0 0 24 24"><use href="#ic-${k === 'image' ? 'image' : k === 'video' ? 'video' : k === 'audio' ? 'mic' : 'doc'}" /></svg></span>
+          <span class="st-bd-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-${k === 'image' ? 'image' : k === 'video' ? 'video' : k === 'audio' ? 'mic' : 'doc'}" /></svg></span>
           <b>${fmtBytes(totals[k] || 0)}</b>
           <small>${ST_TABS.find((t) => t.id === k).label}</small>
         </div>`).join('')}
     </div>
+    <p class="st-ram-note">Hemat RAM — daftar menampilkan placeholder; foto/video hanya dimuat saat diketuk dan berhenti
+      dimuat saat ditutup. File dibuka streaming langsung dari server, tanpa tersimpan ke HP Anda.</p>
     <div class="st-tabs">
       ${ST_TABS.map((t) => `
         <button class="st-tab ${storageFilter === t.id ? 'active' : ''}" data-st-filter="${t.id}" type="button">
@@ -3403,11 +3511,12 @@ function renderStorage(data) {
     ? `<div class="st-grid">${shown.map((it) => {
         const key = stKey(it);
         const sel = stSelected.has(key);
-        const thumb = it.type === 'image'
-          ? `<img class="st-thumb" loading="lazy" decoding="async" src="${esc(it.url)}" alt="" onerror="mediaBroken(this)">`
-          : it.type === 'video'
-            ? `<div class="st-thumb st-thumb-video"><video src="${esc(it.url)}" muted preload="metadata" onerror="mediaBroken(this)"></video><span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span></div>`
-            : `<div class="st-thumb st-thumb-file"><svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'audio' ? 'mic' : 'doc'}" /></svg></div>`;
+        // placeholder saja — TIDAK ada <img>/<video> sehingga telusur daftar
+        // sama sekali tidak memuat byte media ke RAM/perangkat pengguna
+        const thumb = `<div class="st-thumb st-thumb-ph st-ph-${it.type}" aria-hidden="true" title="Ketuk untuk memuat media">
+          <svg viewBox="0 0 24 24"><use href="#ic-${it.type === 'image' ? 'image' : it.type === 'video' ? 'video' : it.type === 'audio' ? 'mic' : 'doc'}" /></svg>
+          ${it.type === 'video' ? '<span class="st-play"><svg viewBox="0 0 24 24"><use href="#ic-play" /></svg></span>' : ''}
+        </div>`;
         return `
         <div class="st-card st-${it.type} ${stSelectMode ? 'selectable' : ''} ${sel ? 'selected' : ''}" data-st-id="${esc(it.id)}" data-st-kind="${esc(it.kind || 'msg')}" data-st-key="${esc(key)}">
           ${stSelectMode ? `<span class="st-check ${sel ? 'on' : ''}"><svg viewBox="0 0 24 24"><use href="#ic-check" /></svg></span>` : ''}
@@ -3679,7 +3788,7 @@ function renderStv() {
     const v = document.createElement('video');
     v.className = 'stv-video';
     v.controls = true;
-    v.preload = 'metadata'; // streaming: cukup metadata, tak unduh penuh ke RAM
+    v.preload = 'none'; // streaming on-demand: 0 byte sampai ditekan putar
     v.playsInline = true;
     v.setAttribute('playsinline', '');
     v.src = it.url;
@@ -3688,7 +3797,7 @@ function renderStv() {
     const a = document.createElement('audio');
     a.className = 'stv-audio';
     a.controls = true;
-    a.preload = 'metadata';
+    a.preload = 'none';
     a.src = it.url;
     stage.appendChild(a);
   } else {
@@ -3704,7 +3813,8 @@ function renderStv() {
   const open = $('stvOpen');
   if (it.type === 'file' || it.type === 'audio') {
     open.href = it.url;
-    open.setAttribute('download', label);
+    // buka streaming di tab baru — TIDAK mengunduh/menyimpan file ke HP
+    open.removeAttribute('download');
     open.classList.remove('hidden');
   } else {
     open.classList.add('hidden');
@@ -4930,7 +5040,7 @@ $('notifSoundToggle').addEventListener('change', (e) => {
 });
 
 /* ================= panel admin ================= */
-const adm = { plans: [], homeBg: { type: 'default', url: null }, pendingBg: null, users: [], pending: [], logs: [], ipBans: [], timer: null };
+const adm = { plans: [], homeBg: { type: 'default', url: null }, pendingBg: null, regText: { greeting: '', blocked: '' }, users: [], pending: [], logs: [], ipBans: [], timer: null };
 
 const ADMIN_EVENT_LABEL = {
   registered: 'mendaftar — menunggu persetujuan',
@@ -4950,6 +5060,7 @@ async function openAdminPanel() {
   openDrawer('adminDrawer');
   $('admMsg').classList.add('hidden');
   $('admBgMsg').classList.add('hidden');
+  $('admRegMsg').classList.add('hidden');
   try {
     const [data, mon] = await Promise.all([
       api('/api/admin/overview'),
@@ -4958,6 +5069,9 @@ async function openAdminPanel() {
     adm.plans = data.plans || [];
     adm.homeBg = data.homeBg || { type: 'default', url: null };
     adm.pendingBg = null;
+    adm.regText = data.regText || { greeting: '', blocked: '' };
+    $('admRegGreet').value = adm.regText.greeting || '';
+    $('admRegBlock').value = adm.regText.blocked || '';
     renderAdmStats(data.stats);
     renderAdmPlans();
     renderAdmPlanSelect();
@@ -5355,6 +5469,19 @@ $('btnSaveHomeBgAdm').addEventListener('click', async () => {
     void loadHomeBg(); // hormati latar milik pengguna bila ada, baru setelan global
     admMsg('admBgMsg', 'Background beranda disimpan ✓', false);
   } catch (err) { admMsg('admBgMsg', err.message, true); }
+});
+
+// simpan teks halaman daftar (sapaan {nama} + pesan blokir anti-spam)
+$('btnSaveRegText').addEventListener('click', async () => {
+  const body = { regText: { greeting: $('admRegGreet').value, blocked: $('admRegBlock').value } };
+  try {
+    const data = await api('/api/admin/settings', { method: 'PUT', body });
+    adm.regText = data.regText || body.regText;
+    $('admRegGreet').value = adm.regText.greeting || '';
+    $('admRegBlock').value = adm.regText.blocked || '';
+    regGreetLoaded = false; // teks terbaru diambil lagi saat halaman daftar dibuka
+    admMsg('admRegMsg', 'Teks halaman daftar disimpan ✓', false);
+  } catch (err) { admMsg('admRegMsg', err.message, true); }
 });
 
 $('btnCloseAdmin').addEventListener('click', closeDrawers);
