@@ -186,6 +186,11 @@ async function testStorage(adminTok) {
   ok(Array.isArray(r.json.topUsers), 'daftar konsumen terbesar tersedia');
   ok(Array.isArray(r.json.byType), 'rincian media per tipe tersedia');
   ok(Array.isArray(r.json.recentUploads), 'daftar unggahan terakhir tersedia');
+  const cap = r.json.capacity || {};
+  ok(typeof cap.bytes === 'number' && cap.bytes > 0, 'total kapasitas kuota pengguna aktif > 0');
+  ok(cap.unlimited >= 1, 'akun admin (tanpa batas) terhitung terpisah');
+  ok(cap.accounts >= 1 && typeof cap.premium === 'number' && typeof cap.free === 'number',
+    'rincian akun premium/gratis tersedia');
 }
 
 async function testAuditTrailAndRealtime(adminTok) {
@@ -266,9 +271,10 @@ async function testStatics() {
   const page = await req('GET', '/server.html');
   ok(page.status === 200, '/server.html disajikan 200');
   const html = page.text || '';
-  for (const marker of ['scGate', 'scStats', 'scFeed', 'scExport', 'scSecurity', 'server:stats', 'socket.io']) {
+  for (const marker of ['scGate', 'scStats', 'scFeed', 'scExport', 'scSecurity', 'scCap', 'server:stats', 'socket.io']) {
     ok(html.includes(marker), `server.html memuat penanda "${marker}"`);
   }
+  ok(html.includes('Total kapasitas kuota pengguna aktif'), 'label total kapasitas tampil di konsol');
   const idx = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   ok(idx.includes('adm-oss-link') && idx.includes('/server.html'), 'pintu masuk konsol ada di panel admin');
 }

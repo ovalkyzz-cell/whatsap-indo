@@ -56,7 +56,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
 | Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
 | Penyimpanan hemat RAM | Drawer **Penyimpanan** menampilkan **placeholder** — foto/video/audio **tidak dimuat ke RAM/perangkat sama sekali** saat daftar ditelusuri (nol byte media); konten hanya diambil **on-demand** saat kartu diketuk (tepat satu elemen hidup, video/audio `preload=none`), `src` dilepas saat viewer ditutup; file dibuka **streaming "Buka di Tab" tanpa mengunduh ke galeri** — storage murni di server |
-| Server Console | Halaman **`/server.html`** — konsol pantau **khusus admin**: statistik langsung (pengguna, daring, chat, pesan, storage, memori RSS, ukuran basis data, permintaan/menit) disiarkan event `server:stats` tiap 5 detik + cadangan polling, laporan storage per sumber + konsumen terbesar + unggahan terakhir, **feed jejak audit real-time** (setujui/tolak/blokir akun, premium, pengaturan, blokir IP, ekspor — tersimpan di tabel `admin_audit` & disiarkan `admin:event type=audit`), panel keamanan/enkripsi (algo AES-256-GCM, sumber kunci, transport, header), dan **unduh arsip `.rtcenc` terenkripsi AES-256-GCM** (round-trip diverifikasi di server, tanpa email plaintext di jaringan); gerbang ketat: API `/api/server/*` anon **401** & non-admin **403**, halaman menampilkan kartu akses-ditolak untuk non-admin |
+| Server Console | Halaman **`/server.html`** — konsol pantau **khusus admin**: statistik langsung (pengguna, daring, chat, pesan, storage, memori RSS, ukuran basis data, permintaan/menit) disiarkan event `server:stats` tiap 5 detik + cadangan polling, blok **total kapasitas kuota pengguna aktif** beranimasi (angka hitung-naik TB, meter berkelanjutan, warna hijau/kuning/merah sesuai pemakaian, chip premium/gratis/admin-∞), laporan storage per sumber + konsumen terbesar + unggahan terakhir, **feed jejak audit real-time** (setujui/tolak/blokir akun, premium, pengaturan, blokir IP, ekspor — tersimpan di tabel `admin_audit` & disiarkan `admin:event type=audit`), panel keamanan/enkripsi (algo AES-256-GCM, sumber kunci, transport, header), dan **unduh arsip `.rtcenc` terenkripsi AES-256-GCM** (round-trip diverifikasi di server, tanpa email plaintext di jaringan); gerbang ketat: API `/api/server/*` anon **401** & non-admin **403**, halaman menampilkan kartu akses-ditolak untuk non-admin |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
 | Tentang aplikasi | Drawer **Tentang Aplikasi**: identitas RTC-Core Developer, cara pakai (7 langkah), daftar fitur, CS admin `ovalkyzz@gmail.com` dengan tombol chat langsung |
 | Hubungi CS | Tombol **Hubungi Admin / CS** (kartu paket, halaman Paket & Harga, Tentang Aplikasi) langsung **membuka chat** lewat `GET /api/cs` — lolos privasi email & pencarian diri sendiri; saat akun CS sendiri yang menekan, chat diri sendiri (ala *message yourself*) tetap terbuka otomatis |
@@ -146,7 +146,7 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:antispam` | **37 passed, 0 failed** (server sungguhan + `TRUST_PROXY=1`; termasuk pesan blokir disunting admin yang menyebut **nama pendaftar**) |
 | `npm run test:reggreet` | **25 passed, 0 failed** (sapaan halaman daftar: interpolasi `{nama}` live, typewriter, mode blokir beranimasi, wiring panel admin & server — sandbox vm) |
 | `npm run test:storageram` | **29 passed, 0 failed** (daftar penyimpanan **tanpa `<img>/<video>`**, viewer on-demand `preload=none`, buka tab tanpa unduh) |
-| `npm run test:serverconsole` | **57 passed, 0 failed** (server sungguhan port 3461; gerbang 401/403 ketat, overview/storage/audit, aksi admin tercatat & tersiar live `server:stats` + `admin:event audit` via socket, arsip `.rtcenc` terverifikasi tanpa plaintext, header `X-Robots-Tag`) |
+| `npm run test:serverconsole` | **62 passed, 0 failed** (server sungguhan port 3461; gerbang 401/403 ketat, overview/storage/audit + **kapasitas kuota aktif**, aksi admin tercatat & tersiar live `server:stats` + `admin:event audit` via socket, arsip `.rtcenc` terverifikasi tanpa plaintext, header `X-Robots-Tag`) |
 | `npm test` (e2e) | **356 passed, 15 failed** (sama persis 15 kegagalan baseline: 344 + 6 assert tools web + 6 assert teks halaman daftar) |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
@@ -270,7 +270,7 @@ test/
                 # diketik, reveal typewriter, mode blokir beranimasi, wiring admin/server
   storageram.js # 29 assert drawer penyimpanan hemat RAM: placeholder tanpa <img>/<video>,
                 # viewer on-demand preload=none, buka tab tanpa atribut unduh
-  serverconsole.js # 57 assert Konsol Server: gerbang API 401/403, bentuk overview &
+  serverconsole.js # 62 assert Konsol Server: gerbang API 401/403, bentuk overview &
                 # laporan storage, aksi admin tercatat di audit + tersiar live
                 # (server:stats & admin:event audit) via socket, arsip .rtcenc
                 # terverifikasi tanpa plaintext, header noindex & penanda statis
@@ -366,6 +366,13 @@ Yang dipantau (semua dari `server/console.js`):
 - **Laporan storage** — total per sumber (media chat, drawer *Penyimpanan*, berkas di
   DB), rincian per tipe media, 12 konsumen terbesar lengkap dengan bar vs kuota paket
   (admin = tanpa batas), dan 10 unggahan terakhir.
+- **Total kapasitas kuota pengguna aktif** — blok hero berwarna di atas panel storage:
+  penjumlahan kuota seluruh akun aktif non-diblokir (premium → `storageLimit` paketnya,
+  gratis → 2 GB, admin **∞ tanpa batas** tidak dijumlahkan) mis. *110,63 TB*; angka
+  besar **ber-hitung naik** (easeOutCubic), meter ber-*shimmer* berkelanjutan, warna
+  otomatis **hijau < 60% / kuning 60–85% / merah ≥ 85%** pemakaian, chip premium &
+  gratis, serta baris *Terpakai* dari angka nyata terbesar (kolom akun vs jumlah
+  sumber). Kartu *Storage terpakai* ikut menampilkan *dari X TB kapasitas*.
 - **Jejak audit (`admin_audit`)** — setiap aksi admin sensitif dicatat & disiarkan
   sebagai `admin:event type='audit'`: berikan/cabut premium, setujui/tolak/blokir/buka
   blokir akun, ubah pengaturan (paket/background/teks daftar), hitung ulang storage,
@@ -382,7 +389,7 @@ Yang dipantau (semua dari `server/console.js`):
   keamanan, dialek basis data & jumlah entri audit.
 
 Pelengkap: seluruh respons memasang **`X-Robots-Tag: noindex, nofollow`** (konsol &
-API tidak diindeks mesin pencari). Diuji `npm run test:serverconsole` — **57 assert**
+API tidak diindeks mesin pencari). Diuji `npm run test:serverconsole` — **62 assert**
 (server sungguhan port 3461): gerbang 401/403, bentuk overview/storage, aksi admin
 tercatat + tersiar live lewat socket, ticker `server:stats`, arsip terverifikasi tanpa
 plaintext, dan penanda statis halaman.

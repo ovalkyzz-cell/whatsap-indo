@@ -114,6 +114,81 @@
   .mini-bar .bar-track{width:74px; height:7px}
   .mini-bar .pct{font-size:11px; color:var(--dim); width:34px; text-align:right}
 
+  /* ---------- kapasitas kuota (hero storage) ---------- */
+  .cap{
+    position:relative; overflow:hidden; margin-bottom:15px;
+    background:var(--panel2); border:1px solid var(--line); border-left:3px solid var(--acc);
+    border-radius:8px; padding:14px 16px 15px;
+    animation:capIn .55s cubic-bezier(.22,1,.36,1) both;
+  }
+  @keyframes capIn{from{opacity:0; transform:translateY(8px)}to{opacity:1; transform:none}}
+  .cap-top{display:flex; align-items:baseline; gap:13px; flex-wrap:wrap}
+  .cap-k{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
+  .cap-v{
+    font:650 30px/1.1 var(--mono); font-variant-numeric:tabular-nums;
+    color:var(--acc); letter-spacing:-.02em;
+    text-shadow:0 0 18px rgba(0,168,132,.28);
+  }
+  .cap-v .u{font-size:14px; font-weight:600; color:var(--muted); margin-left:6px; letter-spacing:.06em}
+  .cap-pct{
+    margin-left:auto; font:600 12.5px var(--mono); padding:5px 11px;
+    border-radius:999px; border:1px solid var(--line); color:var(--muted); background:#0d1116;
+    white-space:nowrap; transition:color .4s, border-color .4s;
+  }
+  .cap-track{
+    position:relative; height:14px; margin-top:13px;
+    background:#0b0f13; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+  }
+  .cap-fill{
+    position:absolute; top:0; bottom:0; left:0; width:0; min-width:0; border-radius:7px;
+    background:linear-gradient(90deg,#0b7f68,#00a884 45%,#3fcf8e);
+    box-shadow:0 0 14px rgba(0,168,132,.45);
+    transition:width 1.3s cubic-bezier(.22,1,.36,1), background .5s, box-shadow .5s;
+  }
+  .cap-fill::after{
+    content:""; position:absolute; inset:0;
+    background:linear-gradient(105deg,transparent 32%,rgba(255,255,255,.3) 50%,transparent 68%);
+    transform:translateX(-110%);
+    animation:capShimmer 2.8s ease-in-out .8s infinite;
+  }
+  @keyframes capShimmer{0%{transform:translateX(-110%)}55%,100%{transform:translateX(240%)}}
+  .cap[data-state="ok"]{border-left-color:var(--ok)}
+  .cap[data-state="ok"] .cap-v{color:var(--ok); text-shadow:0 0 18px rgba(63,207,142,.3)}
+  .cap[data-state="ok"] .cap-pct{color:var(--ok); border-color:#1d4a3a}
+  .cap[data-state="warn"]{border-left-color:var(--warn)}
+  .cap[data-state="warn"] .cap-v{color:var(--warn); text-shadow:0 0 18px rgba(224,165,61,.32)}
+  .cap[data-state="warn"] .cap-pct{color:var(--warn); border-color:#4a3a1d}
+  .cap[data-state="warn"] .cap-fill{
+    background:linear-gradient(90deg,#a8752a,#e0a53d 45%,#f0c46a);
+    box-shadow:0 0 14px rgba(224,165,61,.5);
+    animation:capWarnPulse 1.8s ease-in-out infinite;
+  }
+  .cap[data-state="bad"]{border-left-color:var(--bad)}
+  .cap[data-state="bad"] .cap-v{color:var(--bad); text-shadow:0 0 18px rgba(224,85,85,.32)}
+  .cap[data-state="bad"] .cap-pct{color:var(--bad); border-color:#4a1d1d}
+  .cap[data-state="bad"] .cap-fill{
+    background:linear-gradient(90deg,#a83232,#e05555 45%,#f08a8a);
+    box-shadow:0 0 16px rgba(224,85,85,.55);
+    animation:capWarnPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes capWarnPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
+  .cap-chips{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:11px}
+  .cap-chip{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; padding:3.5px 10px; border-radius:6px;
+    border:1px solid var(--line); color:var(--muted); background:#0d1116;
+  }
+  .cap-chip .d{width:6px; height:6px; border-radius:50%; background:var(--dim)}
+  .cap-chip.prem{color:#7ee0c4; border-color:#14654f; background:#0b241e}
+  .cap-chip.prem .d{background:var(--acc); box-shadow:0 0 5px var(--acc)}
+  .cap-chip.adm{color:var(--warn); border-color:#4a3a1d; background:#211a0e}
+  .cap-chip.adm .d{background:var(--warn); box-shadow:0 0 5px var(--warn)}
+  .cap-used{
+    margin-left:auto; font-size:11.5px; color:var(--muted); font-family:var(--mono);
+    white-space:nowrap;
+  }
+  .cap-used b{color:var(--txt); font-weight:650}
+
   ul.recent{list-style:none; margin:8px 0 0; padding:0; max-height:180px; overflow:auto}
   ul.recent li{
     display:flex; gap:10px; align-items:baseline; padding:5px 2px; font-size:12px;
@@ -225,6 +300,15 @@
         <span class="hint" id="scStorageHint">memuat…</span>
       </div>
       <div class="panel-body">
+        <div class="cap" id="scCap" data-state="ok" aria-label="Total kapasitas kuota pengguna aktif">
+          <div class="cap-top">
+            <span class="cap-k">Total kapasitas kuota pengguna aktif</span>
+            <span class="cap-v"><span id="scCapNum">0,00</span><span class="u">TB</span></span>
+            <span class="cap-pct" id="scCapPct">memuat…</span>
+          </div>
+          <div class="cap-track"><div class="cap-fill" id="scCapFill"></div></div>
+          <div class="cap-chips" id="scCapChips"></div>
+        </div>
         <div id="scStorageBars"></div>
         <div class="tot-line"><span>Terakun di akun</span><b class="num" id="scStAccounted">–</b></div>
         <div style="margin-top:14px">
@@ -355,7 +439,11 @@
     { k: 'Chat', v: function (d) { return fmtNum(d.chats); },
       s: function (d) { return fmtNum(d.messages.live) + ' pesan aktif'; } },
     { k: 'Storage terpakai', v: function (d) { return fmtBytes(d.users.storageUsed); },
-      s: function (d) { return fmtBytes(d.messages.mediaBytes) + ' media chat'; } },
+      s: function (d) {
+        var used = fmtBytes(d.messages.mediaBytes) + ' media chat';
+        if (lastCapacity) used += ' · dari ' + fmtBytes(lastCapacity.bytes) + ' kapasitas';
+        return used;
+      } },
     { k: 'Memori (RSS)', v: function (d) { return fmtBytes(d.memory.rss); },
       s: function (d) { return 'heap ' + fmtBytes(d.memory.heapUsed) + ' / ' + fmtBytes(d.memory.heapTotal); } },
     { k: 'Basis data', v: function (d) { return fmtBytes(d.dbBytes); },
@@ -522,6 +610,64 @@
       li.appendChild(el('span', 'b', fmtBytes(f.bytes)));
       ul.appendChild(li);
     });
+    renderCapacity(r);
+  }
+
+  // ---------- hero: total kapasitas kuota pengguna aktif ----------
+  var lastCapacity = null;
+
+  function renderCapacity(r) {
+    var cap = r.capacity;
+    if (!cap) return;
+    lastCapacity = cap;
+    var t = r.totals;
+    // terpakai: pakai angka terbesar antara kolom akun & jumlah sumber nyata
+    var used = Math.max(
+      t.accounted || 0,
+      (t.chatMediaBytes || 0) + (t.drawerBytes || 0) + (t.dbFileBytes || 0)
+    );
+    var tb = cap.bytes / (1024 * 1024 * 1024 * 1024);
+    var pct = cap.bytes > 0 ? (used / cap.bytes) * 100 : 0;
+    var state = pct >= 85 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
+    var box = $('scCap');
+    box.dataset.state = state;
+
+    // angka besar ber-hitung naik (easeOutCubic) tiap data baru masuk
+    var num = $('scCapNum');
+    var from = Number(num.dataset.val || 0);
+    num.dataset.val = String(tb);
+    var t0 = performance.now();
+    var dur = from === tb ? 0 : 1200;
+    (function step(now) {
+      var k = dur ? Math.min(1, (now - t0) / dur) : 1;
+      var e = 1 - Math.pow(1 - k, 3);
+      num.textContent = (from + (tb - from) * e).toLocaleString('id-ID', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+
+    $('scCapPct').textContent =
+      (pct < 1 ? pct.toFixed(2).replace('.', ',') : pct.toLocaleString('id-ID', { maximumFractionDigits: 1 })) +
+      '% terpakai';
+    $('scCapFill').style.width = Math.max(pct > 0 ? 1.5 : 0.5, Math.min(100, pct)) + '%';
+
+    var chips = $('scCapChips');
+    chips.textContent = '';
+    var chip = function (cls, text) {
+      var c = el('span', 'cap-chip ' + cls);
+      c.appendChild(el('span', 'd'));
+      c.appendChild(document.createTextNode(text));
+      chips.appendChild(c);
+    };
+    chip('prem', 'Premium · ' + fmtNum(cap.premium) + ' akun');
+    chip('', 'Gratis · ' + fmtNum(cap.free) + ' akun');
+    if (cap.unlimited) chip('adm', 'Admin · ∞ tanpa batas');
+    var usedEl = el('span', 'cap-used');
+    usedEl.appendChild(document.createTextNode('Terpakai '));
+    usedEl.appendChild(el('b', null, fmtBytes(used)));
+    chips.appendChild(usedEl);
   }
 
   // ---------- feed ----------
@@ -580,7 +726,13 @@
   function loadOverview() {
     return api('/api/server/overview').then(function (d) { overview = d; renderStats(d); return d; });
   }
-  function loadStorage() { return api('/api/server/storage').then(renderStorage); }
+  function loadStorage() {
+    return api('/api/server/storage').then(function (d) {
+      renderStorage(d);
+      if (overview) renderStats(overview); // kartu ikut menampilkan kapasitas
+      return d;
+    });
+  }
   function loadAudit() {
     return api('/api/server/audit?limit=60').then(function (d) {
       var ul = $('scFeed');

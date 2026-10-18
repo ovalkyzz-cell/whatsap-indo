@@ -176,12 +176,39 @@ async function overview(opts = {}) {
   };
 }
 
+// total kapasitas kuota seluruh pengguna aktif (dilarang diblokir & berstatus
+// aktif): premium memakai storageLimit paketnya, sisanya kuota gratis.
+// Akun admin tidak dijumlahkan — kuotanya tanpa batas.
+function capacityOf(activeRows, planById) {
+  let bytes = 0;
+  let premium = 0;
+  let free = 0;
+  let unlimited = 0;
+  const now = Date.now();
+  for (const u of activeRows) {
+    if (u.role === 'admin') {
+      unlimited += 1;
+      continue;
+    }
+    const active = n(u.premium_until) > now;
+    const plan = active && u.premium_plan ? planById.get(u.premium_plan) : null;
+    if (plan && Number(plan.storageLimit) > 0) {
+      bytes += Number(plan.storageLimit);
+      premium += 1;
+    } else {
+      bytes += settings.FREE_STORAGE;
+      free += 1;
+    }
+  }
+  return { bytes, accounts: premium + free, premium, free, unlimited };
+}
+
 // ---------- rincian storage ----------
 async function storageReport() {
   const plans = await settings.getPlans().catch(() => []);
   const planById = new Map(plans.map((p) => [p.id, p]));
 
-  const [totals, byType, topRows, recentRows] = await Promise.all([
+  const [totals, byType, topRows, recentRows, activeRows] = await Promise.all([
     one(
       `SELECT COALESCE(SUM(storage_used), 0) AS accounted,
               COUNT(*) AS users
@@ -207,6 +234,11 @@ async function storageReport() {
          JOIN users u ON u.id = s.user_id
         ORDER BY s.created_at DESC
         LIMIT 10`
+    ),
+    all(
+      `SELECT role, premium_plan, premium_until
+         FROM users
+        WHERE banned = 0 AND account_status = 'active'`
     ),
   ]);
 
@@ -242,6 +274,7 @@ async function storageReport() {
 
   return {
     at: Date.now(),
+    capacity: capacityOf(activeRows, planById),
     totals: {
       accounted: n(totals.accounted), // total storage_used seluruh pengguna
       chatMediaBytes: n(chatMsg.bytes),
