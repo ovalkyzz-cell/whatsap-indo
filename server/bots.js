@@ -6,7 +6,8 @@
    - AI : ChatGPT, Gemini, Deepseek, Claude (kode muncul sebagai blok kode)
    - Downloader : unduh video TikTok/IG/YouTube/FB/X & lainnya
    - Email Generator : email sementara, inbox, OTP & baca pesan
-   - Tools : terjemah, cuaca, IP, QR, npm
+   - Tools : 15 tools (terjemah, cuaca, IP, QR, npm, kurs, kripto, gempa,
+     kodepos, nomor, negara, jarak, sholat, github, ocr) — halaman web /tools.html
    - Screenshot Kode : render kode jadi gambar PNG (codesnap)
    - Unduh Kode npm : unduh source code paket npm sebagai zip
    - Katalog Model AI : daftar model AI (mimo/models)
@@ -106,7 +107,7 @@ const BOTS = [
     id: 'bot-tools',
     email: 'tools@bot.rtc-core',
     name: 'Tools',
-    about: 'Terjemah · Cuaca · IP · QR · npm. Ketik "menu".',
+    about: '15 tools: Terjemah · Cuaca · Kurs · Kripto · Gempa · QR · npm · dll. Ketik "menu".',
     reply: toolsReply,
   },
   {
@@ -1613,12 +1614,14 @@ async function emailReply(raw) {
   return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}".`);
 }
 
-/* ---------- Bot 6: Tools (terjemah, cuaca, IP, QR, npm) ---------- */
+/* ---------- Bot 6: Tools (15 perintah: terjemah, cuaca, IP, QR, npm,
+   kurs, kripto, gempa, kodepos, nomor, negara, jarak, sholat, github, ocr)
+   — cermin dari halaman web /tools.html ---------- */
 
 const TOOLS_MENU = [
   '╭─────────────────────────────',
-  '│ TOOLS',
-  '│ Terjemah · Cuaca · IP · QR · npm',
+  '│ TOOLS · 15 PERINTAH',
+  '│ Terjemah · Cuaca · Kurs · Gempa · dll',
   '╰─────────────────────────────',
   '',
   'Perintah yang tersedia:',
@@ -1638,15 +1641,82 @@ const TOOLS_MENU = [
   '5. npm <paket>',
   '   Info paket dari registry npm.',
   '',
+  '6. kurs <dari> <ke> [jumlah]',
+  '   Konversi mata uang (contoh: USD IDR 100).',
+  '',
+  '7. kripto <koin>',
+  '   Harga kripto: BTC, ETH, SOL, DOGE, BNB.',
+  '',
+  '8. gempa',
+  '   Gempa bumi terkini (BMKG).',
+  '',
+  '9. kodepos <area>',
+  '   Cari kode pos sebuah wilayah.',
+  '',
+  '10. nomor <08xx>',
+  '   Info operator / prefix nomor HP.',
+  '',
+  '11. negara <nama>',
+  '   Data negara: populasi, PDB, wilayah.',
+  '',
+  '12. jarak <dari> <ke>',
+  '   Jarak antar dua kota.',
+  '',
+  '13. sholat <kota>',
+  '   Jadwal sholat kota hari ini.',
+  '',
+  '14. github <user>',
+  '   Profil GitHub: bio, followers, repo.',
+  '',
+  '15. ocr <url gambar>',
+  '   Baca teks di dalam sebuah gambar.',
+  '',
   'Contoh:',
   '  terjemah good morning',
   '  cuaca Jakarta',
-  '  ip 8.8.8.8',
-  '  qr https://whatsap-indo.vercel.app',
-  '  npm socket.io',
+  '  kurs USD IDR 100',
+  '  gempa',
+  '  jarak Jakarta Bandung',
+  '  github octocat',
   '',
+  'Versi web: buka /tools.html — 15 tools siap pakai lewat formulir.',
   'Balas "menu" kapan saja untuk membuka daftar perintah.',
 ].join('\n');
+
+// perintah tools 6–15: bentuk spesifikasi sama dengan bot generik sehingga
+// buildParams/genericLines dipakai ulang tanpa duplikasi kode
+const TOOLS_EXTRA = [
+  { words: ['kurs', 'konversi'], usage: 'kurs <dari> <ke> [jumlah]', example: 'kurs USD IDR 100',
+    desc: 'Konversi mata uang', params: ['from', 'to', 'amount'],
+    defaults: { from: 'USD', to: 'IDR', amount: '1' }, path: '/api/tools/currency', label: 'Kurs' },
+  { words: ['kripto', 'crypto'], usage: 'kripto <koin>', example: 'kripto bitcoin',
+    desc: 'Harga kripto (USD & IDR)', params: { coin: 'rest' },
+    path: '/api/info/crypto', label: 'Kripto' },
+  { words: ['gempa', 'quake'], usage: 'gempa', example: 'gempa',
+    desc: 'Gempa terkini (BMKG)', params: null,
+    path: '/api/info/gempa', label: 'Info Gempa' },
+  { words: ['kodepos'], usage: 'kodepos <area>', example: 'kodepos gambir',
+    desc: 'Cari kode pos', params: { q: 'rest' },
+    path: '/api/tools/kodepos', label: 'Kode Pos' },
+  { words: ['nomor', 'ceknomor'], usage: 'nomor <08xx>', example: 'nomor 081234567890',
+    desc: 'Info operator nomor', params: { nomor: 'rest' },
+    path: '/api/tools/cek-nomor', label: 'Cek Nomor' },
+  { words: ['negara'], usage: 'negara <nama>', example: 'negara Indonesia',
+    desc: 'Data sebuah negara', params: { name: 'rest' },
+    path: '/api/tools/countryInfo', label: 'Info Negara' },
+  { words: ['jarak'], usage: 'jarak <dari> <ke>', example: 'jarak Jakarta Bandung',
+    desc: 'Jarak dua kota', params: ['dari', 'ke'],
+    path: '/api/info/jarakkota', label: 'Jarak Antar Kota' },
+  { words: ['sholat', 'jadwalsholat'], usage: 'sholat <kota>', example: 'sholat Jakarta',
+    desc: 'Jadwal sholat kota', params: { kota: 'rest' },
+    path: '/api/info/jadwal-sholat', label: 'Jadwal Sholat' },
+  { words: ['github'], usage: 'github <user>', example: 'github octocat',
+    desc: 'Profil GitHub', params: { user: 'rest' },
+    path: '/api/stalk/github', label: 'Profil GitHub' },
+  { words: ['ocr', 'baca'], usage: 'ocr <url gambar>', example: 'ocr https://placehold.co/600x200.png?text=Halo',
+    desc: 'Baca teks dari gambar', params: { url: 'rest' },
+    path: '/api/tools/ocr', label: 'OCR Gambar' },
+];
 
 function pickResult(body) {
   if (!body || typeof body !== 'object') return {};
@@ -1787,7 +1857,31 @@ async function toolsReply(raw) {
     ].join('\n');
   }
 
-  return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}".`);
+  // perintah 6–15 dipetakan dari tabel: parameter dibangun dengan buildParams
+  // (sama dengan bot generik), hasil API dirapikan genericLines + blok JSON
+  const extra = TOOLS_EXTRA.find((c) => c.words.includes(cmd));
+  if (extra) {
+    const params = buildParams(extra, arg);
+    if (params === null) return errBlock(extra.usage, `Contoh: ${extra.example || extra.usage}`);
+    let body;
+    try {
+      body = await callApi(extra.path, params, { timeout: extra.timeout, method: extra.method });
+    } catch (e) {
+      return errBlock(extra.label || 'Tools', e.message);
+    }
+    if (body && (body.success === false || body.status === false)) {
+      return errBlock(extra.label || 'Tools', body.error || body.message || 'Data tidak ditemukan.');
+    }
+    let data = unwrapBody(body);
+    if (data === null) return errBlock(extra.label || 'Tools', 'Layanan tidak mengembalikan data.');
+    if (typeof data !== 'object') data = { hasil: data };
+    const out = { text: genericLines(extra.label, data) };
+    const media = mediaFromNode(data, 0) || mediaFromNode(body, 0);
+    if (media) out.media = media;
+    return out;
+  }
+
+  return errBlock('Perintah tidak dikenal', `Tidak ada perintah "${cmd}". Ketik "menu" untuk 15 perintah tools.`);
 }
 
 /* ---------- Bot 7: Screenshot Kode (PNG biner codesnap) ---------- */
@@ -3219,4 +3313,8 @@ module.exports = {
   peerInChat,
   reply,
   catalog,
+  // dipakai endpoint web /api/tools/web/* (halaman /tools.html) — kunci API
+  // tetap hanya ada di server, tidak pernah dikirim ke browser
+  callApi,
+  unwrapBody,
 };

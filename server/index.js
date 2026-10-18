@@ -623,6 +623,40 @@ app.get('/api/bots', auth.requireAuth, ah(async (req, res) => {
   res.json({ groups: visibleGroups, total, premiumOnly: true, access: await botAccess(req.user) });
 }));
 
+// ---------- tools web (/tools.html): 15 tools api-mazval ----------
+// Daftar & eksekusi dilayani server; kunci API tidak pernah menyentuh browser.
+const webtools = require('./toolscatalog');
+const toolsLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+
+app.get('/api/tools/web/list', auth.requireAuth, ah(async (req, res) => {
+  res.json({
+    ...webtools.list(),
+    premiumOnly: true,
+    access: await botAccess(req.user),
+  });
+}));
+
+app.post('/api/tools/web/run', auth.requireAuth, toolsLimiter, ah(async (req, res) => {
+  if (!canUseBots(req.user)) {
+    return res.status(403).json({
+      error: '15 tools ini khusus admin & pengguna premium (sama seperti bot di chat).',
+      locked: true,
+      plans: await settings.getPlans(),
+    });
+  }
+  // kuota harian yang sama dengan pemakaian bot di chat
+  try {
+    await consumeBotQuota(req.user);
+  } catch (err) {
+    return res.status(429).json({ error: err.message, quota: true });
+  }
+  const out = await webtools.run(
+    req.body && req.body.tool,
+    (req.body && req.body.inputs) || {}
+  );
+  res.json({ ok: true, ...out });
+}));
+
 app.get('/api/users/search', auth.requireAuth, ah(async (req, res) => {
   if (!floodGuard(`search:${req.user.id}`, 150, 60_000)) {
     return res.status(429).json({ error: 'Terlalu banyak pencarian. Coba lagi sebentar lagi.' });

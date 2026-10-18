@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="id" data-theme="dark" data-accent="mawar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111b21">
+<meta name="description" content="RTC-Core Tools — 15 tools siap pakai: terjemah, cuaca, kurs, kripto, gempa, QR, OCR, GitHub & lainnya.">
+<title>RTC-Core · 15 Tools</title>
+<link rel="icon" type="image/png" href="/icons/favicon-32.png">
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/theme-rtc.css">
+<script>
+/* terapkan tema & aksen tersimpan sebelum paint (tanpa kedip) */
+(function () {
+  try {
+    document.documentElement.setAttribute('data-theme', localStorage.getItem('wa_theme') || 'dark');
+    document.documentElement.setAttribute('data-accent', localStorage.getItem('wa_accent') || 'mawar');
+  } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+})();
+</script>
+<style>
+  .tl-page { min-height: 100%; display: flex; flex-direction: column; background: var(--wa-bg); }
+
+  .tl-top {
+    position: sticky; top: 0; z-index: 40;
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 20px; background: var(--wa-glass, var(--wa-header));
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--wa-border);
+  }
+  .tl-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--wa-text); font-weight: 700; letter-spacing: -.2px; }
+  .tl-brand .tl-logo {
+    width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(145deg, var(--wa-teal), var(--wa-teal-deep, var(--wa-teal-dark)));
+    color: #fff; font-size: 17px; box-shadow: 0 6px 16px rgba(var(--wa-accent-rgb, 244, 63, 94), .32);
+  }
+  .tl-brand small { display: block; font-size: 11px; font-weight: 500; color: var(--wa-text-2); }
+  .tl-top .spacer { flex: 1; }
+  .tl-back {
+    display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
+    color: var(--wa-text-2); font-size: 13.5px; font-weight: 600;
+    padding: 9px 14px; border: 1px solid var(--wa-border); border-radius: 22px;
+    background: var(--wa-panel); transition: .15s;
+  }
+  .tl-back:hover { color: var(--wa-accent-text); border-color: var(--wa-accent-text); transform: translateY(-1px); }
+  .tl-user { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: var(--wa-text-2); }
+  .tl-user b { color: var(--wa-text); font-weight: 600; }
+  .tl-avatar {
+    width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--wa-avatar-bg); color: var(--wa-text); font-weight: 700; font-size: 13px; overflow: hidden;
+  }
+  .tl-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+  .tl-hero { max-width: 1180px; width: 100%; margin: 0 auto; padding: 34px 20px 6px; text-align: center; }
+  .tl-hero h1 { font-size: clamp(24px, 4vw, 34px); font-weight: 700; letter-spacing: -.6px; }
+  .tl-hero h1 em { font-style: normal; color: var(--wa-accent-text); }
+  .tl-hero p { margin-top: 9px; color: var(--wa-text-2); font-size: 14.5px; line-height: 1.55; }
+  .tl-stats { display: flex; justify-content: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .tl-stat {
+    font-size: 12.5px; color: var(--wa-text-2); background: var(--wa-chip);
+    border: 1px solid var(--wa-border); padding: 6px 12px; border-radius: 20px;
+  }
+  .tl-stat b { color: var(--wa-accent-text); }
+
+  .tl-banner {
+    max-width: 1180px; width: calc(100% - 40px); margin: 16px auto 0;
+    display: flex; gap: 13px; align-items: flex-start;
+    padding: 14px 16px; border-radius: 14px; font-size: 13.5px; line-height: 1.5;
+    background: var(--wa-panel); border: 1px solid var(--wa-border); color: var(--wa-text-2);
+    animation: fadeUp .35s var(--ease-out) both;
+  }
+  .tl-banner .tl-bico { font-size: 18px; line-height: 1.3; }
+  .tl-banner b { color: var(--wa-text); }
+  .tl-banner.error { border-color: rgba(213, 80, 79, .5); }
+  .tl-banner.lock { border-color: var(--wa-dash); background: var(--wa-overlay, var(--wa-panel)); }
+  .tl-banner .tl-bplans { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .tl-banner .tl-bplan {
+    font-size: 12px; padding: 5px 11px; border-radius: 16px; font-weight: 600;
+    background: var(--wa-chip); border: 1px solid var(--wa-border); color: var(--wa-text);
+  }
+  .tl-banner .tl-bplan small { color: var(--wa-text-2); font-weight: 500; }
+  .tl-banner .btn-mini {
+    margin-top: 10px; display: inline-flex; align-items: center; gap: 7px;
+    background: var(--wa-teal-dark); color: #fff; font-size: 13px; font-weight: 600;
+    padding: 9px 16px; border-radius: 20px; text-decoration: none; transition: .15s;
+  }
+  .tl-banner .btn-mini:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+  .tl-cats {
+    max-width: 1180px; width: 100%; margin: 20px auto 0; padding: 0 20px;
+    display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+  }
+  .tl-cat {
+    font-size: 13px; font-weight: 600; color: var(--wa-text-2);
+    background: var(--wa-chip); border: 1px solid var(--wa-border);
+    padding: 8px 15px; border-radius: 20px; transition: .15s;
+  }
+  .tl-cat:hover { color: var(--wa-text); border-color: var(--wa-border-strong); }
+  .tl-cat.active { color: #fff; background: var(--wa-teal-dark); border-color: transparent; }
+
+  .tl-grid {
+    max-width: 1180px; width: 100%; margin: 18px auto 0; padding: 0 20px 40px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px;
+  }
+  .tl-card {
+    display: flex; flex-direction: column; gap: 10px; text-align: left;
+    background: var(--wa-panel); border: 1px solid var(--wa-border);
+    border-radius: 16px; padding: 17px; transition: transform .16s, border-color .16s, box-shadow .16s;
+    animation: fadeUp .4s var(--ease-out) both;
+  }
+  .tl-card:hover {
+    transform: translateY(-3px); border-color: var(--wa-accent-text);
+    box-shadow: 0 12px 26px rgba(0, 0, 0, .22);
+  }
+  .tl-card-top { display: flex; align-items: center; gap: 11px; }
+  .tl-ico {
+    width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center;
+    font-size: 20px; background: var(--wa-overlay, var(--wa-chip));
+    border: 1px solid var(--wa-border); flex-shrink: 0;
+  }
+  .tl-card h3 { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
+  .tl-badge { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--wa-accent-text); }
+  .tl-card p { font-size: 13px; color: var(--wa-text-2); line-height: 1.5; flex: 1; }
+  .tl-card .tl-go {
+    display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 13px; font-weight: 600; color: var(--wa-accent-text);
+    border-top: 1px dashed var(--wa-dash); padding-top: 11px;
+  }
+  .tl-card .tl-go span:last-child { font-size: 17px; transition: transform .15s; }
+  .tl-card:hover .tl-go span:last-child { transform: translateX(4px); }
+
+  .tl-empty { grid-column: 1 / -1; text-align: center; color: var(--wa-text-2); padding: 40px 0; font-size: 14px; }
+
+  /* ---------- modal tool ---------- */
+  .tl-modal {
+    position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+    padding: 18px; background: rgba(4, 8, 12, .72); backdrop-filter: blur(3px);
+    animation: tlFade .18s ease both;
+  }
+  .tl-sheet {
+    width: 100%; max-width: 560px; max-height: min(88vh, 780px); overflow: auto;
+    background: var(--wa-panel); border: 1px solid var(--wa-border);
+    border-radius: 18px; box-shadow: var(--shadow); animation: tlPop .22s var(--ease-out) both;
+  }
+  @keyframes tlFade { from { opacity: 0; } }
+  @keyframes tlPop { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+  .tl-sheet-head {
+    position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px;
+    padding: 16px 18px; background: var(--wa-panel); border-bottom: 1px solid var(--wa-border);
+  }
+  .tl-sheet-head .tl-ico { width: 40px; height: 40px; font-size: 19px; }
+  .tl-sheet-head h2 { font-size: 16.5px; font-weight: 700; }
+  .tl-sheet-head p { font-size: 12.5px; color: var(--wa-text-2); margin-top: 2px; }
+  .tl-sheet-head .spacer { flex: 1; }
+  .tl-x {
+    width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 19px; color: var(--wa-text-2); background: var(--wa-bg); transition: .15s;
+  }
+  .tl-x:hover { color: #fff; background: var(--wa-teal-dark); }
+  .tl-sheet-body { padding: 18px; display: flex; flex-direction: column; gap: 15px; }
+
+  .tl-field { display: flex; flex-direction: column; gap: 6px; }
+  .tl-field label { font-size: 12.5px; font-weight: 600; color: var(--wa-text-2); }
+  .tl-field label i { color: var(--wa-accent-text); font-style: normal; }
+  .tl-field input {
+    padding: 12px 14px; border: 1px solid var(--wa-border); border-radius: 10px;
+    background: var(--wa-input-bg); color: var(--wa-text); outline: none;
+    font-size: 14.5px; transition: border-color .15s, box-shadow .15s;
+  }
+  .tl-field input:focus { border-color: var(--wa-teal); box-shadow: 0 0 0 3px var(--wa-hover-soft); }
+  .tl-field .tl-hint { font-size: 11.5px; color: var(--wa-text-2); }
+  .tl-field .tl-hint code { color: var(--wa-accent-text); font-family: inherit; font-weight: 600; }
+
+  .tl-run {
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    background: var(--wa-teal-dark); color: #fff; font-size: 14.5px; font-weight: 700;
+    padding: 13px 18px; border-radius: 26px; transition: filter .15s, transform .15s;
+  }
+  .tl-run:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .tl-run[disabled] { opacity: .65; pointer-events: none; }
+  .tl-spin {
+    width: 15px; height: 15px; border: 2px solid rgba(255, 255, 255, .35);
+    border-top-color: #fff; border-radius: 50%; animation: tlRot .7s linear infinite;
+  }
+  @keyframes tlRot { to { transform: rotate(360deg); } }
+
+  .tl-msg { font-size: 13.5px; line-height: 1.55; border-radius: 12px; padding: 12px 14px; }
+  .tl-msg.err { background: rgba(213, 80, 79, .12); border: 1px solid rgba(213, 80, 79, .45); color: var(--wa-danger-text, #ff8a80); }
+  .tl-msg.info { background: var(--wa-overlay); border: 1px dashed var(--wa-dash); color: var(--wa-text-2); }
+
+  .tl-result { border-top: 1px dashed var(--wa-dash); padding-top: 15px; display: flex; flex-direction: column; gap: 13px; }
+  .tl-result-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--wa-accent-text); text-transform: uppercase; letter-spacing: .5px; }
+  .tl-kv { display: grid; grid-template-columns: minmax(96px, auto) 1fr; gap: 7px 14px; font-size: 13.5px; }
+  .tl-kv dt { color: var(--wa-text-2); font-weight: 600; }
+  .tl-kv dd { color: var(--wa-text); word-break: break-word; line-height: 1.45; }
+  .tl-kv dd a { color: var(--wa-accent-text); }
+  .tl-list { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: var(--wa-text); }
+  .tl-list li { list-style: none; padding-left: 16px; position: relative; line-height: 1.45; }
+  .tl-list li::before { content: '•'; position: absolute; left: 2px; color: var(--wa-accent-text); font-weight: 800; }
+  .tl-shot {
+    width: 100%; border-radius: 12px; border: 1px solid var(--wa-border);
+    background: var(--wa-chip); display: block; max-height: 300px; object-fit: contain;
+  }
+  .tl-shot-link { font-size: 12.5px; color: var(--wa-accent-text); text-decoration: none; }
+  details.tl-json { border: 1px solid var(--wa-border); border-radius: 12px; background: var(--wa-bg); overflow: hidden; }
+  details.tl-json summary {
+    cursor: pointer; padding: 10px 14px; font-size: 12.5px; font-weight: 600;
+    color: var(--wa-text-2); user-select: none;
+  }
+  details.tl-json summary:hover { color: var(--wa-accent-text); }
+  details.tl-json pre {
+    margin: 0; padding: 13px 14px; border-top: 1px solid var(--wa-border);
+    font-size: 12px; line-height: 1.55; overflow: auto; max-height: 300px;
+    color: var(--wa-text); font-family: "Cascadia Code", Consolas, "SF Mono", monospace;
+  }
+
+  .tl-foot {
+    margin-top: auto; padding: 18px 20px 26px; text-align: center;
+    font-size: 12px; color: var(--wa-text-2); border-top: 1px solid var(--wa-border);
+  }
+  .tl-foot b { color: var(--wa-accent-text); font-weight: 600; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--wa-toast); color: #fff; padding: 10px 18px; border-radius: 8px;
+    z-index: 120; box-shadow: var(--shadow); max-width: 90vw; font-size: 13.5px;
+    animation: tlToastIn .2s ease;
+  }
+  @keyframes tlToastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  @media (max-width: 640px) {
+    .tl-user span { display: none; }
+    .tl-hero { padding-top: 26px; }
+    .tl-grid { grid-template-columns: 1fr 1fr; gap: 11px; padding-left: 14px; padding-right: 14px; }
+    .tl-card { padding: 14px; }
+    .tl-card p { font-size: 12px; }
+    .tl-cats { padding: 0 14px; justify-content: flex-start; overflow-x: auto; flex-wrap: nowrap; }
+    .tl-cat { white-space: nowrap; }
+    .tl-banner { width: calc(100% - 28px); }
+  }
+  @media (max-width: 420px) {
+    .tl-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="tl-page">
+  <header class="tl-top">
+    <a class="tl-brand" href="/">
+      <span class="tl-logo">⚡</span>
+      <span>RTC-Core Tools<small>15 tools · api-mazval</small></span>
+    </a>
+    <div class="spacer"></div>
+    <div class="tl-user" id="userBox"><span>Memuat…</span></div>
+    <a class="tl-back" href="/" title="Kembali ke aplikasi RTC-Core">← Buka Aplikasi</a>
+  </header>
+
+  <section class="tl-hero">
+    <h1><em>15 Tools</em> siap pakai dalam satu halaman</h1>
+    <p>Terjemah, cuaca, kurs, kripto, gempa, kode pos, cek nomor, jarak kota, jadwal sholat, GitHub, QR, OCR, dan lainnya —
+       diproses server lewat <b>api-mazval</b>, aman tanpa kunci API di browser.</p>
+    <div class="tl-stats">
+      <span class="tl-stat"><b id="stTotal">15</b> tools</span>
+      <span class="tl-stat"><b id="stCats">—</b> kategori</span>
+      <span class="tl-stat">kuota bot harian bersama</span>
+    </div>
+  </section>
+
+  <div id="banners"></div>
+  <nav class="tl-cats" id="cats" aria-label="Kategori tool"></nav>
+  <main class="tl-grid" id="grid" aria-live="polite"></main>
+
+  <footer class="tl-foot">
+    RTC-Core • Tools premium untuk admin &amp; pengguna premium • sumber data <b>api-mazval.zone.id</b>
+    <br>© mazval-developer-java
+  </footer>
+</div>
+
+<div class="tl-modal hidden" id="modal" role="dialog" aria-modal="true"></div>
+
+<script>
+'use strict';
+/* Halaman Tools RTC-Core: memuat daftar dari GET /api/tools/web/list dan
+   menjalankan tool lewat POST /api/tools/web/run (autentikasi Bearer token). */
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const state = {
+  token: localStorage.getItem('wa_token') || null,
+  me: null,
+  data: null,      // respons /api/tools/web/list
+  active: 'Semua',
+  tool: null,      // tool yang sedang dibuka di modal
+  lastResult: null,
+};
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    method: opts.method || 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}),
+    },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  return { status: res.status, data };
+}
+
+function toast(msg) {
+  const old = document.querySelector('.toast');
+  if (old) old.remove();
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+/* ---------- banner (login / terkunci / kesalahan) ---------- */
+function bannerHtml(kind, icon, html, extra) {
+  return '<div class="tl-banner ' + kind + '"><span class="tl-bico">' + icon + '</span><div>' + html + (extra || '') + '</div></div>';
+}
+
+function renderBanners() {
+  const box = $('banners');
+  const parts = [];
+
+  if (!state.token) {
+    parts.push(bannerHtml('lock', '🔑',
+      '<b>Masuk dulu untuk memakai 15 tools ini.</b><br>Silakan login atau daftar di aplikasi RTC-Core, lalu kembali ke halaman ini.',
+      '<a class="tl-mini btn-mini" href="/">Masuk di RTC-Core →</a>'));
+  } else if (state.data && state.data.access && !state.data.access.active && !state.data.access.admin) {
+    parts.push(bannerHtml('lock', '🔒',
+      '<b>Tools ini khusus admin &amp; pengguna premium</b> (sama seperti bot di chat).<br>' +
+      'Penggunaan tools memakai kuota bot harian dari paketmu.',
+      '<div class="tl-bplans" id="lockPlans"></div>' +
+      '<a class="btn-mini" href="/#plans">Lihat Paket &amp; Harga</a>'));
+  }
+
+  box.innerHTML = parts.join('');
+  if (parts.length && $('lockPlans')) loadPlans($('lockPlans'));
+}
+
+async function loadPlans(el) {
+  const r = await api('/api/plans').catch(() => null);
+  const plans = (r && r.data && Array.isArray(r.data.plans)) ? r.data.plans : [];
+  if (!plans.length) return;
+  el.innerHTML = plans.map((p) =>
+    '<span class="tl-bplan">' + esc(p.label) +
+    '<small> · ' + (p.price ? 'Rp' + Number(p.price).toLocaleString('id-ID') + '/' : '') + (Number(p.days) || 0) + ' hari</small></span>'
+  ).join('');
+}
+
+/* ---------- kartu & kategori ---------- */
+function allTools() {
+  if (!state.data || !state.data.tools) return [];
+  return state.data.categories.flatMap((c) => state.data.tools[c] || []);
+}
+
+function renderCats() {
+  const cats = ['Semua'].concat(state.data.categories || []);
+  $('cats').innerHTML = cats.map((c) =>
+    '<button class="tl-cat' + (c === state.active ? ' active' : '') + '" data-cat="' + esc(c) + '" type="button">' + esc(c) + '</button>'
+  ).join('');
+  $('cats').querySelectorAll('.tl-cat').forEach((btn) => btn.addEventListener('click', () => {
+    state.active = btn.dataset.cat;
+    renderCats();
+    renderGrid();
+  }));
+}
+
+function renderGrid() {
+  const list = state.active === 'Semua'
+    ? allTools()
+    : ((state.data.tools[state.active]) || []);
+  const grid = $('grid');
+  if (!list.length) {
+    grid.innerHTML = '<div class="tl-empty">Tidak ada tool pada kategori ini.</div>';
+    return;
+  }
+  grid.innerHTML = list.map((t, i) => (
+    '<button class="tl-card" data-tool="' + esc(t.id) + '" type="button" style="animation-delay:' + Math.min(i * 0.04, 0.5) + 's">' +
+      '<div class="tl-card-top">' +
+        '<span class="tl-ico">' + esc(t.icon || '🛠️') + '</span>' +
+        '<span><h3>' + esc(t.name) + '</h3><span class="tl-badge">' + esc(t.category || '') + '</span></span>' +
+      '</div>' +
+      '<p>' + esc(t.desc || '') + '</p>' +
+      '<span class="tl-go"><span>' + (t.fields && t.fields.length ? 'Isi formulir &amp; jalankan' : 'Ambil data terkini') + '</span><span>→</span></span>' +
+    '</button>'
+  )).join('');
+  grid.querySelectorAll('.tl-card').forEach((card) =>
+    card.addEventListener('click', () => openTool(card.dataset.tool)));
+}
+
+/* ---------- modal tool ---------- */
+function openTool(id) {
+  const tool = allTools().find((t) => t.id === id);
+  if (!tool) return;
+  state.tool = tool;
+  state.lastResult = null;
+
+  const fields = (tool.fields || []).map((f) => {
+    const datalist = f.options && f.options.length
+      ? '<datalist id="dl_' + esc(f.key) + '">' + f.options.map((o) => '<option value="' + esc(o) + '"></option>').join('') + '</datalist>'
+      : '';
+    return '<div class="tl-field">' +
+      '<label for="f_' + esc(f.key) + '">' + esc(f.label) + (f.required ? ' <i>*</i>' : '') + '</label>' +
+      '<input id="f_' + esc(f.key) + '" name="' + esc(f.key) + '"' +
+        ' type="' + (f.type === 'number' ? 'number' : 'text') + '" inputmode="' + (f.type === 'number' ? 'decimal' : 'text') + '"' +
+        ' placeholder="' + esc(f.placeholder || '') + '"' + (f.value ? ' value="' + esc(f.value) + '"' : '') +
+        (f.required ? ' required' : '') +
+        (f.options && f.options.length ? ' list="dl_' + esc(f.key) + '"' : '') + '>' + datalist +
+      '</div>';
+  }).join('');
+
+  const noField = !(tool.fields || []).length;
+
+  $('modal').innerHTML =
+    '<div class="tl-sheet">' +
+      '<div class="tl-sheet-head">' +
+        '<span class="tl-ico">' + esc(tool.icon || '🛠️') + '</span>' +
+        '<div><h2>' + esc(tool.name) + '</h2><p>' + esc(tool.desc || '') + '</p></div>' +
+        '<div class="spacer"></div>' +
+        '<button class="tl-x" id="closeModal" type="button" aria-label="Tutup">×</button>' +
+      '</div>' +
+      '<div class="tl-sheet-body">' +
+        '<form id="toolForm" autocomplete="off">' +
+          fields +
+          (noField ? '<div class="tl-msg info">Tool ini tidak memerlukan isian — tekan tombol di bawah untuk mengambil data terkini.</div>' : '') +
+          (tool.example ? '<div class="tl-field"><span class="tl-hint">Contoh: <code>' + esc(tool.example) + '</code></span></div>' : '') +
+          '<button class="tl-run" id="runBtn" type="submit"><span>Jalankan Tool</span> →</button>' +
+        '</form>' +
+        '<div id="toolOut"></div>' +
+      '</div>' +
+    '</div>';
+
+  $('modal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  $('closeModal').addEventListener('click', closeModal);
+  $('toolForm').addEventListener('submit', onRun);
+  const first = document.querySelector('#toolForm input');
+  if (first) setTimeout(() => first.focus(), 60);
+}
+
+function closeModal() {
+  $('modal').classList.add('hidden');
+  $('modal').innerHTML = '';
+  document.body.style.overflow = '';
+  state.tool = null;
+}
+
+$('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.tool) closeModal(); });
+
+/* ---------- jalankan ---------- */
+async function onRun(e) {
+  e.preventDefault();
+  const tool = state.tool;
+  if (!tool) return;
+
+  const inputs = {};
+  for (const f of (tool.fields || [])) {
+    const el = $('f_' + f.key);
+    if (el) inputs[f.key] = el.value;
+  }
+
+  const btn = $('runBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="tl-spin"></span><span>Memproses…</span>';
+  $('toolOut').innerHTML = '';
+
+  try {
+    const r = await api('/api/tools/web/run', { method: 'POST', body: { tool: tool.id, inputs } });
+    const body = r.data || {};
+    if (r.status === 401) {
+      $('toolOut').innerHTML = '<div class="tl-msg err">Sesi Anda berakhir. Masuk kembali lewat aplikasi RTC-Core, lalu muat ulang halaman ini.</div>';
+    } else if (r.status === 403 && body.locked) {
+      const plans = Array.isArray(body.plans) ? body.plans : [];
+      $('toolOut').innerHTML = '<div class="tl-msg err"><b>Terblokir:</b> ' + esc(body.error || 'Tools khusus premium.') +
+        (plans.length ? '<div class="tl-bplans" style="display:flex;flex-wrap:wrap;gap:7px;margin-top:9px">' +
+          plans.map((p) => '<span class="tl-bplan" style="font-size:12px;padding:5px 11px;border-radius:16px;background:var(--wa-chip);border:1px solid var(--wa-border)">' +
+            esc(p.label) + '<small style="color:var(--wa-text-2)"> · ' + (p.price ? 'Rp' + Number(p.price).toLocaleString('id-ID') + '/' : '') + (Number(p.days) || 0) + ' hari</small></span>').join('') +
+          '</div>' : '') +
+        '<div style="margin-top:10px"><a class="btn-mini" style="margin:0;display:inline-flex;align-items:center;gap:7px;background:var(--wa-teal-dark);color:#fff;font-size:13px;font-weight:600;padding:9px 16px;border-radius:20px;text-decoration:none" href="/#plans">Lihat Paket &amp; Harga</a></div></div>';
+    } else if (r.status === 429) {
+      $('toolOut').innerHTML = '<div class="tl-msg err">' + esc(body.error || 'Terlalu banyak permintaan. Coba lagi nanti.') + '</div>';
+    } else if (!body.ok) {
+      $('toolOut').innerHTML = '<div class="tl-msg err">' + esc(body.error || 'Permintaan gagal diproses.') + '</div>';
+    } else {
+      state.lastResult = { tool: body.tool, name: body.name, data: body.data };
+      $('toolOut').innerHTML = '<div class="tl-result">' + renderResult(body.data) + '</div>';
+      toast('✓ ' + (body.name || 'Tool') + ' selesai');
+    }
+  } catch (err) {
+    $('toolOut').innerHTML = '<div class="tl-msg err">Gagal menghubungi server: ' + esc(err.message || 'jaringan bermasalah') + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span>Jalankan Tool</span> →';
+  }
+}
+
+/* ---------- render hasil ---------- */
+function flatten(obj, prefix, out, depth) {
+  out = out || [];
+  depth = depth || 0;
+  if (depth > 4) return out;
+  for (const [k, v] of Object.entries(obj || {})) {
+    const key = prefix ? prefix + '.' + k : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flatten(v, key, out, depth + 1);
+    else out.push([key, v]);
+  }
+  return out;
+}
+
+const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp)(\?|#|$)/i;
+const IMAGE_HOST_RE = /api\.qrserver\.com|image\.thum\.io|placehold\.co|githubusercontent\.com|api\.brattxt\.xyz/i;
+
+function findImage(node, depth) {
+  if (!node || depth > 4) return null;
+  if (typeof node === 'string') {
+    if (/^https?:\/\//i.test(node) && (IMAGE_RE.test(node) || IMAGE_HOST_RE.test(node))) return node;
+    return null;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) { const u = findImage(item, depth + 1); if (u) return u; }
+    return null;
+  }
+  if (typeof node === 'object') {
+    for (const v of Object.values(node)) { const u = findImage(v, depth + 1); if (u) return u; }
+  }
+  return null;
+}
+
+function prettyValue(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Ya' : 'Tidak';
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString('id-ID') : String(v);
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'object') return JSON.stringify(v);
+  const s = String(v);
+  if (/^https?:\/\//i.test(s)) return '<a href="' + esc(s) + '" target="_blank" rel="noopener noreferrer">' + esc(s) + '</a>';
+  return esc(s);
+}
+
+function renderResult(data) {
+  const img = findImage(data, 0);
+  const rows = flatten(data).filter(([, v]) => {
+    if (img) return !(typeof v === 'string' && v === img);
+    return true;
+  });
+
+  const kv = rows.length
+    ? '<dl class="tl-kv">' + rows.slice(0, 20).map(([k, v]) =>
+        '<dt>' + esc(k.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())) + '</dt><dd>' + prettyValue(v) + '</dd>').join('') + '</dl>'
+    : '';
+
+  const lists = [];
+  const walkLists = (node, depth) => {
+    if (!node || depth > 3) return;
+    if (Array.isArray(node) && node.length && typeof node[0] === 'object') {
+      lists.push(node);
+      return;
+    }
+    if (node && typeof node === 'object') for (const v of Object.values(node)) walkLists(v, depth + 1);
+  };
+  walkLists(data, 0);
+  const listHtml = lists.slice(0, 1).map((items) => {
+    const shown = items.slice(0, 8).map((item) => {
+      if (item && typeof item === 'object') {
+        const parts = flatten(item).slice(0, 4).map(([k, v]) =>
+          esc(k.replace(/_/g, ' ')) + ' ' + (typeof v === 'object' ? esc(JSON.stringify(v)) : esc(String(v))));
+        return '<li>' + parts.join(' · ') + '</li>';
+      }
+      return '<li>' + esc(String(item)) + '</li>';
+    }).join('');
+    const more = items.length > 8 ? '<li>… +' + (items.length - 8) + ' lainnya</li>' : '';
+    return '<ul class="tl-list">' + shown + more + '</ul>';
+  }).join('');
+
+  let json = '';
+  try {
+    const text = JSON.stringify(data, null, 2);
+    if (text && text !== '{}') {
+      json = '<details class="tl-json"><summary>Respons mentah (JSON)</summary><pre>' + esc(text) + '</pre></details>';
+    }
+  } catch (e) { /* objek tak serializable */ }
+
+  return (
+    '<div class="tl-result-title">✓ Hasil</div>' +
+    (img ? '<a href="' + esc(img) + '" target="_blank" rel="noopener noreferrer"><img class="tl-shot" src="' + esc(img) + '" alt="Hasil tool" loading="lazy"></a>' +
+            '<a class="tl-shot-link" href="' + esc(img) + '" target="_blank" rel="noopener noreferrer">Buka gambar di tab baru →</a>' : '') +
+    kv + listHtml + json
+  );
+}
+
+/* ---------- muat awal ---------- */
+async function init() {
+  const list = await api('/api/tools/web/list');
+
+  if (list.status === 401) {
+    state.token = null;
+    $('userBox').innerHTML = '<span>Belum masuk</span>';
+    renderBanners();
+    // daftar tetap dibuka agar pengunjung melihat isi 15 tools
+    state.data = { total: 15, categories: [], tools: {}, access: null };
+    $('grid').innerHTML = '<div class="tl-empty">Masuk untuk memuat daftar 15 tools.</div>';
+    return;
+  }
+  if (list.status !== 200 || !list.data || !list.data.tools) {
+    $('userBox').innerHTML = '<span>Gagal memuat</span>';
+    $('grid').innerHTML = '<div class="tl-empty">Daftar tools tidak dapat dimuat. Coba muat ulang halaman.</div>';
+    return;
+  }
+
+  state.data = list.data;
+  $('stTotal').textContent = list.data.total || 15;
+  $('stCats').textContent = (list.data.categories || []).length;
+  renderBanners();
+  renderCats();
+  renderGrid();
+
+  const me = await api('/api/auth/me').catch(() => null);
+  if (me && me.data && me.data.user) {
+    state.me = me.data.user;
+    const name = state.me.name || state.me.email || 'Pengguna';
+    const initial = String(name).trim().charAt(0).toUpperCase() || 'U';
+    $('userBox').innerHTML =
+      '<span><b>' + esc(name) + '</b>' + (state.me.premium && state.me.premium.active ? ' · Premium' : '') + '</span>' +
+      '<span class="tl-avatar">' + (state.me.avatar
+        ? '<img src="' + esc(state.me.avatar) + '" alt="">'
+        : esc(initial)) + '</span>';
+  } else {
+    $('userBox').innerHTML = '<span>Terhubung</span>';
+  }
+}
+
+init();
+</script>
+</body>
+</html>

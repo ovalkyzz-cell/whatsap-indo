@@ -55,6 +55,29 @@ const fakeResponses = {
   '/api/tools/translate': { status: true, result: { translation: 'selamat pagi', source: 'en', target: 'id', match: 1 } },
   '/api/tools/ip-lookup': { success: true, data: { ip: '1.1.1.1', country: 'Australia', isp: 'Cloudflare' } },
   '/api/tools/ocr': { success: true, data: { url: 'https://placehold.co/600x200.png?text=Halo+Dunia', text: 'Halo Dunia', confidence: 0.98 } },
+  // bot-tools 15: mock endpoint perintah 6–15 (kurs, kripto, gempa, kodepos,
+  // negara, jarak, sholat, github, qr & npm dipakai halaman /tools.html juga)
+  '/api/tools/qr-create': { status: true, result: {
+    url: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=halo', text: 'halo', size: '400x400' } },
+  '/api/tools/npmjs': { status: true, result: {
+    name: 'socket.io', version: '4.8.1', description: 'Realtime bidirectional event-based', license: 'MIT' } },
+  '/api/info/crypto': { status: true, result: {
+    coin: 'bitcoin', USD: 100000, IDR: 1600000000, sumber: 'CoinGecko' } },
+  '/api/info/gempa': { status: true, result: {
+    tanggal: '18-10-2026', jam: '10:30:00 WIB', magnitude: '4.5', kedalaman: '10 km',
+    wilayah: '54 km Barat Daya Pacitan', koordinat: '-8.21,111.02', potensi: 'Tidak berpotensi tsunami' } },
+  '/api/tools/kodepos': { status: true, result: { query: 'gambir', total: 2, data: [
+    { kodepos: '10110', desa: 'Gambir', kecamatan: 'Gambir', kota: 'Jakarta Pusat', provinsi: 'DKI Jakarta' },
+    { kodepos: '10120', desa: 'Cideng', kecamatan: 'Gambir', kota: 'Jakarta Pusat', provinsi: 'DKI Jakarta' } ] } },
+  '/api/tools/countryInfo': { status: true, result: {
+    name: 'Indonesia', region: 'East Asia & Pacific', population: 275000000,
+    capital: 'Jakarta', currency: 'IDR' } },
+  '/api/info/jadwal-sholat': { status: true, result: {
+    kota: 'Jakarta', date: '18-10-2026', imsak: '04:30', subuh: '04:40', dzuhur: '11:50',
+    ashar: '15:10', maghrib: '17:50', isya: '19:00' } },
+  '/api/stalk/github': { status: true, result: {
+    username: 'octocat', name: 'The Octocat', bio: 'Mascot', repos: 8,
+    followers: 14000, following: 9, html_url: 'https://github.com/octocat' } },
   '/api/s/8font': { status: true, result: { fonts: [{ style: 'bold', text: '𝐥𝐨𝐯𝐞' }] } },
   // 2 bot data baru: wilayah Indonesia & simbol provinsi
   '/api/info/wilayah': { success: true, endpoint: '/api/info/wilayah', type: 'provinces',
@@ -358,6 +381,99 @@ const bots = require(path);
 
   const tl = await bots.reply({ id: 'bot-tools' }, 'menu');
   ok(tl.includes('Terjemah') && tl.includes('cuaca'), 'Tools: menu lengkap');
+  ok(tl.includes('TOOLS · 15 PERINTAH') && tl.includes('15. ocr') && tl.includes('tools.html'),
+    'Tools: menu menampilkan 15 perintah + tautan versi web');
+
+  // ---- bot-tools: 10 perintah baru (6–15) lewat TOOLS_EXTRA ----
+  const tKurs = await bots.reply({ id: 'bot-tools' }, 'kurs USD IDR 100');
+  ok(typeof tKurs === 'object' && lastCall().path === '/api/tools/currency'
+    && lastCall().params.from === 'USD' && lastCall().params.to === 'IDR'
+    && lastCall().params.amount === '100' && tKurs.text.includes('✅ Kurs'),
+    'Tools: "kurs USD IDR 100" -> /api/tools/currency + hasil rapi');
+
+  const tKripto = await bots.reply({ id: 'bot-tools' }, 'kripto bitcoin');
+  ok(typeof tKripto === 'object' && lastCall().path === '/api/info/crypto'
+    && lastCall().params.coin === 'bitcoin' && tKripto.text.includes('Kripto'),
+    'Tools: "kripto bitcoin" -> /api/info/crypto');
+
+  const tGempa = await bots.reply({ id: 'bot-tools' }, 'gempa');
+  ok(typeof tGempa === 'object' && lastCall().path === '/api/info/gempa'
+    && tGempa.text.includes('Info Gempa') && tGempa.text.includes('```json'),
+    'Tools: "gempa" -> /api/info/gempa + blok JSON rapi');
+
+  const tKodepos = await bots.reply({ id: 'bot-tools' }, 'kodepos gambir');
+  ok(typeof tKodepos === 'object' && lastCall().path === '/api/tools/kodepos'
+    && lastCall().params.q === 'gambir' && tKodepos.text.includes('10110'),
+    'Tools: "kodepos gambir" -> /api/tools/kodepos + daftar kode');
+
+  const tNomor = await bots.reply({ id: 'bot-tools' }, 'nomor 0812');
+  ok(typeof tNomor === 'string' && /Nomor tidak valid/.test(tNomor),
+    'Tools: status:false API -> blok error rapi');
+
+  const tNegara = await bots.reply({ id: 'bot-tools' }, 'negara Indonesia');
+  ok(lastCall().path === '/api/tools/countryInfo' && lastCall().params.name === 'Indonesia'
+    && tNegara.text.includes('Indonesia'),
+    'Tools: "negara Indonesia" -> /api/tools/countryInfo');
+
+  const tJarak = await bots.reply({ id: 'bot-tools' }, 'jarak Jakarta Bandung');
+  ok(lastCall().path === '/api/info/jarakkota' && lastCall().params.dari === 'Jakarta'
+    && lastCall().params.ke === 'Bandung' && tJarak.text.includes('119.63'),
+    'Tools: "jarak Jakarta Bandung" -> /api/info/jarakkota');
+
+  const tSholat = await bots.reply({ id: 'bot-tools' }, 'sholat Jakarta');
+  ok(lastCall().path === '/api/info/jadwal-sholat' && lastCall().params.kota === 'Jakarta'
+    && tSholat.text.includes('11:50'),
+    'Tools: "sholat Jakarta" -> /api/info/jadwal-sholat');
+
+  const tGh = await bots.reply({ id: 'bot-tools' }, 'github octocat');
+  ok(lastCall().path === '/api/stalk/github' && lastCall().params.user === 'octocat'
+    && tGh.text.includes('octocat'),
+    'Tools: "github octocat" -> /api/stalk/github');
+
+  const tOcr = await bots.reply({ id: 'bot-tools' }, 'ocr https://placehold.co/600x200.png?text=Halo');
+  ok(lastCall().path === '/api/tools/ocr' && tOcr.text.includes('Halo Dunia'),
+    'Tools: "ocr <url>" -> /api/tools/ocr');
+
+  const tCallsBefore = global.__calls.length;
+  const tJarakKurang = await bots.reply({ id: 'bot-tools' }, 'jarak Jakarta');
+  ok(/jarak <dari> <ke>/.test(tJarakKurang) && global.__calls.length === tCallsBefore,
+    'Tools: argumen kurang dibalas blok error tanpa memanggil API');
+
+  const tUnknown = await bots.reply({ id: 'bot-tools' }, 'halahal');
+  ok(/Perintah tidak dikenal/.test(tUnknown) && tUnknown.includes('15 perintah tools'),
+    'Tools: perintah asing ditolak lengkap dengan petunjuk menu');
+
+  // ---- katalog web 15 tools (halaman /tools.html + /api/tools/web/*) ----
+  const webtools = require('../server/toolscatalog');
+  ok(webtools.TOOLS.length === 15, `katalog web: ${webtools.TOOLS.length} tools terdaftar (harus 15)`);
+  const webList = webtools.list();
+  ok(webList.total === 15 && Object.values(webList.tools).flat().length === 15
+    && webList.categories.length >= 5
+    && Object.values(webList.tools).flat().every((t) => Array.isArray(t.fields)),
+    'katalog web: daftar 15 tools per kategori + definisi formulir');
+
+  const webRun = await webtools.run('cuaca', { kota: 'Bandung' });
+  ok(webRun.tool === 'cuaca' && lastCall().path === '/api/info/cuaca'
+    && lastCall().params.kota === 'Bandung' && webRun.data.suhu_c,
+    'katalog web: run("cuaca") memanggil endpoint yang sama dengan bot');
+
+  const webRun2 = await webtools.run('gempa', {});
+  ok(lastCall().path === '/api/info/gempa' && webRun2.data.magnitude === '4.5',
+    'katalog web: tool tanpa isian (gempa) berjalan');
+
+  let webBad = null;
+  try { await webtools.run('cuaca', { kota: 'Bandung', jahat: '1' }); } catch (e) { webBad = e; }
+  ok(webBad && webBad.status === 400 && /jahat/.test(webBad.message),
+    'katalog web: isian tak dikenal ditolak 400');
+
+  let webMiss = null;
+  try { await webtools.run('cuaca', {}); } catch (e) { webMiss = e; }
+  ok(webMiss && webMiss.status === 400 && /wajib/i.test(webMiss.message),
+    'katalog web: isian wajib kosong ditolak 400');
+
+  let web404 = null;
+  try { await webtools.run('tidak-ada', {}); } catch (e) { web404 = e; }
+  ok(web404 && web404.status === 404, 'katalog web: tool tak dikenal ditolak 404');
 
   const ai = await bots.reply({ id: 'bot-ai' }, 'menu');
   ok(ai.includes('blok kode ala VS Code') && ai.includes('tombol Copy'), 'AI: menu menyebut blok kode + Copy');

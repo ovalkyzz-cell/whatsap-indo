@@ -51,6 +51,7 @@ Inti chat **real-time** berbasis web dengan autentikasi **email**, kirim **foto 
 | Panel admin | **Monitor real-time**: daring/luring, device & IP terakhir, riwayat upaya masuk |
 | Cek bug admin | **Panel admin pemeriksa bug menempel di aplikasi**: buka `https://<domain>/admin` (terkunci: kunci `ADMIN_KEY` atau sesi akun admin) — 5 pemeriksaan berjalan di server produksi + 4 pemeriksaan berat yang hanya bisa dijalankan di mesin server (ditandai abu-abu); di lokal `npm run admin` (port 3200) menjalankan **semua 9 pemeriksaan nyata** (sintaks, dependensi, database, server, referensi frontend, panel terkunci, unit test, **alur panggilan/VC sungguhan**, berkas rahasia) dengan status **centang hijau = normal** / **merah = perlu diperbaiki**, plus tombol **Perbaiki Sekali Klik** yang memperbaiki lalu memeriksa ulang sampai hijau |
 | Daftar Bot | Menu **Daftar Bot** (khusus admin & premium) menampilkan seluruh **69 bot terkelompok per 8 kategori** lewat `GET /api/bots`; user non-premium menerima **panel terkunci + daftar paket premium** (403) |
+| 15 Tools Web | Halaman **`/tools.html`** (item menu *15 Tools Web*): 15 tools api-mazval — Terjemah, Cuaca, Cek IP, QR, npm, Kurs, Kripto, Gempa, Kode Pos, Cek Nomor, Info Negara, Jarak Kota, Jadwal Sholat, Stalk GitHub, OCR — tersusun per kategori, formulir otomatis dari `GET /api/tools/web/list`, eksekusi lewat `POST /api/tools/web/run` (auth + rate limit 30/menit + **kuota bot harian yang sama**; isian divalidasi allowlist per tool, kunci API tetap di server); hasil dirender rapi (kunci–nilai, daftar, pratinjau gambar, blok JSON), user non-premium melihat panel terkunci + daftar paket, tema/aksen mengikuti pengaturan pengguna |
 | Paket & Harga | Menu **Paket & Harga** (`GET /api/plans`): 6 paket resmi beranimasi — **Harian Rp1.000** (limit 50 pesan/hari, 5 bot eksklusif ditutup, storage 10 GB), **Mingguan Rp10.000** (limit 200/hari, storage 100 GB), **Bulanan Rp25.000** (tanpa limit, storage 2 TB), **Bisnis Rp50.000** (storage 3 TB), **Reseller Bulanan Rp75.000** (storage 5 TB), **Permanen Rp50.000** (100 tahun, storage 5 TB); admin bisa mengubah nama, durasi, harga, limit, **kuota storage (GB)**, bot eksklusif & status permanen |
 | Kuota storage nyata | **Foto/video/file yang dikirim benar-benar menempati storage paket** (2 GB gratis – 5 TB): reservasi atomik saat pesan tersimpan, dibebaskan saat dihapus, ditolak (413 + toast) saat melebihi kuota; admin tanpa batas; `GET /api/me/storage`, bar pemakaian di kartu paket, pre-check di endpoint upload, endpoint recompute admin |
 | Undangan teman | Kode unik per akun **`WA-MAZ-VAL-XXXX`** + link siap dibagikan; tamu yang mendaftar memakai kode langsung dapat **5 token sambutan**, pengundang dapat **+5 token** & +1 undangan saat tamu disetujui admin (sekali saja); token dipakai otomatis saat kuota harian bot habis |
@@ -83,7 +84,7 @@ npm test           # crop + calls + callflow + e2e (server harus berjalan)
 npm run test:crop  # geometri pemotong foto saja (tanpa server)
 npm run test:calls # unit test mesin panggilan (dering, kirim-ulang, tak terjawab)
 npm run test:callflow # uji alur panggilan/VC nyata lewat Socket.IO (server harus berjalan)
-npm run test:bots  # unit test balasan 69 bot (API dimock, tanpa jaringan)
+npm run test:bots  # unit test balasan 69 bot + katalog 15 tools web (API dimock, tanpa jaringan)
 ```
 
 Variabel lingkungan opsional:
@@ -139,14 +140,16 @@ Dijalankan lokal dengan server berjalan (`npm test`, tanpa `MAZVAL_API_KEY`):
 | `npm run test:callflow` | **29 passed, 0 failed** (alur nyata: dering → jawab → sinyal WebRTC → tutup, tak terjawab, penerima luring, penolakan) |
 | `npm run test:groupbot` | **27 passed, 0 failed** (pasang/keluarkan bot grup, diam untuk non-premium, balas real-time saat disebut/dibalas, maks 1 bot) |
 | `npm run test:admingroup` | **19 passed, 0 failed** (site admin kelola grup milik orang lain tanpa 403, pasang bot, chat bot real-time; anggota biasa tetap ditolak) |
-| `npm test` (e2e) | **344 passed, 15 failed** |
+| `npm test` (e2e) | **350 passed, 15 failed** (sama persis dengan baseline kode bersih: 344 + 6 assert baru tools web) |
 
 15 kegagalan tersebut **semuanya** berasal dari uji bot eksternal yang membutuhkan
 `MAZVAL_API_KEY` (AI Gemini/GPT/Claude/DeepSeek, Downloader, Cuaca, Kode Pos,
-Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model, Email Generator).
+Wilayah, Simbol Provinsi, Bard, Screenshot/NPM, Katalog Model, Email Generator) —
+diverifikasi identik 15/15 pada checkout bersih tanpa perubahan ini.
 Seluruh uji autentikasi, sesi, chat, grup, admin, media, **balasan (reply)**,
 **kuota storage nyata per paket**, panggilan (luring → kirim-ulang → ditolak → tak terjawab),
-notifikasi, PWA & keamanan **lolos semua**.
+notifikasi, PWA, keamanan & **6 assert tools web** (`/tools.html`, daftar/run terproteksi,
+validasi allowlist 400, tool tak dikenal 404, eksekusi terkendali) **lolos semua**.
 
 Smoke test storage (`node test/stogetest.js`): **24 passed, 0 failed** — reserve atomik
 saat kirim media, release saat hapus, penolakan melebihi kuota, admin tanpa batas, recompute.
@@ -216,6 +219,9 @@ server/
   helpers.js   # serialisasi chat/pesan, chat direct idempoten
   bots.js      # 69 bot admin (9 inti + 60 generik) + perintah + API api-mazval
                # + rangkaian resolver Downloader (tikwm, fxtwitter, cobalt, Piped)
+               # + bot Tools dengan 15 perintah (termasuk delegasi TOOLS_EXTRA)
+  toolscatalog.js # katalog & eksekutor 15 tools web (/tools.html): definisi field,
+               # validasi allowlist, proxy api-mazval tanpa membocorkan kunci API
   upload.js    # multer disk storage, limit 2GB, klasifikasi tipe file,
                # storeBuffer/storeRemoteFile — simpan hasil unduhan bot
                # (streaming langsung ke disk / Vercel Blob, validasi magic bytes)
@@ -226,6 +232,8 @@ admin/
   server.js     # server terpisah (npm run admin) yang memasang panel yang sama di port 3200
 public/
   index.html   # shell SPA (auth, chat, drawer, pusat notifikasi, modal panggilan)
+  tools.html   # halaman mandiri 15 tools (kartu + formulir + hasil rapi),
+               # memakai token login yang sama & tema tersimpan pengguna
   css/style.css
   js/app.js    # state, API client, renderer (inkremental), socket, pusat notifikasi, WebRTC
 test/
@@ -238,11 +246,12 @@ test/
                  # penerima luring -> kirim ulang dering, penolakan bot/sibuk/ditolak
   e2e.js       # e2e: auth, realtime, receipts, upload, delete, signaling panggilan,
                # keamanan upload, grup, status, privasi, push, sesi tunggal, persetujuan,
-               # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot
-               # & 20 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan,
-               # 18 bot AI, Wilayah Indonesia & Simbol Provinsi)
-  bot-reply.js # 96 assert unit test balasan 69 bot + rantai resolver Downloader
-               # (API dimock, tanpa jaringan)
+               # blokir akun, monitor admin real-time, 69 bot (admin & premium), edit nama bot,
+               # 20 bot baru (kodesnap, npm zip, katalog model, downloader tersimpan,
+               # 18 bot AI, Wilayah Indonesia & Simbol Provinsi) & tools web
+               # (/tools.html + /api/tools/web/list|run)
+  bot-reply.js # 116 assert unit test balasan 69 bot, rantai resolver Downloader
+               # & katalog 15 tools web (API dimock, tanpa jaringan)
 data/          # whatsap.db + .jwt-secret (SQLite, gitignored)
 uploads/       # file terunggah (gitignored)
 ```
@@ -412,7 +421,7 @@ satu kali di katalog (diverifikasi pada `npm run test:bots`).
 | **AI** | `bot-ai` | `gpt` / `gemini` / `deepseek` / `claude` + pertanyaan (default ChatGPT, awalan dibuang dari isi); kode keluar sebagai **blok kode ala VS Code + Copy** (fence dijaga selalu seimbang); perintah tanpa pertanyaan ditolak; `menu` |
 | **Downloader** | `bot-down` | kirim tautan video → deteksi platform lewat **domain persis** (TikTok, IG, YouTube, FB, X, Threads, Reddit, dll — `max.com` tidak salah jadi Twitter) → **file media diunduh ke server lalu tampil sebagai pesan video** (kapsi *Hasil unduhan: X MB — siap ditonton & diunduh*) + judul, kreator & tautan unduh; **rangkaian resolver berlapis** bila jalur pertama tak memberi file: endpoint aio api-mazval → **tikwm** (TikTok/Douyin) → **fxtwitter** (X/Twitter) → **instance cobalt** (IG, FB, X, YT, SoundCloud, …) → **instance Piped** (YouTube, mp4 muxed); kandidat tanpa ekstensi **di-probe Range** dulu supaya benar-benar video; URL tanpa `https://` diterima; semua jalur gagal → thumbnail + panduan cobalt; `menu` |
 | **Email Generator** | `bot-email` | `buat [nama]` → email sementara (kartu angka); `domains`; `cek <email>` → inbox + **OTP**; `baca <email> <nomor>`; `menu` |
-| **Tools** | `bot-tools` | `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`; `menu` |
+| **Tools** | `bot-tools` | **15 perintah**: `terjemah <teks>`, `cuaca <kota>`, `ip <ip>`, `qr <teks>`, `npm <paket>`, `kurs <dari> <ke> [jumlah]`, `kripto <koin>`, `gempa`, `kodepos <area>`, `nomor <08xx>`, `negara <nama>`, `jarak <dari> <ke>`, `sholat <kota>`, `github <user>`, `ocr <url gambar>`; `menu` — versi web di **`/tools.html`** (sama 15 tools lewat `GET /api/tools/web/list` + `POST /api/tools/web/run`) |
 | **Screenshot Kode** | `bot-kodesnap` | `kode <teks>` → render kode jadi **gambar PNG tersimpan** (`/api/image/codesnap`); `menu` |
 | **Unduh Kode npm** | `bot-npm-zip` | `zip <paket> [versi]` → source code npm jadi **berkas .zip tersimpan** (`/api/tools/npm2zip`); `menu` |
 | **Katalog Model AI** | `bot-model-ai` | `daftar`, `cari <kata>`, `gratis` → katalog model mimo (`/api/mimo/models`); `menu` |

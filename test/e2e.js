@@ -1337,6 +1337,43 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   botSock.close();
 
+  console.log('\n[25b] Tools web (/tools.html + /api/tools/web/*)');
+  const thPage = await fetch(BASE + '/tools.html');
+  const thText = thPage.ok ? await thPage.text() : '';
+  ok(thPage.status === 200 && thText.includes('15 Tools')
+    && thText.includes('/api/tools/web/run') && thText.includes('/css/theme-rtc.css'),
+    'halaman /tools.html tersedia (15 tools, tembus ke tema aplikasi)');
+
+  const tlNoAuth = await fetch(BASE + '/api/tools/web/list');
+  ok(tlNoAuth.status === 401, 'daftar tools web menolak tanpa token (401)');
+
+  const tlList = await admApi('/api/tools/web/list');
+  ok(tlList.status === 200 && tlList.data.total === 15
+    && Object.values(tlList.data.tools || {}).flat().length === 15
+    && tlList.data.premiumOnly === true,
+    'admin menerima daftar 15 tools web terkelompok per kategori');
+
+  const tlBadField = await admApi('/api/tools/web/run', {
+    method: 'POST', body: { tool: 'cuaca', inputs: { kota: 'Jakarta', jahat: '1' } },
+  });
+  ok(tlBadField.status === 400 && /jahat/.test(tlBadField.data.error || ''),
+    'isian tak dikenal ditolak 400 oleh proxy tools web');
+
+  const tlBadTool = await admApi('/api/tools/web/run', {
+    method: 'POST', body: { tool: 'tidak-ada', inputs: {} },
+  });
+  ok(tlBadTool.status === 404, 'tool tak dikenal ditolak 404');
+
+  // jalankan sungguhan: 200 saat API hidup, 5xx terkontrol saat key belum ada —
+  // yang diuji endpoint terproteksi dan TIDAK crash (500 tanpa JSON = gagal)
+  const tlRun = await admApi('/api/tools/web/run', {
+    method: 'POST', body: { tool: 'cuaca', inputs: { kota: 'Jakarta' } },
+  });
+  ok([200, 500, 502].includes(tlRun.status)
+    && (tlRun.status === 200 ? tlRun.data.ok === true && tlRun.data.tool === 'cuaca'
+      : typeof (tlRun.data || {}).error === 'string'),
+    `jalankan tool cuaca lewat web (HTTP ${tlRun.status}) terkendali, bukan crash`);
+
   console.log('\n[26] Edit nama & foto profil bot (khusus admin)');
   const profBot = await admApi('/api/users/bot-verif-am');
   ok(profBot.status === 200 && profBot.data.user.isBot === true, 'profil bot ditandai isBot');

@@ -2914,6 +2914,7 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'terminal') openTerminal();
     else if (action === 'privacy') openPrivacy();
     else if (action === 'bots') openBotCatalog();
+    else if (action === 'toolsw') { closeDrawers(); window.location.href = '/tools.html'; }
     else if (action === 'admin') openAdminPanel();
     else if (action === 'about') openAboutDrawer();
     else if (action === 'logout') {
@@ -2922,6 +2923,11 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     }
   });
 });
+
+/* tautan dari halaman /tools.html (/#plans) membuka drawer paket sekali saat ini */
+if (location.hash === '#plans' && S.token) {
+  setTimeout(() => { try { openPlanDrawer(); } catch (e) { /* drawer belum siap */ } }, 600);
+}
 
 /* ================= daftar bot (khusus premium) ================= */
 $('btnCloseBotCat').addEventListener('click', closeDrawers);
