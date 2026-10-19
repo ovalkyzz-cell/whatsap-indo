@@ -22,6 +22,7 @@ const serverConsole = require('./console');
 const galleryzip = require('./galleryzip');
 const webpush = require('web-push');
 const { router: uploadRouter, UPLOAD_DIR, storeRemoteFile, storedFileExists, storedFileStatus } = require('./upload');
+const importRoutes = require('./import');
 const { createAdminPanel } = require('../admin/panel');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -95,6 +96,8 @@ app.use('/uploads', express.static(UPLOAD_DIR, {
   },
 }));
 app.use('/api', uploadRouter);
+// impor arsip chat lama (admin) — pemulihan data dari SQLite lama
+app.use('/api/admin/import', importRoutes);
 
 // ---------- rate limit (brute force auth) ----------
 function rateLimit({ windowMs, max }) {
