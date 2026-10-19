@@ -32,17 +32,20 @@ const { Client } = require('pg');
 // ---------- argumen ----------
 function parseArgs(argv) {
   const out = { base: 'https://whatsap-indo.vercel.app', source: path.join(__dirname, '..', 'data', 'whatsap.db'),
+    uploads: path.join(__dirname, '..', 'uploads'),
     state: '/tmp/opencode/migrate-state.json', verify: 'sample', envFile: '', email: '', pass: '' };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
     if (a === '--base') out.base = next();
     else if (a === '--source') out.source = next();
+    else if (a === '--uploads') out.uploads = next();
     else if (a === '--state') out.state = next();
     else if (a === '--env-file') out.envFile = next();
     else if (a === '--email') out.email = next();
     else if (a === '--pass') out.pass = next();
     else if (a === '--verify') out.verify = next();
+    else if (a === '--media-limit') out.mediaLimit = Number(next());
     else if (a === '--skip-media') out.skipMedia = true;
     else if (a === '--skip-rows') out.skipRows = true;
     else if (a === '--only') out.only = next();
@@ -104,7 +107,25 @@ function pgUrl() {
   throw new Error('DATABASE_URL tidak tersedia (pakai env atau --env-file)');
 }
 
-const pg = new Client({ connectionString: pgUrl() });
+let pg = null; // koneksi PG dibuat lazis (bila fase baris/rewrite jalan)
+function newPg() {
+  const c = new Client({ connectionString: pgUrl() });
+  // koneksi idle lama bisa diputus server -> jangan biarkan jadi unhandled error
+  c.on('error', (e) => log('pg: koneksi error (akan disambung ulang):', String(e.message).slice(0, 80)));
+  return c;
+}
+async function pgQ(sql, params) {
+  if (!pg) { pg = newPg(); await pg.connect(); }
+  try {
+    return await pg.query(sql, params);
+  } catch (e) {
+    log('pg: query gagal, sambung ulang:', String(e.message).slice(0, 80));
+    try { await pg.end(); } catch { /* koneksi mungkin sudah mati */ }
+    pg = newPg();
+    await pg.connect();
+    return await pg.query(sql, params);
+  }
+}
 
 const TEXT_TABLES = ['users', 'chats', 'messages', 'statuses', 'status_comments', 'saved_files'];
 const REMAP = {
@@ -147,12 +168,14 @@ function scanUploadRefs() {
 // ---------- 1. media ----------
 async function uploadMedia(dir, filenames) {
   const map = {};
-  let done = 0, skipped = 0, missing = 0, failed = [];
+  let done = 0, skipped = 0;
+  const failed = [], missing = [];
   const list = [...filenames].sort();
   for (const name of list) {
+    if (ARGS.mediaLimit && done >= ARGS.mediaLimit) { log('batas --media-limit tercapai'); break; }
     if (STATE.media[name] && STATE.media[name].url) { map[name] = STATE.media[name].url; skipped++; continue; }
     const file = path.join(dir, name);
-    if (!fs.existsSync(file)) { missing++; log('hilang di disk (dilewati):', name); continue; }
+    if (!fs.existsSync(file)) { missing.push(name); continue; }
     const buf = fs.readFileSync(file);
     const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
     try {
@@ -180,8 +203,9 @@ async function uploadMedia(dir, filenames) {
       log('GAGAL media', name, '-', err.message);
     }
   }
-  log(`media selesai: ${done} baru, ${skipped} dari state, ${missing} hilang, ${failed.length} gagal`);
-  return { map, failed };
+  if (missing.length) log(`hilang di disk (dilewati): ${missing.length} berkas — contoh: ${missing.slice(0, 3).join(', ')}`);
+  log(`media selesai: ${done} baru, ${skipped} dari state, ${missing.length} hilang, ${failed.length} gagal`);
+  return { map, failed, missing };
 }
 
 // ---------- 2. baris ----------
@@ -192,7 +216,7 @@ async function importRows(idMap, skipIds) {
     if (ARGS.only && ARGS.only !== table) continue;
     if (STATE.rows[table] && STATE.rows[table].done) { log('rows (state):', table, 'sudah selesai'); continue; }
     const cols = sqlite.prepare(`PRAGMA table_info("${table}")`).all().map((c) => c.name);
-    const pgCols = (await pg.query(
+    const pgCols = (await pgQ(
       'SELECT column_name FROM information_schema.columns WHERE table_name = $1', [table]
     )).rows.map((r) => r.column_name);
     const fields = cols.filter((c) => pgCols.includes(c));
@@ -258,14 +282,14 @@ async function rewriteUrls(map) {
   if (!entries.length) { log('rewrite: tidak ada peta media'); return 0; }
   let changed = 0;
   for (const table of TEXT_TABLES) {
-    const cols = (await pg.query(
+    const cols = (await pgQ(
       'SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND data_type IN ($2,$3)', [table, 'text', 'character varying']
     )).rows.map((r) => r.column_name);
     for (const col of cols) {
-      const has = await pg.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE ${col} LIKE '%/uploads/%'`);
+      const has = await pgQ(`SELECT COUNT(*)::int AS n FROM ${table} WHERE ${col} LIKE '%/uploads/%'`);
       if (!has.rows[0].n) continue;
       for (const [name, url] of entries) {
-        const r = await pg.query(
+        const r = await pgQ(
           `UPDATE ${table} SET ${col} = REPLACE(${col}, $1, $2) WHERE ${col} LIKE $1`,
           [`/uploads/${name}`, url]
         );
@@ -320,8 +344,6 @@ async function verifyMedia(map, mode) {
   log('sumber :', ARGS.source);
   log('tujuan :', ARGS.base);
 
-  await pg.connect();
-
   // login admin impor
   const lg = await withRetry(() => api('/api/auth/login', { method: 'POST', body: { email: ARGS.email, password: ARGS.pass } }), 'login');
   if (!lg.data || !lg.data.token) {
@@ -341,15 +363,15 @@ async function verifyMedia(map, mode) {
   if (!ARGS.skipMedia) {
     const refs = scanUploadRefs();
     log(`referensi /uploads/ unik di SQLite: ${refs.size}`);
-    const { map, failed } = await uploadMedia(path.dirname(ARGS.source) + '/uploads', refs);
-    report.media = { total: refs.size, mapped: Object.keys(map).length, failed };
+    const { map, failed, missing } = await uploadMedia(ARGS.uploads, refs);
+    report.media = { total: refs.size, mapped: Object.keys(map).length, missing: missing.length, failed };
     report.mediaMap = map;
-    if (!ARGS.skipRows) report.verify = await verifyMedia(map, ARGS.verify);
+    report.verify = await verifyMedia(map, ARGS.verify);
   }
 
   // baris
   if (!ARGS.skipRows) {
-    const prodUsers = (await pg.query('SELECT id, email FROM users')).rows;
+    const prodUsers = (await pgQ('SELECT id, email FROM users')).rows;
     const prodByEmail = new Map(prodUsers.map((u) => [String(u.email).toLowerCase(), u.id]));
     const localUsers = sqlite.prepare('SELECT id, email FROM users').all();
     const idMap = {};
@@ -369,9 +391,11 @@ async function verifyMedia(map, mode) {
   }
 
   // putar URL
-  if (report.mediaMap) {
+  if (report.mediaMap && !ARGS.skipRows) {
     report.rewritten = await rewriteUrls(report.mediaMap);
     log('total baris di-update URL:', report.rewritten);
+  } else if (report.mediaMap) {
+    log('rewrite dilewati (mode tanpa PG)');
   }
 
   // hitung ulang kuota
@@ -380,10 +404,12 @@ async function verifyMedia(map, mode) {
 
   // perbandingan akhir
   report.finalCounts = {};
-  for (const t of ORDER) {
-    const src = sqlite.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).get().n;
-    const dst = (await pg.query(`SELECT COUNT(*)::int AS n FROM ${t}`)).rows[0].n;
-    report.finalCounts[t] = { source: src, prod: dst };
+  if (!ARGS.skipRows) {
+    for (const t of ORDER) {
+      const src = sqlite.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).get().n;
+      const dst = (await pgQ(`SELECT COUNT(*)::int AS n FROM ${t}`)).rows[0].n;
+      report.finalCounts[t] = { source: src, prod: dst };
+    }
   }
   report.finishedAt = new Date().toISOString();
   console.log('\n=== RINGKASAN ===');
@@ -391,7 +417,7 @@ async function verifyMedia(map, mode) {
   fs.writeFileSync('/tmp/opencode/migrate-report.json', JSON.stringify(report, null, 1));
   log('laporan lengkap: /tmp/opencode/migrate-report.json');
 
-  await pg.end();
+  if (pg) { try { await pg.end(); } catch { /* koneksi mungkin sudah mati */ } }
   sqlite.close();
 })().catch((err) => {
   console.error('MIGRASI GAGAL:', err);
