@@ -10,6 +10,7 @@ const multer = require('multer');
 const { requireAuth } = require('./auth');
 const quota = require('./storage');
 const db = require('./db');
+const ghstore = require('./ghstore');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || '';
@@ -60,6 +61,13 @@ function classify(mime, original) {
   if (['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext)) return 'video';
   if (['.mp3', '.ogg', '.wav', '.m4a', '.opus'].includes(ext)) return 'audio';
   return 'file';
+}
+
+// tipe teks/dokumen yang diuntungkan zstd; media (jpg/mp4/dll) dilewati
+// karena sudah terkompresi dan kompresi ulang hanya membuang CPU.
+const COMPRESSABLE = /^(text\/|application\/(json|xml|javascript|ecmascript|csv|sql|yaml|x-yaml|graphql|x-ndjson)|image\/svg\+xml)/i;
+function shouldCompress(mime) {
+  return COMPRESSABLE.test(String(mime || ''));
 }
 
 // pemeriksaan awal kuota storage sebelum file diproses (hemat bandwidth).
@@ -164,20 +172,54 @@ router.post('/upload', requireAuth, (req, res) => {
       return res.status(201).json({ url: `/uploads/${req.file.filename}`, ...meta });
     }
 
-    // Penyimpanan utama: database (Postgres/SQLite). Langsung simpan byttes
-    // ke db_files tanpa lewat Blob — Blob di-hosting gratis sering disuspend
-    // kuota sehingga percuma dicoba. File tetap bisa diunduh penuh via
-    // /api/storage/dbfiles/:id (dukung HTTP Range untuk video besar).
+    // Penyimpanan utama: GitHub Releases (repo private) — tahan lama, tidak
+    // tergantung kuota Vercel Blob, dan tidak ikut rotasi database.
+    // Deduplikasi: konten sama (sha256+ukuran) hanya disimpan sekali.
+    const id = crypto.randomUUID();
     try {
-      const id = crypto.randomUUID();
+      const buf = req.file.buffer;
+      const hash = crypto.createHash('sha256').update(buf).digest('hex');
+      const key = `${meta.size}:${hash}`;
+      const dup = await db.get(
+        'SELECT id, name, size, mime FROM db_files WHERE content_key = ? AND complete = 1 LIMIT 1',
+        key
+      );
+      if (dup) {
+        return res.status(201).json({
+          url: `/api/storage/dbfiles/${dup.id}`,
+          name: dup.name,
+          size: dup.size,
+          mime: dup.mime,
+          type: classify(dup.mime, dup.name),
+          dedup: true,
+        });
+      }
+      if (ghstore.enabled()) {
+        const compress = shouldCompress(meta.mime);
+        const stored = compress ? await ghstore.compressBuf(buf) : buf;
+        const assetId = await ghstore.uploadPart(id, 0, stored);
+        // chunk_size = ukuran file (satu potongan tunggal) supaya perhitungan
+        // offset Range saat penyajian tepat.
+        await db.run(
+          `INSERT INTO db_files (id, user_id, mime, name, size, chunk_size, total_chunks, complete, content_key, compress, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)`,
+          id, req.user.id, meta.mime, meta.name, meta.size, meta.size, key, compress ? 1 : 0, Date.now()
+        );
+        await db.run(
+          `INSERT INTO db_file_parts (file_id, idx, asset_id, hash) VALUES (?, 0, ?, ?)`,
+          id, assetId, hash
+        );
+        return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
+      }
+      // cadangan bila token GitHub tak terpasang: simpan langsung di database
       await db.run(
-        `INSERT INTO db_files (id, user_id, data, mime, name, size, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        id, req.user.id, req.file.buffer, meta.mime, meta.name, meta.size, Date.now()
+        `INSERT INTO db_files (id, user_id, data, mime, name, size, content_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, req.user.id, buf, meta.mime, meta.name, meta.size, key, Date.now()
       );
       return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
-    } catch (dbErr) {
-      console.error('upload db:', dbErr.message);
+    } catch (err) {
+      console.error('upload:', err.message);
       return res.status(500).json({ error: 'Gagal menyimpan file' });
     }
   });
@@ -228,7 +270,12 @@ router.put(
     if (!Buffer.isBuffer(body) || !body.length) return res.status(400).json({ error: 'Potongan kosong' });
 
     let row = null;
-    try { row = await db.get('SELECT user_id, complete, chunk_size, total_chunks, size FROM db_files WHERE id = ?', id); } catch { /* jatuh ke 404 */ }
+    try {
+      row = await db.get(
+        'SELECT user_id, complete, chunk_size, total_chunks, size, compress FROM db_files WHERE id = ?',
+        id
+      );
+    } catch { /* jatuh ke 404 */ }
     if (!row) return res.status(404).json({ error: 'Unggahan tidak ditemukan' });
     if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Akses ditolak' });
     if (row.complete) return res.status(409).json({ error: 'Unggahan sudah selesai' });
@@ -241,11 +288,45 @@ router.put(
       return res.status(400).json({ error: `Ukuran potongan tidak sesuai (diharapkan ${expected}, diterima ${body.length})` });
     }
     try {
-      await db.run(
-        `INSERT INTO db_file_chunks (file_id, idx, data) VALUES (?, ?, ?)
-         ON CONFLICT (file_id, idx) DO UPDATE SET data = excluded.data`,
-        id, idx, body
-      );
+      if (ghstore.enabled()) {
+        // potongan diunggah sebagai aset rilis GitHub; Postgres hanya
+        // menyimpan metadata (hemat kuota 1 GB/project & tetap awet)
+        const hash = crypto.createHash('sha256').update(body).digest('hex');
+        const stored = row.compress ? await ghstore.compressBuf(body) : body;
+        const assetId = await ghstore.uploadPart(id, idx, stored);
+        const prev = await db.get(
+          'SELECT asset_id FROM db_file_parts WHERE file_id = ? AND idx = ?',
+          id,
+          idx
+        );
+        if (prev) {
+          await db.run(
+            'UPDATE db_file_parts SET asset_id = ?, hash = ? WHERE file_id = ? AND idx = ?',
+            assetId,
+            hash,
+            id,
+            idx
+          );
+          await ghstore.deleteAsset(prev.asset_id);
+        } else {
+          await db.run(
+            'INSERT INTO db_file_parts (file_id, idx, asset_id, hash) VALUES (?, ?, ?, ?)',
+            id,
+            idx,
+            assetId,
+            hash
+          );
+        }
+      } else {
+        // cadangan tanpa GitHub: potongan byttes di Postgres
+        await db.run(
+          `INSERT INTO db_file_chunks (file_id, idx, data) VALUES (?, ?, ?)
+           ON CONFLICT (file_id, idx) DO UPDATE SET data = excluded.data`,
+          id,
+          idx,
+          body
+        );
+      }
       res.status(200).json({ ok: true, idx });
     } catch (err) {
       console.error('dbfiles chunk:', err.message);
@@ -272,6 +353,34 @@ router.post('/storage/dbfiles/:id/complete', requireAuth, async (req, res) => {
   if (row.complete) return res.status(200).json(payload);
 
   try {
+    const parts = await db.all('SELECT idx, hash FROM db_file_parts WHERE file_id = ? ORDER BY idx', id);
+    if (parts.length) {
+      if (parts.length !== Number(row.total_chunks)) {
+        return res.status(400).json({ error: `Potongan belum lengkap (${parts.length}/${row.total_chunks})` });
+      }
+      // kunci deduplikasi: ukuran + sha256 tiap potongan (posisi potongan
+      // deterministik sehingga daftar hash ini setara sha256 penuh)
+      const key = `${row.size}:` + parts.map((p) => p.hash).join(':');
+      const dup = await db.get(
+        'SELECT id, name, size, mime FROM db_files WHERE content_key = ? AND complete = 1 AND id <> ? LIMIT 1',
+        key,
+        id
+      );
+      if (dup) {
+        await cleanupOwnFile(id);
+        return res.status(200).json({
+          url: `/api/storage/dbfiles/${dup.id}`,
+          name: dup.name,
+          size: dup.size,
+          mime: dup.mime,
+          type: classify(dup.mime, dup.name),
+          dedup: true,
+        });
+      }
+      await db.run('UPDATE db_files SET complete = 1, content_key = ? WHERE id = ?', key, id);
+      return res.status(200).json(payload);
+    }
+    // unggahan lama (sebelum GitHub): potongan masih di db_file_chunks
     const r = await db.get('SELECT COUNT(*) AS n FROM db_file_chunks WHERE file_id = ?', id);
     if (!r || Number(r.n) !== row.total_chunks) {
       return res.status(400).json({ error: `Potongan belum lengkap (${r ? r.n : 0}/${row.total_chunks})` });
@@ -284,6 +393,19 @@ router.post('/storage/dbfiles/:id/complete', requireAuth, async (req, res) => {
   }
 });
 
+/* Buang unggahan sendiri (aset GitHub + baris metadata) — dipakai bila
+   konten terbukti duplikat dengan file yang sudah ada. */
+async function cleanupOwnFile(fileId) {
+  try {
+    const parts = await db.all('SELECT asset_id FROM db_file_parts WHERE file_id = ?', fileId);
+    for (const p of parts) await ghstore.deleteAsset(p.asset_id);
+    await db.run('DELETE FROM db_file_parts WHERE file_id = ?', fileId);
+    await db.run('DELETE FROM db_files WHERE id = ?', fileId);
+  } catch (err) {
+    console.error('cleanup dup:', err.message);
+  }
+}
+
 /* Penyaji file yang disimpan di database (cadangan saat Blob mati).
    Akses publik via id acak yang tak terduga (sama seperti URL Blob publik
    & /uploads/). Konten ditentukan dari mime yang tercatat. Mendukung HTTP
@@ -294,7 +416,7 @@ router.get('/storage/dbfiles/:id', async (req, res) => {
   let row = null;
   try {
     row = await db.get(
-      'SELECT data, mime, name, size, chunk_size, total_chunks, complete FROM db_files WHERE id = ?',
+      'SELECT data, mime, name, size, chunk_size, total_chunks, complete, compress FROM db_files WHERE id = ?',
       id
     );
   } catch { /* jatuh ke 404 */ }
@@ -366,8 +488,17 @@ router.get('/storage/dbfiles/:id', async (req, res) => {
     return res.send(dataBuffer.subarray(start, end + 1));
   }
 
-  // mode potongan: alirkan hanya potongan yang menutup rentang diminta
-  const stream = createDbFileRangeStream(id, row, start, end);
+  // tentukan sumber: potongan GitHub (baru) atau db_file_chunks (arsip lama)
+  let useGh = false;
+  try {
+    const p = await db.get('SELECT 1 AS x FROM db_file_parts WHERE file_id = ? LIMIT 1', id);
+    useGh = Boolean(p);
+  } catch { /* jatuh ke arsip lama */ }
+
+  // alirkan hanya bagian yang menutup rentang diminta
+  const stream = useGh
+    ? createGhRangeStream(id, row, start, end)
+    : createDbFileRangeStream(id, row, start, end);
   stream.on('error', (err) => {
     console.error('dbfiles stream:', err.message);
     if (!res.headersSent) res.status(500).end();
@@ -394,6 +525,40 @@ function createDbFileRangeStream(fileId, row, start, end) {
       const sliceEnd = ci === lastChunk ? Math.min(chunkBuf.length, end - chunkStartByte + 1) : chunkBuf.length;
       if (sliceStart < sliceEnd) {
         const slice = chunkBuf.subarray(sliceStart, sliceEnd);
+        produced += slice.length;
+        yield slice;
+      }
+    }
+  }
+
+  return Readable.from(generate());
+}
+
+// alirkan rentang byte [start, end] dari aset GitHub (potongan terkompresi
+// zstd diurai per-potongan sebelum irisan dikirim; HTTP Range tetap akurat)
+function createGhRangeStream(fileId, row, start, end) {
+  const chunkSize = Number(row.chunk_size) > 0 ? Number(row.chunk_size) : DB_CHUNK_SIZE;
+  const firstChunk = Math.floor(start / chunkSize);
+  const lastChunk = Math.floor(end / chunkSize);
+  const totalNeeded = end - start + 1;
+  const compress = Boolean(row.compress);
+
+  async function* generate() {
+    let produced = 0;
+    for (let ci = firstChunk; ci <= lastChunk && produced < totalNeeded; ci += 1) {
+      const part = await db.get(
+        'SELECT asset_id FROM db_file_parts WHERE file_id = ? AND idx = ?',
+        fileId,
+        ci
+      );
+      if (!part) throw new Error(`Bagian ${ci} hilang`);
+      let buf = await ghstore.downloadAsset(part.asset_id);
+      if (compress) buf = await ghstore.decompressBuf(buf);
+      const chunkStartByte = ci * chunkSize;
+      const sliceStart = ci === firstChunk ? Math.max(0, start - chunkStartByte) : 0;
+      const sliceEnd = ci === lastChunk ? Math.min(buf.length, end - chunkStartByte + 1) : buf.length;
+      if (sliceStart < sliceEnd) {
+        const slice = buf.subarray(sliceStart, sliceEnd);
         produced += slice.length;
         yield slice;
       }
@@ -476,6 +641,40 @@ async function storeBuffer(buffer, kind, filename, opts = {}) {
     if (base) stored = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${base}${ext}`;
   }
   if (useBlob) {
+    // jalur utama: simpan ke GitHub Releases (bertahan lama, tak tergantung
+    // kuota Blob yang sering disuspend)
+    if (ghstore.enabled()) {
+      try {
+        const id = crypto.randomUUID();
+        const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+        const key = `${buffer.length}:${hash}`;
+        const mime = EXT_MIME[ext] || 'application/octet-stream';
+        const dup = await db.get(
+          'SELECT id FROM db_files WHERE content_key = ? AND complete = 1 LIMIT 1',
+          key
+        );
+        if (dup) return { url: `/api/storage/dbfiles/${dup.id}`, size: buffer.length, name };
+        const compress = shouldCompress(mime);
+        const stored2 = compress ? await ghstore.compressBuf(buffer) : buffer;
+        const assetId = await ghstore.uploadPart(id, 0, stored2);
+        await db.run(
+          `INSERT INTO db_files (id, user_id, mime, name, size, chunk_size, total_chunks, complete, content_key, compress, created_at)
+           VALUES (?, 'system', ?, ?, ?, ?, 1, 1, ?, ?, ?)`,
+          id, mime, name, buffer.length, buffer.length, key, compress ? 1 : 0, Date.now()
+        );
+        await db.run(
+          `INSERT INTO db_file_parts (file_id, idx, asset_id, hash) VALUES (?, 0, ?, ?)`,
+          id,
+          assetId,
+          hash
+        );
+        return { url: `/api/storage/dbfiles/${id}`, size: buffer.length, name };
+      } catch (err) {
+        console.error('storeBuffer gh:', err.message);
+        return null;
+      }
+    }
+    // cadangan lama: Vercel Blob (bila aktif)
     try {
       const { put } = require('@vercel/blob');
       const object = await put(`uploads/${stored}`, buffer, {

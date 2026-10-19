@@ -273,6 +273,17 @@ CREATE TABLE IF NOT EXISTS db_file_chunks (
   data    BYTEA NOT NULL,
   PRIMARY KEY (file_id, idx)
 );
+CREATE TABLE IF NOT EXISTS db_file_parts (
+  file_id  TEXT NOT NULL,
+  idx      INTEGER NOT NULL,
+  asset_id BIGINT NOT NULL,
+  hash     TEXT NOT NULL,
+  PRIMARY KEY (file_id, idx)
+);
+CREATE TABLE IF NOT EXISTS gh_storage (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);
 
 -- jejak aksi admin (audit trail konsol server)
 CREATE TABLE IF NOT EXISTS admin_audit (
@@ -546,6 +557,17 @@ CREATE TABLE IF NOT EXISTS db_file_chunks (
   data    BLOB NOT NULL,
   PRIMARY KEY (file_id, idx)
 );
+CREATE TABLE IF NOT EXISTS db_file_parts (
+  file_id  TEXT NOT NULL,
+  idx      INTEGER NOT NULL,
+  asset_id INTEGER NOT NULL,
+  hash     TEXT NOT NULL,
+  PRIMARY KEY (file_id, idx)
+);
+CREATE TABLE IF NOT EXISTS gh_storage (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);
 
 -- jejak aksi admin (audit trail konsol server)
 CREATE TABLE IF NOT EXISTS admin_audit (
@@ -624,6 +646,8 @@ const TABLE_MIGRATIONS = {
     ['chunk_size', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['total_chunks', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['complete', 'SMALLINT NOT NULL DEFAULT 1', 'INTEGER NOT NULL DEFAULT 1'],
+    ['content_key', 'TEXT', 'TEXT'],
+    ['compress', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
   ],
 };
 
@@ -702,6 +726,14 @@ async function migrateDbFilesPg() {
   if (col.has('data') && col.get('data') === 'NO') {
     await pool.query('ALTER TABLE db_files ALTER COLUMN data DROP NOT NULL');
   }
+  // indeks deduplikasi konten (dibuat setelah kolom content_key dimigrasikan)
+  try {
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_db_files_content ON db_files (content_key) WHERE content_key IS NOT NULL`
+    );
+  } catch (err) {
+    console.error('db index content_key:', err.message);
+  }
 }
 
 async function bootSqlite() {
@@ -729,6 +761,13 @@ async function bootSqlite() {
     }
   }
   migrateDbFilesSqlite();
+  try {
+    sqlite.exec(
+      `CREATE INDEX IF NOT EXISTS idx_db_files_content ON db_files (content_key) WHERE content_key IS NOT NULL`
+    );
+  } catch (err) {
+    console.error('sqlite index content_key:', err.message);
+  }
   sqlite
     .prepare(
       `UPDATE users SET role = 'admin', verified = 1, premium_plan = 'bulanan',
