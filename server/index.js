@@ -37,7 +37,12 @@ presence.bind((socketId, event, payload) => io.to(socketId).emit(event, payload)
 
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-app.use(express.json({ limit: '1mb' }));
+// Batas body JSON 1 MB untuk SEMUA rute — KECUALI ekspor galeri. Pengecualian
+// dipasang di rute itu sendiri, di belakang auth.requireAuth, supaya pengguna
+// anonim tetap tak bisa mengirim body besar (pembatasan tetap berlaku untuk
+// seluruh rute lain yang tidak diautentikasi).
+const jsonBody = express.json({ limit: '1mb' });
+app.use((req, res, next) => (req.path === '/api/storage/export' ? next() : jsonBody(req, res, next)));
 
 // Di belakang proxy (Vercel/nginx) req.ip harus diambil dari X-Forwarded-For —
 // tanpa ini semua pengguna berbagi satu kuota rate-limit login (60/menit) dan
@@ -573,7 +578,11 @@ app.post('/api/storage/bulk-delete', auth.requireAuth, ah(async (req, res) => {
 // EKSPOR GALERI: seluruh isi galeri (atau item terpilih) menjadi SATU arsip
 // ZIP streaming — hanya media milik pengguna sendiri, khusus yang login.
 // Sumber file hilang dilewati & dicatat di manifest.json (bukan gagal total).
-app.post('/api/storage/export', auth.requireAuth, ah(async (req, res) => {
+// Body mungkin panjang (daftar id item terpilih ~46 byte/item), jadi parser
+// body-nya sendiri diberi pagu besar. Urutan penting: auth dulu, body belakang
+// — request tanpa sesi langsung ditolak sebelum buffer besar dialokasikan.
+const EXPORT_JSON_LIMIT = '64mb';
+app.post('/api/storage/export', auth.requireAuth, express.json({ limit: EXPORT_JSON_LIMIT }), ah(async (req, res) => {
   const wanted = Array.isArray(req.body?.items) && req.body.items.length ? req.body.items : null;
   if (!galleryzip.beginExport(req.user.id)) {
     return res.status(429).json({ error: 'Ekspor sedang berjalan — tunggu sebentar' });

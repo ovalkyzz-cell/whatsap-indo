@@ -350,13 +350,34 @@ dan stiker yang dirender ulang. Berkas masuk folder per jenis (`foto/`, `video/`
 dibuang, panjang dibatasi) + dedupe `(2)`; sumber yang hilang/tak terjangkau
 **dilewati** dan dicatat di `manifest.json` sebagai entri terakhir (hitungan
 `total/exported/skipped` + alasan per item) sehingga satu file bermasalah tidak
-menjatuhkan seluruh ekspor. Batas 5.000 item & 3,8 GB per arsip (413 bila dilewati;
-dapat diturunkan lewat env `EXPORT_MAX_ITEMS`/`EXPORT_MAX_BYTES` untuk pengujian).
+menjatuhkan seluruh ekspor.
+
+Arsip selalu ditulis dengan **ZIP64** (versi 45, extra `0x0001`, ZIP64 EOCD +
+locator), sehingga batas ZIP klasik — **4 GB per arsip dan 65.535 entri — tidak
+berlaku lagi**: video/foto/berkas pengguna boleh diekspor utuh, berapa pun
+ukurannya, tanpa dipotong dan tanpa arsip rusak. Satu jalur kode menutup peluang
+metadata salah klasifikasi; ukuran asli tetap tercatat di *data descriptor* dan
+central directory, dan EOCD klasik memakai sentinel `0xFFFF`/`0xFFFFFFFF` hanya
+saat nilainya benar-benar melewati jangkauan 32-bit. CRC-32 memakai `zlib.crc32`
+native (dibuktikan identik dengan tabel buatan sendiri dan `python zlib.crc32`)
+supaya ekspor beberapa GB tetap ringan.
+
+**Tidak ada batas jumlah/ukuran ekspor secara bawaan.** `EXPORT_MAX_ITEMS` dan
+`EXPORT_MAX_BYTES` tetap tersedia sebagai tuas opsional bagi operator/pengujian
+(satu-satunya cara memperoleh respons 413); tanpa env keduanya, keduanya 0 = ekspor
+seluruh galeri apa adanya. Body `POST /api/storage/export` (daftar id terpilih,
+±46 byte per item) diberi pagu 64 MB **di belakang** `auth.requireAuth`, jadi
+pengguna anonim tetap tak bisa menembakkan body besar — rute lain tetap 1 MB.
 
 Diuji `npm run test:galleryexport` — **76 assert** (server sungguhan dua port; arsip
 divalidasi `python3 zipfile`: CRC utuh, metode STORE, nama tanpa traversal, isi identik
 dengan keempat sumber, manifest tepat; ekspor terpilih & media pesan; anon 401; id
-bodong 404; jalur 413 jumlah + ukuran; tombol/handler statis).
+bodong 404; jalur 413 jumlah + ukuran; tombol/handler statis) dan
+`npm run test:zip64` — **53 assert** (arsip kecil selalu-ZIP64 divalidasi
+`python3 zipfile` + `unzip -t`; 66.000 entri melewati batas 16-bit dengan sentinel
+EOCD yang benar; arsip **>4 GiB** divalidasi parser independen lewat berkas *sparse*
+sehingga offset 64-bit nyata terbaca tanpa mengisi disk; timestamp rusak (1970/NaN/2300)
+dijepit ke rentang DOS 1980–2107 alih-alih menjatuhkan ekspor).
 
 ### Teks halaman daftar (disunting admin)
 

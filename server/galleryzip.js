@@ -24,8 +24,30 @@ const stickers = require('./stickers');
 const zip = require('./zipwriter');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
-const MAX_ITEMS = Math.max(1, Number(process.env.EXPORT_MAX_ITEMS) || 5000);
-const MAX_BYTES = Math.max(1024, Number(process.env.EXPORT_MAX_BYTES) || Math.floor(3.8 * 1024 ** 3));
+
+/* Batas ekspor. 0 = TANPA BATAS (nilai default).
+
+   Arsitektur sekarang menulis ZIP64 (server/zipwriter.js), sehingga arsip
+   melebihi 4 GB dan melebihi 65535 entri tetap sah — tidak ada alasan lagi
+   memotong video/foto/berkas milik pengguna. Batas di sini TIDAK boleh
+   dipakai lagi sebagai jaring pengaman format; yang tersisa hanyalah tuas
+   opsional bagi operator/pengujian.
+
+   Operator/pengujian masih bisa memagari lewat env:
+     EXPORT_MAX_ITEMS=5000   -> maks jumlah media per ekspor (413 bila lewat)
+     EXPORT_MAX_BYTES=407... -> maks total ukuran sebelum dipadatkan (413)
+   Tanpa env, keduanya 0 = ekspor seluruh galeri apa adanya. */
+const envLimit = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+const MAX_ITEMS = envLimit(process.env.EXPORT_MAX_ITEMS);
+const MAX_BYTES = envLimit(process.env.EXPORT_MAX_BYTES);
+
+// batas jumlah entri untuk kueri/pengulangan loop; Infinity = tanpa batas
+const itemCap = MAX_ITEMS > 0 ? MAX_ITEMS + 1 : Infinity;
+// SQL LIMIT hanya ditulis bila ada batas (LIMIT nanti pun tetap dihitung server)
+const sqlLimit = (max) => (max > 0 ? ` LIMIT ${max + 1}` : '');
 
 const TYPE_DIR = { image: 'foto', video: 'video', audio: 'audio', file: 'berkas' };
 const MIME_EXT = {
@@ -74,11 +96,11 @@ function capText() {
 async function collect(userId, wanted) {
   const byKind = { saved: [], msg: [] };
   if (Array.isArray(wanted) && wanted.length) {
-    for (const raw of wanted.slice(0, MAX_ITEMS + 1)) {
+    for (const raw of wanted.slice(0, itemCap)) {
       const kind = raw && raw.kind === 'saved' ? 'saved' : 'msg';
       const id = String((raw && raw.id) || '');
       if (!ID_RE.test(id)) continue;
-      if (byKind[kind].length < MAX_ITEMS + 1) byKind[kind].push(id);
+      if (byKind[kind].length < itemCap) byKind[kind].push(id);
     }
     if (!byKind.saved.length && !byKind.msg.length) return { rows: [], totalBytes: 0 };
     const rows = [];
@@ -86,8 +108,7 @@ async function collect(userId, wanted) {
       const rs = await db.all(
         `SELECT id, media_url, media_name, media_size, mime, type, created_at
            FROM saved_files
-          WHERE user_id = ? AND id IN (${placeholders(byKind.saved)})
-          LIMIT ${MAX_ITEMS + 1}`,
+          WHERE user_id = ? AND id IN (${placeholders(byKind.saved)})${sqlLimit(MAX_ITEMS)}`,
         userId, ...byKind.saved
       );
       for (const r of rs) rows.push(rowToItem('saved', r));
@@ -97,8 +118,7 @@ async function collect(userId, wanted) {
         `SELECT id, media_url, media_name, media_size, mime, type, created_at
            FROM messages
           WHERE sender_id = ? AND deleted_at IS NULL
-            AND media_url IS NOT NULL AND id IN (${placeholders(byKind.msg)})
-          LIMIT ${MAX_ITEMS + 1}`,
+            AND media_url IS NOT NULL AND id IN (${placeholders(byKind.msg)})${sqlLimit(MAX_ITEMS)}`,
         userId, ...byKind.msg
       );
       for (const r of rs) rows.push(rowToItem('msg', r));
@@ -113,8 +133,12 @@ async function collect(userId, wanted) {
     });
     uniq.sort((a, b) => b.at - a.at);
     const totalBytes = uniq.reduce((sum, r) => sum + r.size, 0);
-    if (uniq.length > MAX_ITEMS) throw limitError(413, `Terlalu banyak media (maks ${MAX_ITEMS})`);
-    if (totalBytes > MAX_BYTES) throw limitError(413, `Total ukuran melebihi batas arsip (${capText()}) — ekspor lebih sedikit`);
+    if (MAX_ITEMS > 0 && uniq.length > MAX_ITEMS) {
+      throw limitError(413, `Terlalu banyak media (maks ${MAX_ITEMS})`);
+    }
+    if (MAX_BYTES > 0 && totalBytes > MAX_BYTES) {
+      throw limitError(413, `Total ukuran melebihi batas arsip (${capText()}) — ekspor lebih sedikit`);
+    }
     return { rows: uniq, totalBytes };
   }
 
@@ -122,14 +146,14 @@ async function collect(userId, wanted) {
     db.all(
       `SELECT id, media_url, media_name, media_size, mime, type, created_at
          FROM saved_files WHERE user_id = ?
-        ORDER BY created_at DESC LIMIT ${MAX_ITEMS + 1}`,
+        ORDER BY created_at DESC${sqlLimit(MAX_ITEMS)}`,
       userId
     ),
     db.all(
       `SELECT id, media_url, media_name, media_size, mime, type, created_at
          FROM messages
         WHERE sender_id = ? AND deleted_at IS NULL AND media_url IS NOT NULL
-        ORDER BY created_at DESC LIMIT ${MAX_ITEMS + 1}`,
+        ORDER BY created_at DESC${sqlLimit(MAX_ITEMS)}`,
       userId
     ),
   ]);
@@ -139,8 +163,12 @@ async function collect(userId, wanted) {
   ];
   rows.sort((a, b) => b.at - a.at);
   const totalBytes = rows.reduce((sum, r) => sum + r.size, 0);
-  if (rows.length > MAX_ITEMS) throw limitError(413, `Galeri terlalu besar (${rows.length} media, maks ${MAX_ITEMS}) — ekspor lewat mode Pilih`);
-  if (totalBytes > MAX_BYTES) throw limitError(413, `Total galeri melebihi batas arsip (${capText()}) — ekspor sebagian lewat mode Pilih`);
+  if (MAX_ITEMS > 0 && rows.length > MAX_ITEMS) {
+    throw limitError(413, `Galeri terlalu besar (${rows.length} media, maks ${MAX_ITEMS}) — ekspor lewat mode Pilih`);
+  }
+  if (MAX_BYTES > 0 && totalBytes > MAX_BYTES) {
+    throw limitError(413, `Total galeri melebihi batas arsip (${capText()}) — ekspor sebagian lewat mode Pilih`);
+  }
   return { rows, totalBytes };
 }
 
