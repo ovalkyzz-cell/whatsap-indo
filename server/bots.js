@@ -145,11 +145,20 @@ function isBot(row) {
 
 function firstWord(text) {
   const m = String(text || '').trim().match(/^\S+/);
-  return m ? m[0].toLowerCase() : '';
+  return m ? m[0].toLowerCase().replace(/[?:!,.]+$/, '') : '';
 }
 
 function rest(text) {
   return String(text || '').trim().replace(/^\S+\s*/, '').trim();
+}
+
+/* Tanda baca kalimat (titik, koma, titik koma, titik dua) yang menempel di
+   ujung argumen adalah kebiasaan menulis, bukan bagian data — API lookup
+   memakai pencocokan persis sehingga "express." atau "user@mail.com." dianggap
+   tidak ditemukan. Hanya [. , ; :] yang dibuang; tanda tanya & seru tetap
+   dipertahankan karena bisa bermakna. */
+function trimEndPunct(value) {
+  return String(value || '').replace(/[.,;:]+$/, '').trim();
 }
 
 function sanitize(text, max) {
@@ -342,7 +351,7 @@ const VERIF_MENU = [
 async function verifReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
-  const arg = rest(text);
+  const arg = trimEndPunct(rest(text));
 
   if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return VERIF_MENU;
 
@@ -603,9 +612,51 @@ function pickAnswer(body) {
     body.choices && body.choices[0] && body.choices[0].text,
   ];
   for (const c of candidates) {
-    if (typeof c === 'string' && c.trim()) return c.trim();
+    const text = answerText(c);
+    if (text) return text;
   }
   return '';
+}
+
+/* Sebagian upstream mengembalikan jawaban sebagai string JSON (mis.
+   {"role":"assistant","reasoning":"..."}) atau objek bersarang. Bila diteruskan
+   apa adanya, pengguna melihat kurung kurawal mentah, bukan jawaban — jadi
+   objek semacam itu diurai dulu sampai ketemu kunci teks yang benar. Jawaban
+   yang memang JSON polos (tanpa kunci jawaban) TIDAK diurai supaya tidak
+   dipotong. */
+const ANSWER_KEYS = ['content', 'text', 'answer', 'response', 'result', 'output',
+  'message', 'reasoning', 'markdown', 'reply', 'choices', 'messages'];
+
+function textFromJson(node, depth) {
+  if (depth > 6 || node === null || node === undefined) return '';
+  if (typeof node === 'string') return node.trim();
+  if (typeof node !== 'object') return '';
+  if (Array.isArray(node)) {
+    // potongan jawaban ala OpenAI: [{ type: 'text', text: '...' }, ...]
+    const parts = node.map((n) => textFromJson(n, depth + 1)).filter(Boolean);
+    return parts.join('\n').trim();
+  }
+  for (const key of ANSWER_KEYS) {
+    if (!(key in node)) continue;
+    const found = textFromJson(node[key], depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+function answerText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return textFromJson(value, 0);
+  const raw = String(value).trim();
+  if (!raw) return '';
+  const looksJson = (raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'));
+  if (looksJson) {
+    try {
+      const inner = textFromJson(JSON.parse(raw), 0);
+      if (inner) return inner;
+    } catch { /* bukan JSON valid -> pakai teks apa adanya */ }
+  }
+  return raw;
 }
 
 const aiDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1455,7 +1506,7 @@ function stripHtml(html) {
 async function emailReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
-  const arg = rest(text);
+  const arg = trimEndPunct(rest(text));
 
   if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return EMAIL_MENU;
 
@@ -1729,6 +1780,8 @@ async function toolsReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
   const arg = rest(text);
+  // arg bukan teks bebas (kota, IP, paket, …): buang tanda baca kalimat ujung
+  const idArg = trimEndPunct(arg);
 
   if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return TOOLS_MENU;
 
@@ -1754,7 +1807,7 @@ async function toolsReply(raw) {
   }
 
   if (['cuaca', 'weather'].includes(cmd)) {
-    const kota = arg.trim();
+    const kota = idArg;
     if (!kota) return errBlock('Kota belum diisi', 'Gunakan: cuaca Jakarta');
     let body;
     try {
@@ -1781,7 +1834,7 @@ async function toolsReply(raw) {
   }
 
   if (['ip', 'ipinfo', 'geo'].includes(cmd)) {
-    const q = arg.trim();
+    const q = idArg;
     if (!q) return errBlock('Alamat belum diisi', 'Gunakan: ip 8.8.8.8');
     let body;
     try {
@@ -1831,7 +1884,7 @@ async function toolsReply(raw) {
   }
 
   if (['npm', 'paket', 'package'].includes(cmd)) {
-    const pkg = arg.trim();
+    const pkg = idArg;
     if (!pkg) return errBlock('Nama paket belum diisi', 'Gunakan: npm socket.io');
     let body;
     try {
@@ -1959,7 +2012,7 @@ const NPMZIP_MENU = [
 async function npmZipReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
-  const arg = rest(text);
+  const arg = trimEndPunct(rest(text));
 
   if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return NPMZIP_MENU;
   if (!['zip', 'unduh', 'source', 'kodezip'].includes(cmd)) {
@@ -2031,8 +2084,8 @@ const MODEL_MENU = [
 
 async function modelListReply(raw) {
   const text = String(raw || '').trim();
-  const cmd = firstWord(text).replace(/[?:!,.]+$/, '');
-  const arg = rest(text);
+  const cmd = firstWord(text);
+  const arg = trimEndPunct(rest(text));
 
   if (!cmd || ['menu', 'help', 'bantuan', '?'].includes(cmd)) return MODEL_MENU;
   if (!['daftar', 'list', 'model', 'cari', 'gratis', 'free'].includes(cmd)) {
@@ -2173,13 +2226,30 @@ function normalizeArg(key, value) {
   return v;
 }
 
+/* Tanda baca yang menempel di ujung token adalah kebiasaan menulis, bukan
+   bagian data: "github octocat.", "surat 1.", "kodepos gambir." membuat API
+   lookup (pencocokan persis) menjawab "tidak ditemukan". Titik selalu dibuang;
+   tanda kalimat lain (, ; :) hanya dibuang di token terakhir dan pada argumen
+   identitas (first/second/lastnum) supaya koma di tengah teks bebas — mis.
+   "brat halo, guys" — tetap utuh. Tanda tanya & seru tidak pernah disentuh. */
+function trimArgToken(value, isLast, isIdent) {
+  let v = String(value || '').replace(/\.+$/, '');
+  if (isLast || isIdent) v = v.replace(/[.,;:]+$/, '');
+  return v;
+}
+
+function trimTokens(list) {
+  const last = list.length - 1;
+  return list.map((t, i) => trimArgToken(t, i === last, false));
+}
+
 function buildParams(cmd, args) {
   const spec = cmd.params;
   if (!spec) return {};
   if (typeof spec === 'object' && !Array.isArray(spec)) {
     const entries = Object.entries(spec);
     const out = { ...(cmd.defaults || {}) };
-    const tokens = args ? String(args).trim().split(/\s+/).filter(Boolean) : [];
+    const tokens = args ? trimTokens(String(args).trim().split(/\s+/).filter(Boolean)) : [];
     let start = 0;
 
     // peran khusus: 'first'  = token pertama, 'second' = token kedua,
@@ -2187,19 +2257,19 @@ function buildParams(cmd, args) {
     for (const [key, role] of entries) {
       if (role === 'first') {
         if (!tokens.length) return null;
-        out[key] = normalizeArg(key, tokens[0]);
+        out[key] = normalizeArg(key, trimArgToken(tokens[0], false, true));
         start = 1;
       } else if (role === 'second') {
         if (tokens.length < start + 1) return null;
-        out[key] = normalizeArg(key, tokens[start]);
+        out[key] = normalizeArg(key, trimArgToken(tokens[start], false, true));
         start += 1;
       }
     }
 
     let end = tokens.length;
     for (const [key, role] of entries) {
-      if (role === 'lastnum' && end > start && /^\d{1,3}$/.test(tokens[end - 1])) {
-        out[key] = tokens[end - 1];
+      if (role === 'lastnum' && end > start && /^\d{1,3}$/.test(trimArgToken(tokens[end - 1], false, true))) {
+        out[key] = trimArgToken(tokens[end - 1], false, true);
         end -= 1;
       }
     }
@@ -2217,9 +2287,10 @@ function buildParams(cmd, args) {
     }
     return out;
   }
-  const tokens = args
+  const rawTokens = args
     ? args.split(/[\s,]+/).filter(Boolean).filter((t) => !['ke', '->', '→'].includes(t.toLowerCase()))
     : [];
+  const tokens = trimTokens(rawTokens);
   const out = { ...(cmd.defaults || {}) };
   for (let i = 0; i < spec.length; i++) {
     if (tokens[i] !== undefined) out[spec[i]] = normalizeArg(spec[i], tokens[i]);
