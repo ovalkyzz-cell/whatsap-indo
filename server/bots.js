@@ -558,13 +558,16 @@ const AI_MODELS = [
 ];
 const AI_DEFAULT = AI_MODELS[0];
 
-// instruksi format: model diminta menuangkan kode ke blok ```<bahasa>```
-// supaya frontend bisa menampilkannya ala VS Code lengkap dengan tombol Copy
+// instruksi format: model diminta menuangkan kode ke blok kode bernama bahasa
+// supaya frontend bisa menampilkannya ala VS Code lengkap dengan tombol Copy.
+// Tiga backtick TIDAK boleh muncul literal di prompt: upstream AI menolak
+// prompt yang memuatnya (502 "Layanan AI sedang tidak tersedia" ±32 detik),
+// jadi cara menulis blok kode dijelaskan dengan kata-kata saja.
 const CODING_HINT = [
   '',
   '',
   'Aturan format jawaban (wajib dipatuhi):',
-  '- Untuk kode pemrograman, tulis kode DI DALAM blok kode pakai tiga backtick dan nama bahasa, contoh: ```js, ```python, ```json, ```html. Jangan taruh kode di luar blok.',
+  '- Untuk kode pemrograman, tulis kode DI DALAM blok kode: awali dan akhiri kode dengan tiga backtick, disertai nama bahasa (contoh: js, python, json, html). Jangan taruh kode di luar blok.',
   '- Jangan menjelaskan kode baris per baris di luar blok; cukup satu-dua kalimat ringkas sebelum/sesudah blok.',
   '- Gunakan poin-poin (•) untuk penjelasan panjang, dan tulis jawaban dengan rapi serta profesional dalam Bahasa Indonesia.',
 ].join('\n');
@@ -661,6 +664,26 @@ function answerText(value) {
 
 const aiDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/* Kesalahan sementara (layanan AI sedang mati, rate limit, timeout) tidak akan
+   membaik dengan mengulang model yang sama berulang-ulang sampai anggaran
+   habis — setelah dua kali gagal sementara, sisa waktu lebih berguna untuk
+   dicoba ke model cadangan. */
+const TRANSIENT_AI_RE = /tidak tersedia|tidak terjangkau|tidak dapat dihubungi|busy|sibuk|rate ?limit|too many|429|50[234]|timeout|timed out|unavailable|try again|coba lagi/i;
+
+function trackAiError(err, errors, label) {
+  errors.push(`${label}: ${String((err && err.message) || err).slice(0, 160)}`);
+  if (err && err.permanent) return 'permanent';
+  if (err && TRANSIENT_AI_RE.test(String((err && err.message) || err))) return 'transient';
+  return 'error';
+}
+
+// pertanyaan pengguna bisa memuat tempelan kode dengan tiga backtick — sama
+// seperti CODING_HINT, prompt yang memuatnya ditolak upstream AI (502), jadi
+// diganti kata-kata sebelum dikirim
+function sanitizePrompt(text) {
+  return String(text || '').replace(/`{3,}/g, 'tiga backtick');
+}
+
 // satu percobaan tanya ke model: wajib menghasilkan jawaban, kalau kosong dianggap gagal
 async function aiAsk(model, prompt, timeout) {
   const body = await callApi(model.path, { prompt }, { timeout });
@@ -694,7 +717,7 @@ async function aiReply(raw) {
   }
 
   const active = model || AI_DEFAULT;
-  const prompt = question + CODING_HINT;
+  const prompt = sanitizePrompt(question) + CODING_HINT;
 
   // jawaban AI wajib keluar: coba ulang model pilihan, lalu model cadangan lain
   // sebelum menyerah, semua dalam satu anggaran waktu supaya tidak bikin nunggu lama
@@ -704,20 +727,27 @@ async function aiReply(raw) {
   let answer = null;
   let used = active;
   let permanent = null;
+  let transientFails = 0;
 
   for (const candidate of chain) {
     const tries = candidate.path === active.path ? 3 : 1;
     for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
       const remaining = AI_BUDGET - (Date.now() - startedAt);
-      if (remaining < 25000) break;
+      // satu panggilan AI bisa memakan ±50 detik (API menunggu kuota provider),
+      // jadi jangan mulai percobaan baru bila anggaran tersisa kurang dari itu
+      if (remaining < 45000) break;
       if (attempt) await aiDelay(10000);
       try {
         answer = await aiAsk(candidate, prompt, Math.min(AI_TIMEOUT, remaining));
         used = candidate;
       } catch (err) {
-        errors.push(`${candidate.label}: ${String((err && err.message) || err).slice(0, 160)}`);
+        const kind = trackAiError(err, errors, candidate.label);
         // key kosong / ditolak: semua model pasti gagal sama -> berhenti sekarang
-        if (err && err.permanent) { permanent = err; break; }
+        if (kind === 'permanent') { permanent = err; break; }
+        if (kind === 'transient') {
+          transientFails += 1;
+          if (transientFails >= 2) break;
+        }
       }
     }
     if (answer || permanent) break;
@@ -2418,26 +2448,39 @@ async function aiSpecReply(spec, raw) {
   const question = (matched ? rest(text) : text).trim();
   if (!question) return errBlock(cmd.usage, `Contoh: ${cmd.example || cmd.usage}`);
 
-  const prompt = question + CODING_HINT + (spec.hint ? `\n${spec.hint}` : '');
+  const prompt = sanitizePrompt(question) + CODING_HINT + (spec.hint ? `\n${spec.hint}` : '');
   const chain = [cmd, ...spec.commands.filter((c) => c.path !== cmd.path)];
+  // bot AI khusus biasanya hanya punya satu model; bila upstreamnya sedang
+  // mati, pertanyaan tetap dijawab lewat model umum (ditandai "cadangan")
+  // alih-alih pengguna cuma mendapat pesan gangguan
+  for (const fb of AI_MODELS) {
+    if (!chain.some((c) => c.path === fb.path)) chain.push(fb);
+  }
   const startedAt = Date.now();
   const errors = [];
   let answer = null;
   let used = cmd;
   let permanent = null;
+  let transientFails = 0;
 
   for (const candidate of chain) {
     const tries = candidate.path === cmd.path ? 3 : 1;
     for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
       const remaining = AI_BUDGET - (Date.now() - startedAt);
-      if (remaining < 25000) break;
+      // satu panggilan AI bisa memakan ±50 detik (API menunggu kuota provider),
+      // jadi jangan mulai percobaan baru bila anggaran tersisa kurang dari itu
+      if (remaining < 45000) break;
       if (attempt) await aiDelay(10000);
       try {
         answer = await aiAsk(candidate, prompt, Math.min(AI_TIMEOUT, remaining));
         used = candidate;
       } catch (err) {
-        errors.push(`${candidate.label}: ${String((err && err.message) || err).slice(0, 160)}`);
-        if (err && err.permanent) { permanent = err; break; }
+        const kind = trackAiError(err, errors, candidate.label);
+        if (kind === 'permanent') { permanent = err; break; }
+        if (kind === 'transient') {
+          transientFails += 1;
+          if (transientFails >= 2) break;
+        }
       }
     }
     if (answer || permanent) break;
