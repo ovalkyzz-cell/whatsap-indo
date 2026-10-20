@@ -11,6 +11,7 @@ const { requireAuth } = require('./auth');
 const quota = require('./storage');
 const db = require('./db');
 const ghstore = require('./ghstore');
+const { floodGuard } = require('./flood');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || '';
@@ -94,9 +95,12 @@ router.post('/uploads/sign', requireAuth, async (req, res) => {
   if (!useBlob) {
     return res.status(501).json({ error: 'Upload langsung belum tersedia' });
   }
-  const original = String(req.body?.name || 'file').slice(0, 255);
+  if (!floodGuard(`storage-sign:${req.user.id}`, 60, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.' });
+  }
+  const original = quota.cleanStr(req.body?.name || 'file', 255) || 'file';
   const size = Number(req.body?.size) || 0;
-  const mime = String(req.body?.mime || '').slice(0, 127);
+  const mime = quota.cleanMime(req.body?.mime || '');
   if (!(size > 0)) return res.status(400).json({ error: 'Ukuran file tidak valid' });
   if (size > MAX_FILE_SIZE) return res.status(413).json({ error: 'Ukuran file maksimal 2GB' });
   if (await rejectIfQuotaFull(req, res, size)) return;
@@ -154,37 +158,54 @@ router.post('/upload', requireAuth, (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Tidak ada file' });
 
     const meta = {
-      name: req.file.originalname,
+      name: quota.cleanStr(req.file.originalname, 255) || 'file',
       size: useBlob ? req.file.buffer.length : req.file.size,
-      mime: req.file.mimetype || 'application/octet-stream',
+      mime: quota.cleanMime(req.file.mimetype || ''),
       type: classify(req.file.mimetype || '', req.file.originalname),
     };
-
-    // kuota storage: tolak berkas yang sudah jelas melampaui batas paket
-    if (await rejectIfQuotaFull(req, res, meta.size)) {
+    if (!floodGuard(`storage-upload:${req.user.id}`, 60, 60_000)) {
       if (!useBlob && req.file.path) {
         try { await fs.promises.unlink(req.file.path); } catch { /* sudah hilang */ }
       }
-      return;
+      return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.' });
     }
 
     if (!useBlob) {
+      // berkas tersimpan sebagai /uploads/ — kuota dihitung saat dikirim
+      // sebagai pesan / disimpan (model lama), jadi cukup tolak bila penuh
+      if (await rejectIfQuotaFull(req, res, meta.size)) {
+        try { await fs.promises.unlink(req.file.path); } catch { /* sudah hilang */ }
+        return;
+      }
       return res.status(201).json({ url: `/uploads/${req.file.filename}`, ...meta });
     }
 
-    // Penyimpanan utama: GitHub Releases (repo private) — tahan lama, tidak
-    // tergantung kuota Vercel Blob, dan tidak ikut rotasi database.
-    // Deduplikasi: konten sama (sha256+ukuran) hanya disimpan sekali.
-    const id = crypto.randomUUID();
+    // jalur dbfiles (GitHub/Postgres): RESERVE atomik di sini — inilah titik
+    // hitung kuota untuk url /api/storage/dbfiles/* (kirim pesan tidak lagi
+    // menghitung ganda). Gagal -> 413; gagal simpan -> release.
+    const reserved = await quota.reserve(
+      req.user.id, meta.size, await quota.quotaOf(req.user)
+    );
+    if (!reserved) {
+      return res.status(413).json({
+        error: 'Storage penuh — hapus media lama atau upgrade paket.',
+        storage: await quota.usage(req.user),
+      });
+    }
+    let stored = false;
     try {
+      const id = crypto.randomUUID();
       const buf = req.file.buffer;
       const hash = crypto.createHash('sha256').update(buf).digest('hex');
       const key = `${meta.size}:${hash}`;
+      // dedup hanya dalam sesi pengguna SENDIRI — url & nama berkas milik
+      // pengguna lain tidak boleh bocor lewat mekanisme dedup
       const dup = await db.get(
-        'SELECT id, name, size, mime FROM db_files WHERE content_key = ? AND complete = 1 LIMIT 1',
-        key
+        'SELECT id, name, size, mime FROM db_files WHERE content_key = ? AND complete = 1 AND user_id = ? LIMIT 1',
+        key, req.user.id
       );
       if (dup) {
+        await quota.release(req.user.id, meta.size); // tak jadi disimpan
         return res.status(201).json({
           url: `/api/storage/dbfiles/${dup.id}`,
           name: dup.name,
@@ -196,8 +217,8 @@ router.post('/upload', requireAuth, (req, res) => {
       }
       if (ghstore.enabled()) {
         const compress = shouldCompress(meta.mime);
-        const stored = compress ? await ghstore.compressBuf(buf) : buf;
-        const assetId = await ghstore.uploadPart(id, 0, stored);
+        const payload = compress ? await ghstore.compressBuf(buf) : buf;
+        const assetId = await ghstore.uploadPart(id, 0, payload);
         // chunk_size = ukuran file (satu potongan tunggal) supaya perhitungan
         // offset Range saat penyajian tepat.
         await db.run(
@@ -209,6 +230,7 @@ router.post('/upload', requireAuth, (req, res) => {
           `INSERT INTO db_file_parts (file_id, idx, asset_id, hash) VALUES (?, 0, ?, ?)`,
           id, assetId, hash
         );
+        stored = true;
         return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
       }
       // cadangan bila token GitHub tak terpasang: simpan langsung di database
@@ -217,8 +239,10 @@ router.post('/upload', requireAuth, (req, res) => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         id, req.user.id, buf, meta.mime, meta.name, meta.size, key, Date.now()
       );
+      stored = true;
       return res.status(201).json({ url: `/api/storage/dbfiles/${id}`, ...meta });
     } catch (err) {
+      if (!stored) await quota.release(req.user.id, meta.size);
       console.error('upload:', err.message);
       return res.status(500).json({ error: 'Gagal menyimpan file' });
     }
@@ -233,12 +257,32 @@ router.post('/upload', requireAuth, (req, res) => {
 
 // inisialisasi sesi unggah: buat baris metadata (belum lengkap)
 router.post('/storage/dbfiles/init', requireAuth, async (req, res) => {
-  const original = String(req.body?.name || 'file').slice(0, 255);
+  if (!floodGuard(`storage-init:${req.user.id}`, 60, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.' });
+  }
+  const original = quota.cleanStr(req.body?.name || 'file', 255) || 'file';
   const size = Number(req.body?.size) || 0;
-  const mime = String(req.body?.mime || '').slice(0, 127);
+  const mime = quota.cleanMime(req.body?.mime || '');
   if (!(size > 0)) return res.status(400).json({ error: 'Ukuran file tidak valid' });
   if (size > MAX_FILE_SIZE) return res.status(413).json({ error: 'Ukuran file maksimal 2GB' });
-  if (await rejectIfQuotaFull(req, res, size)) return;
+  // batasi sesi unggahan yang belum selesai (cegah penumpukan baris yatim)
+  try {
+    const pend = await db.get(
+      'SELECT COUNT(*) AS n FROM db_files WHERE user_id = ? AND complete = 0',
+      req.user.id
+    );
+    if (Number(pend && pend.n) >= 10) {
+      return res.status(429).json({ error: 'Terlalu banyak unggahan belum selesai. Tunggu atau selesaikan dulu.' });
+    }
+  } catch { /* lanjut — kuota tetap jadi pagar */ }
+  // RESERVE atomik di sini: byte unggahan langsung menempati kuota sehingga
+  // file tak pernah dikirim pun tetap dibatasi (dan dilepas oleh GC bila ditinggalkan)
+  if (!(await quota.reserve(req.user.id, size, await quota.quotaOf(req.user)))) {
+    return res.status(413).json({
+      error: 'Storage penuh — hapus media lama atau upgrade paket.',
+      storage: await quota.usage(req.user),
+    });
+  }
 
   const id = crypto.randomUUID();
   const chunkSize = DB_CHUNK_SIZE;
@@ -247,10 +291,11 @@ router.post('/storage/dbfiles/init', requireAuth, async (req, res) => {
     await db.run(
       `INSERT INTO db_files (id, user_id, data, mime, name, size, chunk_size, total_chunks, complete, created_at)
        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 0, ?)`,
-      id, req.user.id, mime || 'application/octet-stream', original, size, chunkSize, totalChunks, Date.now()
+      id, req.user.id, mime, original, size, chunkSize, totalChunks, Date.now()
     );
-    res.status(201).json({ id, chunkSize, totalChunks, size, name: original, mime: mime || 'application/octet-stream' });
+    res.status(201).json({ id, chunkSize, totalChunks, size, name: original, mime });
   } catch (err) {
+    await quota.release(req.user.id, size);
     console.error('dbfiles init:', err.message);
     res.status(500).json({ error: 'Gagal menyiapkan unggahan' });
   }
@@ -268,6 +313,9 @@ router.put(
     if (!Number.isInteger(idx) || idx < 0) return res.status(400).json({ error: 'Index tidak valid' });
     const body = req.body;
     if (!Buffer.isBuffer(body) || !body.length) return res.status(400).json({ error: 'Potongan kosong' });
+    if (!floodGuard(`storage-chunk:${req.user.id}`, 600, 60_000)) {
+      return res.status(429).json({ error: 'Terlalu banyak potongan. Coba lagi sebentar lagi.' });
+    }
 
     let row = null;
     try {
@@ -341,10 +389,10 @@ router.post('/storage/dbfiles/:id/complete', requireAuth, async (req, res) => {
   if (!/^[\w-]{1,64}$/.test(id)) return res.status(400).json({ error: 'ID tidak valid' });
   let row = null;
   try {
-    row = await db.get(
-      'SELECT user_id, mime, name, size, chunk_size, total_chunks, complete FROM db_files WHERE id = ?',
-      id
-    );
+      row = await db.get(
+        'SELECT user_id, mime, name, size, chunk_size, total_chunks, complete, counted FROM db_files WHERE id = ?',
+        id
+      );
   } catch { /* jatuh ke 404 */ }
   if (!row) return res.status(404).json({ error: 'Unggahan tidak ditemukan' });
   if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Akses ditolak' });
@@ -359,15 +407,20 @@ router.post('/storage/dbfiles/:id/complete', requireAuth, async (req, res) => {
         return res.status(400).json({ error: `Potongan belum lengkap (${parts.length}/${row.total_chunks})` });
       }
       // kunci deduplikasi: ukuran + sha256 tiap potongan (posisi potongan
-      // deterministik sehingga daftar hash ini setara sha256 penuh)
+      // deterministik sehingga daftar hash ini setara sha256 penuh).
+      // DIBATASI sesi pengguna sendiri — url & nama berkas milik pengguna lain
+      // tidak boleh bocor lewat dedup.
       const key = `${row.size}:` + parts.map((p) => p.hash).join(':');
       const dup = await db.get(
-        'SELECT id, name, size, mime FROM db_files WHERE content_key = ? AND complete = 1 AND id <> ? LIMIT 1',
+        'SELECT id, name, size, mime FROM db_files WHERE content_key = ? AND complete = 1 AND id <> ? AND user_id = ? LIMIT 1',
         key,
-        id
+        id,
+        req.user.id
       );
       if (dup) {
-        await cleanupOwnFile(id);
+        // berkas ini baru dibuat & sudah terhitung (reserve di init) ->
+        // buang isinya + bebaskan kuotanya, lalu pakai berkas duplikat
+        await quota.cleanupDbfile(row);
         return res.status(200).json({
           url: `/api/storage/dbfiles/${dup.id}`,
           name: dup.name,
@@ -393,19 +446,6 @@ router.post('/storage/dbfiles/:id/complete', requireAuth, async (req, res) => {
   }
 });
 
-/* Buang unggahan sendiri (aset GitHub + baris metadata) — dipakai bila
-   konten terbukti duplikat dengan file yang sudah ada. */
-async function cleanupOwnFile(fileId) {
-  try {
-    const parts = await db.all('SELECT asset_id FROM db_file_parts WHERE file_id = ?', fileId);
-    for (const p of parts) await ghstore.deleteAsset(p.asset_id);
-    await db.run('DELETE FROM db_file_parts WHERE file_id = ?', fileId);
-    await db.run('DELETE FROM db_files WHERE id = ?', fileId);
-  } catch (err) {
-    console.error('cleanup dup:', err.message);
-  }
-}
-
 /* Penyaji file yang disimpan di database (cadangan saat Blob mati).
    Akses publik via id acak yang tak terduga (sama seperti URL Blob publik
    & /uploads/). Konten ditentukan dari mime yang tercatat. Mendukung HTTP
@@ -413,6 +453,9 @@ async function cleanupOwnFile(fileId) {
 router.get('/storage/dbfiles/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!/^[\w-]{1,64}$/.test(id)) return res.status(400).json({ error: 'ID tidak valid' });
+  if (!floodGuard(`storage-get:${req.ip || 'unknown'}`, 300, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu banyak permintaan. Coba lagi sebentar lagi.' });
+  }
   let row = null;
   try {
     row = await db.get(
@@ -422,7 +465,9 @@ router.get('/storage/dbfiles/:id', async (req, res) => {
   } catch { /* jatuh ke 404 */ }
   if (!row || !row.complete) return res.status(404).json({ error: 'File tidak ditemukan' });
 
-  const mime = row.mime || 'application/octet-stream';
+  // mime lama bisa berisi karakter aneh (baris era-impor) — dinormalkan saat
+  // hendak ditulis ke header
+  const mime = quota.cleanMime(row.mime);
   let dataBuffer = null; // jalur lama: seluruh isi ada di kolom data
   let totalSize;
   if (row.data && row.data.length) {

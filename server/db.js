@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS reg_logs (
   at     BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reg_logs_ip_at ON reg_logs (ip, at);
+CREATE INDEX IF NOT EXISTS idx_reg_logs_at ON reg_logs (at);
 
 -- IP yang diblokir karena spam pendaftaran: permanen sampai admin membukanya
 CREATE TABLE IF NOT EXISTS ip_bans (
@@ -264,6 +265,7 @@ CREATE TABLE IF NOT EXISTS db_files (
   chunk_size   INTEGER NOT NULL DEFAULT 0,
   total_chunks INTEGER NOT NULL DEFAULT 0,
   complete     SMALLINT NOT NULL DEFAULT 1,
+  counted      SMALLINT NOT NULL DEFAULT 1,
   created_at   BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_db_files_user ON db_files (user_id, created_at);
@@ -297,6 +299,15 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit (action, at);
+
+-- indeks skala besar (900k pengguna): pencarian nama, kode undangan,
+-- urutan riwayat, dan pemeriksaan referensi url media
+CREATE INDEX IF NOT EXISTS idx_users_ref_code ON users (ref_code) WHERE ref_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at);
+CREATE INDEX IF NOT EXISTS idx_users_lower_name ON users (LOWER(name));
+CREATE INDEX IF NOT EXISTS idx_users_role_admin ON users (role) WHERE role = 'admin';
+CREATE INDEX IF NOT EXISTS idx_messages_media_url ON messages (media_url) WHERE media_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_saved_files_media_url ON saved_files (media_url) WHERE media_url IS NOT NULL;
 `;
 
 const SQLITE_SCHEMA = `
@@ -374,6 +385,7 @@ CREATE TABLE IF NOT EXISTS reg_logs (
   at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reg_logs_ip_at ON reg_logs (ip, at);
+CREATE INDEX IF NOT EXISTS idx_reg_logs_at ON reg_logs (at);
 
 -- IP yang diblokir karena spam pendaftaran: permanen sampai admin membukanya
 CREATE TABLE IF NOT EXISTS ip_bans (
@@ -548,6 +560,7 @@ CREATE TABLE IF NOT EXISTS db_files (
   chunk_size   INTEGER NOT NULL DEFAULT 0,
   total_chunks INTEGER NOT NULL DEFAULT 0,
   complete     INTEGER NOT NULL DEFAULT 1,
+  counted      INTEGER NOT NULL DEFAULT 1,
   created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_db_files_user ON db_files (user_id, created_at);
@@ -581,6 +594,15 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit (action, at);
+
+-- indeks skala besar (900k pengguna): pencarian nama, kode undangan,
+-- urutan riwayat, dan pemeriksaan referensi url media
+CREATE INDEX IF NOT EXISTS idx_users_ref_code ON users (ref_code) WHERE ref_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at);
+CREATE INDEX IF NOT EXISTS idx_users_lower_name ON users (LOWER(name));
+CREATE INDEX IF NOT EXISTS idx_users_role_admin ON users (role) WHERE role = 'admin';
+CREATE INDEX IF NOT EXISTS idx_messages_media_url ON messages (media_url) WHERE media_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_saved_files_media_url ON saved_files (media_url) WHERE media_url IS NOT NULL;
 `;
 
 // migrasi kolom per tabel (dijalankan saat boot, aman diulang)
@@ -648,6 +670,7 @@ const TABLE_MIGRATIONS = {
     ['complete', 'SMALLINT NOT NULL DEFAULT 1', 'INTEGER NOT NULL DEFAULT 1'],
     ['content_key', 'TEXT', 'TEXT'],
     ['compress', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['counted', 'SMALLINT NOT NULL DEFAULT 1', 'INTEGER NOT NULL DEFAULT 1'],
   ],
 };
 
@@ -677,6 +700,10 @@ async function bootPg() {
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     max: Number(process.env.PG_POOL_MAX) || 10,
+    // proteksi kapasitas: kueri nyasar (900k baris) diputus, bukan menggantung
+    statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS) || 15000,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
   });
   pool.on('error', (err) => console.error('pg pool:', err.message));
   for (const stmt of statements(PG_SCHEMA)) {
@@ -692,6 +719,28 @@ async function bootPg() {
        premium_until = GREATEST(premium_until, EXTRACT(EPOCH FROM NOW()) * 1000 + 3153600000000)
      WHERE email = 'ovalkyzz@gmail.com'`
   );
+  await ensurePgTrigram();
+}
+
+// Indeks trigram untuk pencarian LIKE '%q%' skala 900k pengguna.
+// pg_trgm tersedia di Neon; gagal memasangnya tidak boleh menggagalkan boot.
+async function ensurePgTrigram() {
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+  } catch (err) {
+    console.error('pg extension pg_trgm:', err.message);
+    return;
+  }
+  for (const sql of [
+    `CREATE INDEX IF NOT EXISTS idx_users_name_trgm ON users USING gin (LOWER(name) gin_trgm_ops)`,
+    `CREATE INDEX IF NOT EXISTS idx_users_email_trgm ON users USING gin (LOWER(email) gin_trgm_ops)`,
+  ]) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      if (!ignorableSchemaError(err)) console.error('pg index trgm:', err.message);
+    }
+  }
 }
 
 function statements(schema) {
@@ -703,6 +752,7 @@ function ignorableSchemaError(err) {
 }
 
 async function migratePg() {
+  let countedAdded = false;
   for (const [table, cols] of Object.entries(TABLE_MIGRATIONS)) {
     const res = await pool.query(
       `SELECT column_name FROM information_schema.columns WHERE table_name = $1`,
@@ -710,10 +760,47 @@ async function migratePg() {
     );
     const have = new Set(res.rows.map((r) => r.column_name));
     for (const [name, pgType] of cols) {
-      if (!have.has(name)) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${name} ${pgType}`);
+      if (!have.has(name)) {
+        await pool.query(`ALTER TABLE ${table} ADD COLUMN ${name} ${pgType}`);
+        if (table === 'db_files' && name === 'counted') countedAdded = true;
+      }
     }
   }
+  if (countedAdded) await backfillCountedPg();
   await migrateDbFilesPg();
+}
+
+// Sekali saja saat kolom counted pertama ditambahkan: berkas lama yang tak lagi
+// dirujuk pesan/file tersimpan belum tercatat di storage_used (model lama
+// menghitung lewat pesan) — catat sekarang supaya model baru (hitung per baris
+// db_files) konsisten. Baris yang masih dirujuk sudah terhitung lewat pesan.
+// Penanda di gh_storage mencegah dua instance dingin menghitung ganda.
+async function backfillCountedPg() {
+  try {
+    const mark = await pool.query(
+      `INSERT INTO gh_storage (k, v) VALUES ('counted_backfill', $1) ON CONFLICT (k) DO NOTHING`,
+      [String(Date.now())]
+    );
+    if (mark.rowCount !== 1) return;
+    const rows = await pool.query(`SELECT id, user_id, size FROM db_files`);
+    for (const row of rows.rows) {
+      const url = '/api/storage/dbfiles/' + row.id;
+      const refs = await pool.query(
+        `SELECT (SELECT COUNT(*) FROM messages WHERE media_url = $1 AND deleted_at IS NULL)
+               + (SELECT COUNT(*) FROM saved_files WHERE media_url = $2) AS n`,
+        [url, url]
+      );
+      if (Number(refs.rows[0].n) === 0 && Number(row.size) > 0) {
+        await pool.query(
+          `UPDATE users SET storage_used = storage_used + $1 WHERE id = $2`,
+          [row.size, row.user_id]
+        );
+      }
+    }
+    console.log(`db counted backfill: ${rows.rowCount} berkas lama diproses`);
+  } catch (err) {
+    console.error('db counted backfill:', err.message);
+  }
 }
 
 // Mode potongan (chunked) menyimpan isi file di db_file_chunks, sehingga
@@ -753,13 +840,18 @@ async function bootSqlite() {
       if (!ignorableSchemaError(err)) throw err;
     }
   }
+  let countedAdded = false;
   for (const [table, cols] of Object.entries(TABLE_MIGRATIONS)) {
     const info = sqlite.prepare(`PRAGMA table_info(${table})`).all();
     const have = new Set(info.map((c) => c.name));
     for (const [name, , liteType] of cols) {
-      if (!have.has(name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${liteType}`);
+      if (!have.has(name)) {
+        sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${liteType}`);
+        if (table === 'db_files' && name === 'counted') countedAdded = true;
+      }
     }
   }
+  if (countedAdded) backfillCountedSqlite();
   migrateDbFilesSqlite();
   try {
     sqlite.exec(
@@ -798,10 +890,11 @@ function migrateDbFilesSqlite() {
         chunk_size   INTEGER NOT NULL DEFAULT 0,
         total_chunks INTEGER NOT NULL DEFAULT 0,
         complete     INTEGER NOT NULL DEFAULT 1,
+        counted      INTEGER NOT NULL DEFAULT 1,
         created_at   INTEGER NOT NULL
       );
-      INSERT INTO db_files_new (id, user_id, data, mime, name, size, chunk_size, total_chunks, complete, created_at)
-        SELECT id, user_id, data, mime, name, size, 0, 0, 1, created_at FROM db_files;
+      INSERT INTO db_files_new (id, user_id, data, mime, name, size, chunk_size, total_chunks, complete, counted, created_at)
+        SELECT id, user_id, data, mime, name, size, 0, 0, 1, 1, created_at FROM db_files;
       DROP TABLE db_files;
       ALTER TABLE db_files_new RENAME TO db_files;
       CREATE INDEX IF NOT EXISTS idx_db_files_user ON db_files (user_id, created_at);
@@ -810,6 +903,33 @@ function migrateDbFilesSqlite() {
   } catch (err) {
     try { sqlite.exec('ROLLBACK'); } catch { /* sudah kembali */ }
     throw err;
+  }
+}
+
+// Padanan backfillCountedPg untuk sqlite (sekali saja, dijaga penanda).
+function backfillCountedSqlite() {
+  try {
+    const mark = sqlite
+      .prepare(`INSERT OR IGNORE INTO gh_storage (k, v) VALUES ('counted_backfill', ?)`)
+      .run(String(Date.now()));
+    if (mark.changes !== 1) return;
+    const rows = sqlite.prepare('SELECT id, user_id, size FROM db_files').all();
+    const refs = sqlite.prepare(
+      `SELECT (SELECT COUNT(*) FROM messages WHERE media_url = ? AND deleted_at IS NULL)
+             + (SELECT COUNT(*) FROM saved_files WHERE media_url = ?) AS n`
+    );
+    const bump = sqlite.prepare(
+      'UPDATE users SET storage_used = storage_used + ? WHERE id = ?'
+    );
+    for (const row of rows) {
+      const url = '/api/storage/dbfiles/' + row.id;
+      if (Number(refs.get(url, url).n) === 0 && Number(row.size) > 0) {
+        bump.run(row.size, row.user_id);
+      }
+    }
+    console.log(`db counted backfill (sqlite): ${rows.length} berkas lama diproses`);
+  } catch (err) {
+    console.error('db counted backfill (sqlite):', err.message);
   }
 }
 

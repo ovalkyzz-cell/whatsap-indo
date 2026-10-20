@@ -125,25 +125,8 @@ function rateLimit({ windowMs, max }) {
 const authLimiter = rateLimit({ windowMs: 60_000, max: 60 });
 
 // ---------- anti spam / anti flood (perlindungan akun) ----------
-// Bucket sederhana per kunci: mencegah banjir pesan (flood) yang bisa membuat
-// akun dianggap spam, sekaligus membatasi aksi sensitif (buat grup, status).
-const floodBuckets = new Map();
-const floodSweep = setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of floodBuckets) if (now - bucket.start > bucket.windowMs * 2) floodBuckets.delete(key);
-}, 60_000);
-floodSweep.unref();
-
-function floodGuard(key, max, windowMs) {
-  const now = Date.now();
-  let bucket = floodBuckets.get(key);
-  if (!bucket || now - bucket.start > windowMs) {
-    bucket = { start: now, count: 0, windowMs };
-    floodBuckets.set(key, bucket);
-  }
-  bucket.count += 1;
-  return bucket.count <= max;
-}
+// Implementasi bersama di server/flood.js (dipakai juga oleh rute storage).
+const { floodGuard } = require('./flood');
 
 // ---------- pengiriman event (lokal + relay ke instance lain) ----------
 async function dispatch(pairs) {
@@ -572,14 +555,15 @@ app.post('/api/storage/bulk-delete', auth.requireAuth, ah(async (req, res) => {
     if (!id) { failed++; continue; }
     try {
       if (kind === 'saved') {
-        const row = await db.get('SELECT media_size FROM saved_files WHERE id = ? AND user_id = ?', id, req.user.id);
         const r = await storage.deleteFile(req.user, id);
-        if (r.ok) { deleted++; freed += Math.max(0, Number(row && row.media_size) || 0); }
+        if (r.ok) { deleted++; freed += Math.max(0, Number(r.freed) || 0); }
         else failed++;
       } else {
         const row = await db.get('SELECT * FROM messages WHERE id = ? AND sender_id = ? AND deleted_at IS NULL', id, req.user.id);
-        if (row && row.media_url) { await softDeleteMediaMessage(row); deleted++; freed += Math.max(0, Number(row.media_size) || 0); }
-        else failed++;
+        if (row && row.media_url) {
+          freed += (await softDeleteMediaMessage(row)) || 0;
+          deleted++;
+        } else failed++;
       }
     } catch { failed++; }
   }
@@ -1494,15 +1478,32 @@ async function markChatRead(chatId, userId) {
 // hapus media sebuah pesan: soft-delete + bebaskan kuota + broadcast ke anggota.
 // dipakai hapus tunggal (DELETE /api/messages/:id), hapus massal & pembersihan
 // file rusak agar logikanya konsisten di satu tempat.
+// pengembalian: byte yang benar-benar dilepas dari kuota (0 bila berkas dbfile
+// masih dipakai referensi lain).
 async function softDeleteMediaMessage(row) {
   await db.run('UPDATE messages SET deleted_at = ?, body = \'\' WHERE id = ?', Date.now(), row.id);
+  let freed = 0;
   if (row.media_url && Number(row.media_size) > 0) {
-    await storage.release(row.sender_id, Number(row.media_size));
+    if (storage.isDbfileUrl(row.media_url)) {
+      // dbfile dihitung lewat baris db_files (model hitung tunggal): hanya
+      // bebaskan bila berkasnya benar-benar dibuang (tak lagi dirujuk);
+      // file sudah hilang -> lepas sisa hitungan era pesan
+      const d = await storage.maybeDropDbfile(row.media_url);
+      if (d.dropped) freed = d.freed;
+      else if (!d.exists) {
+        freed = Math.max(0, Number(row.media_size) || 0);
+        if (freed) await storage.release(row.sender_id, freed);
+      }
+    } else {
+      freed = Math.max(0, Number(row.media_size) || 0);
+      await storage.release(row.sender_id, freed);
+    }
   }
   const fresh = await db.get('SELECT * FROM messages WHERE id = ?', row.id);
   const payload = (await helpers.serializeMessages([fresh], null))[0];
   const members = await helpers.getChatMemberIds(row.chat_id);
   await emitToUsers(members, 'message:deleted', payload);
+  return freed;
 }
 
 app.delete('/api/messages/:id', auth.requireAuth, ah(async (req, res) => {
@@ -2070,8 +2071,12 @@ app.get('/api/settings/public', ah(async (req, res) => {
 }));
 
 // ---------- panel admin ----------
+// di-cache 60 detik: 7×COUNT(*) di tabel besar (900k pengguna) membuat halaman
+// admin berdenyut — data admin boleh telat sedikit
+let adminStatsCache = null;
 async function adminStats() {
   const now = Date.now();
+  if (adminStatsCache && now - adminStatsCache.at < 60_000) return adminStatsCache.data;
   const [u, c, m, s, p, pend, banned] = await Promise.all([
     db.get('SELECT COUNT(*) AS n FROM users'),
     db.get('SELECT COUNT(*) AS n FROM chats'),
@@ -2081,7 +2086,7 @@ async function adminStats() {
     db.get(`SELECT COUNT(*) AS n FROM users WHERE account_status = 'pending' AND banned = 0`),
     db.get('SELECT COUNT(*) AS n FROM users WHERE banned = 1'),
   ]);
-  return {
+  const data = {
     users: Number(u.n) || 0,
     chats: Number(c.n) || 0,
     messages: Number(m.n) || 0,
@@ -2090,6 +2095,8 @@ async function adminStats() {
     pending: Number(pend.n) || 0,
     banned: Number(banned.n) || 0,
   };
+  adminStatsCache = { at: now, data };
+  return data;
 }
 
 app.get('/api/admin/overview', auth.requireAuth, requireAdmin, ah(async (req, res) => {
@@ -2655,6 +2662,42 @@ function startCallSweeper() {
   callSweepTimer = tick;
   void sweepCalls();
 }
+
+// ---------- sweep storage yatim + retensi log ----------
+// Unggahan chunked yang ditinggalkan (belum selesai > 24 jam) membebaskan
+// kuota & membuang baris/asetnya; log masuk/registrasi dipangkas 30 hari
+// supaya tabel tak tumbuh tanpa batas pada skala 900k pengguna.
+async function sweepStaleUploads() {
+  try {
+    const r = await storage.sweepStaleUploads();
+    if (r.removed) console.log(`sweep upload: ${r.removed} unggahan yatim dibuang, ${r.freed} byte dilepas`);
+  } catch (err) {
+    console.error('sweep upload:', err.message);
+  }
+}
+
+async function sweepLogs() {
+  try {
+    const day = 24 * 60 * 60 * 1000;
+    await db.run('DELETE FROM login_logs WHERE at < ?', Date.now() - 30 * day);
+    await db.run('DELETE FROM reg_logs WHERE at < ?', Date.now() - 30 * day);
+  } catch (err) {
+    console.error('sweep logs:', err.message);
+  }
+}
+
+let storageSweepTimer = null;
+function startStorageSweeper() {
+  if (storageSweepTimer) return;
+  const uploads = setInterval(() => void sweepStaleUploads(), 10 * 60_000);
+  if (uploads.unref) uploads.unref();
+  const logs = setInterval(() => void sweepLogs(), 6 * 60 * 60_000);
+  if (logs.unref) logs.unref();
+  storageSweepTimer = uploads;
+  void sweepStaleUploads();
+  void sweepLogs();
+}
+startStorageSweeper();
 
 async function handleDisconnect(user, socketId) {
   try {
@@ -3236,10 +3279,21 @@ async function handleSend(user, payload) {
     : 0;
   let storageReserved = 0;
   if (mediaSize) {
-    const quota = await storage.quotaOf(user);
-    const ok = await storage.reserve(user.id, mediaSize, quota);
-    if (!ok) throw new Error(storageFullMessage(await storage.usage(user), mediaSize));
-    storageReserved = mediaSize;
+    // url dbfile sudah terhitung saat unggahan (reserve di init/multipart) —
+    // jangan dihitung dua kali di sini
+    let counted = false;
+    if (storage.isDbfileUrl(mediaUrl)) {
+      const f = await db.get(
+        'SELECT counted FROM db_files WHERE id = ?', storage.dbfileIdOf(mediaUrl)
+      );
+      counted = Boolean(f) && Number(f.counted) === 1;
+    }
+    if (!counted) {
+      const quota = await storage.quotaOf(user);
+      const ok = await storage.reserve(user.id, mediaSize, quota);
+      if (!ok) throw new Error(storageFullMessage(await storage.usage(user), mediaSize));
+      storageReserved = mediaSize;
+    }
   }
 
   try {
@@ -3252,9 +3306,9 @@ async function handleSend(user, payload) {
       cleanType,
       vault.encrypt(text),
       mediaUrl,
-      media?.name ? String(media.name).slice(0, 255) : null,
+      media?.name ? storage.cleanStr(media.name, 255) : null,
       mediaSize || null,
-      media?.mime || null,
+      media?.mime ? storage.cleanMime(media.mime) : null,
       cleanViewOnce,
       cleanDuration,
       cleanReplyTo,
