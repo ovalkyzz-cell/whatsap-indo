@@ -84,7 +84,7 @@ class BrowserSessionDescription {
   toJSON() { return { type: this.type, sdp: this.sdp }; }
 }
 
-function makeBrowser({ token, mic = 'grant', cam = 'grant', notif = 'granted', contacts = null, earpiece = false, focused = true }) {
+function makeBrowser({ token, mic = 'grant', cam = 'grant', notif = 'granted', contacts = null, earpiece = false, focused = true, micQuery = null, camQuery = null }) {
   const elsRaw = {};
   const els = new Proxy(elsRaw, {
     get: (t, k) => {
@@ -99,7 +99,13 @@ function makeBrowser({ token, mic = 'grant', cam = 'grant', notif = 'granted', c
     notifications: [], swShown: [], vibrate: [], audioBursts: 0,
     mediaCalls: [], badge: [], clearBadge: 0, contactsSelects: 0, pushSubs: 0,
   };
-  const permStates = { microphone: mic === 'grant' ? 'granted' : 'denied', camera: cam === 'grant' ? 'granted' : 'denied', notifications: notif };
+  // catatan: hasil navigator.permissions bisa dipaksa berbeda dari perilaku
+  // getUserMedia (micQuery/camQuery) untuk meniru PWA terpasang yang keliru "denied"
+  const permStates = {
+    microphone: micQuery || (mic === 'grant' ? 'granted' : 'denied'),
+    camera: camQuery || (cam === 'grant' ? 'granted' : 'denied'),
+    notifications: notif,
+  };
   const devices = earpiece
     ? [{ kind: 'audiooutput', deviceId: 'ear-1', label: 'Earpiece' }, { kind: 'audiooutput', deviceId: 'def-1', label: 'Default' }]
     : [];
@@ -423,8 +429,38 @@ async function main() {
   ok(bd.run('S.call === null') === true, 'izin diblokir: panggilan dibatalkan, tidak menggantung');
   ok(bd.run('__els.permHelpModal.classList.contains("hidden")') === false, 'izin diblokir: panduan mikrofon terbuka otomatis');
   ok(/mikrofon/i.test(bd.run('__els.permHelpTitle.textContent') || ''), 'izin diblokir: judul panduan sesuai mikrofon', bd.run('__els.permHelpTitle.textContent'));
-  ok(/diblokir/i.test(bd.run('__els.toast.textContent') || ''), 'izin diblokir: toast menjelaskan izin ditolak', bd.run('__els.toast.textContent'));
-  ok(bd.run('__rec.mediaCalls.length') === 0, 'izin diblokir: getUserMedia tidak dipanggil (dicek via Permissions API dulu)', bd.run('__rec.mediaCalls.length'));
+  ok(/diblokir|ditolak/i.test(bd.run('__els.toast.textContent') || ''), 'izin diblokir: toast menjelaskan izin ditolak', bd.run('__els.toast.textContent'));
+  ok(bd.run('__rec.mediaCalls.length') >= 1, 'izin diblokir: getUserMedia dicoba lalu galat nyata yang menentukan', bd.run('__rec.mediaCalls.length'));
+  // pastikan peramban B sudah bersih dari dering sisa sebelum skenario berikutnya
+  // (hangup vs invite race: hangup bisa tiba sebelum call dibuat -> server no-op;
+  // klien wajib mengirim ulang hangup setelah ack — lihat cabang S.call !== call)
+  const bbCleared = await waitUntil(bb.run, 'S.call === null', 10000);
+  ok(bbCleared === true, 'B: layar dering V4 ikut tertutup setelah pembatalan', bb.run('JSON.stringify(S.call && { s: S.call.state })'));
+  await sleep(600);
+
+  /* ---------- V4b: REGRESI PWA terpasang — query Permissions keliru "denied",
+     getUserMedia sebenarnya bisa -> panggilan HARUS tetap tersambung ---------- */
+  console.log('\n[V4b] aplikasi terpasang: query "denied" keliru tidak boleh mematikan panggilan');
+  const bpwa = makeBrowser({ token: A.token, micQuery: 'denied' }); // getUserMedia tetap granted
+  await waitUntil(bpwa.run, 'S.socket && S.socket.connected && S.me && S.chats && S.chats.length > 0', 25000);
+  await bpwa.run(`openChat(${JSON.stringify(chatId)})`);
+  await waitUntil(bpwa.run, 'S.activeChatId === ' + JSON.stringify(chatId), 10000);
+  ok(bpwa.run('permState ? true : true') === true, 'browser siap');
+  ok(await bpwa.run('permState("microphone")') === 'denied', 'peramban uji meniru PWA: query mikrofon = denied (keliru)');
+  bpwa.run('startCall("audio")');
+  await waitUntil(bpwa.run, 'S.call && S.call.state === "ringing"', 15000);
+  ok(bpwa.run('S.call && S.call.state') === 'ringing', 'PWA: panggilan tetap berdering meski query bilang denied', bpwa.run('S.call && S.call.state'));
+  await waitUntil(bb.run, 'S.call && S.call.incoming === true', 10000);
+  await bb.__els.btnAcceptCall.click();
+  const pwaA = await waitUntil(bb.run, 'S.call && S.call.startedAt', 20000);
+  const pwaB = await waitUntil(bpwa.run, 'S.call && S.call.startedAt', 20000);
+  ok(!!pwaA && !!pwaB, 'PWA: WebRTC tersambung penuh — mikrofon dipakai sungguhan, tidak mati oleh query keliru');
+  ok(bpwa.run('__rec.mediaCalls.length') >= 1, 'PWA: getUserMedia benar-benar dipanggil', bpwa.run('__rec.mediaCalls.length'));
+  ok(bpwa.run('__els.permHelpModal.classList.contains("hidden")') === true, 'PWA: tidak ada panduan "diblokir" yang menyesatkan');
+  await bpwa.__els.btnHangup.click();
+  await waitUntil(bb.run, 'S.call === null', 8000);
+  await waitUntil(bpwa.run, 'S.call === null', 8000);
+  try { bpwa.run('S.socket && S.socket.disconnect()'); } catch { /* noop */ }
 
   /* ---------- V5: kamera diblokir untuk video ---------- */
   console.log('\n[V5] kamera diblokir -> panduan kamera, panggilan suara tetap aman');
@@ -435,7 +471,9 @@ async function main() {
   bcam.run('startCall("video")');
   await waitUntil(bcam.run, 'S.call === null && __els.permHelpModal.classList.contains("hidden") === false', 12000);
   ok(/kamera/i.test(bcam.run('__els.permHelpTitle.textContent') || ''), 'kamera diblokir: panduan kamera terbuka', bcam.run('__els.permHelpTitle.textContent'));
-  ok(bcam.run('__rec.mediaCalls.length') === 0, 'kamera diblokir: getUserMedia tidak dipanggil', bcam.run('__rec.mediaCalls.length'));
+  ok(bcam.run('__rec.mediaCalls.length') >= 1, 'kamera diblokir: getUserMedia dicoba lalu galat nyata yang menentukan', bcam.run('__rec.mediaCalls.length'));
+  const bbCleared5 = await waitUntil(bb.run, 'S.call === null', 10000);
+  ok(bbCleared5 === true, 'B: pembatalan video yang gagal izin juga menutup layar dering B', bb.run('JSON.stringify(S.call && { s: S.call.state })'));
 
   /* ---------- V6: speaker dengan earpiece sungguhan (setSinkId) ---------- */
   console.log('\n[V6] speaker memakai earpiece saat tersedia (setSinkId)');

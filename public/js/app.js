@@ -1912,7 +1912,11 @@ async function showSystemNotif(data) {
   if (data.icon) options.icon = data.icon;
   if (NOTIF.vibrate) options.vibrate = data.type === 'call' ? [400, 200, 400, 200, 400] : [200, 100, 200];
   try {
-    const reg = NOTIF.sw || (await navigator.serviceWorker?.ready);
+    // aplikasi terpasang: tunggu SW aktif (beri batas waktu) sebelum memakainya
+    const reg = NOTIF.sw || await Promise.race([
+      navigator.serviceWorker?.ready,
+      new Promise((r) => setTimeout(() => r(null), 3000)),
+    ]);
     if (reg && reg.showNotification) {
       await reg.showNotification(data.title || 'Pesan baru', options);
       return;
@@ -2011,6 +2015,7 @@ async function unsubscribePush() {
 async function enableNotif() {
   if (!('Notification' in window)) { toast('Browser ini tidak mendukung notifikasi'); return; }
   try {
+    await waitForSW(); // aplikasi terpasang: SW aktif dulu supaya dialog izin tampil
     const perm = await Notification.requestPermission();
     syncNotifUI();
     if (perm === 'granted') {
@@ -2045,6 +2050,28 @@ function syncNotifUI() {
    kontak -> hanya saat tombol "Pilih dari kontak perangkat" ditekan;
    notifikasi -> saat onboarding / tombol Aktifkan; latar belakang & layar kunci -> info + panduan. */
 const PERM = { active: null };
+
+/* Aplikasi terpasang (PWA / "Tambahkan ke Layar Utama"): izin notifikasi &
+   kontak dikelola berbeda dari tab biasa — panduan menyesuaikan otomatis. */
+function isInstalledPwa() {
+  try {
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+  } catch { /* matchMedia tidak tersedia */ }
+  try { if (navigator.standalone === true) return true; } catch { /* non-iOS */ }
+  return false;
+}
+
+/* Aplikasi terpasang menuntut service worker sudah aktif sebelum dialog izin
+   notifikasi berani tampil — tunggu dulu (beri batas waktu agar tidak menggantung). */
+async function waitForSW(ms = 4000) {
+  if (!('serviceWorker' in navigator)) return NOTIF.sw || null;
+  try {
+    return await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((r) => setTimeout(() => r(NOTIF.sw || null), ms)),
+    ]);
+  } catch { return NOTIF.sw || null; }
+}
 
 function permSupported(kind) {
   if (kind === 'notifications' || kind === 'lockscreen') return 'Notification' in window;
@@ -2126,6 +2153,7 @@ async function refreshPermUI() {
 async function requestPerm(kind) {
   if (kind === 'notifications' || kind === 'lockscreen') {
     if (!('Notification' in window)) return 'unsupported';
+    await waitForSW(); // aplikasi terpasang: SW aktif dulu supaya dialog izin tampil
     const p = await Notification.requestPermission();
     if (p === 'granted') void subscribePush();
     return p;
@@ -2262,8 +2290,15 @@ async function openPermHelp(kind) {
   $('permHelpTitle').textContent = info.title;
   $('permHelpWhy').textContent = info.why;
   const steps = $('permHelpSteps');
+  const installed = isInstalledPwa();
   const render = (state) => {
-    steps.innerHTML = info.steps.map(([plat, text]) => `<li><strong>${esc(plat)}</strong> — ${esc(text)}</li>`).join('')
+    const list = info.steps.slice();
+    if (installed) {
+      // aplikasi terpasang tidak punya bilah alamat -> arahkan ke izin aplikasi sistem
+      list.push(['Dibuka sebagai aplikasi (layar utama)',
+        'Karena ini aplikasi terpasang, buka Pengaturan perangkat → Aplikasi → RTC-Core → Izin & Notifikasi (setelan situs di bilah alamat tidak ada di sini). Bila perlu, hapus aplikasi lalu pasang ulang dari menu browser.']);
+    }
+    steps.innerHTML = list.map(([plat, text]) => `<li><strong>${esc(plat)}</strong> — ${esc(text)}</li>`).join('')
       + `<li><strong>Status saat ini</strong> — ${PERM_STATE_TEXT[state] || state}.</li>`;
   };
   render('memeriksa...');
@@ -6096,9 +6131,18 @@ function startCall(kind) {
   S.call = call;
   openCallUI(call);
   setCallState('Menghubungkan...');
+  // minta mikrofon/kamera SEKARANG juga, masih dalam rangkaian klik pengguna —
+  // aplikasi terpasang (PWA) kadang menuntut getUserMedia lahir dari gestur
+  void ensurePeer().catch(() => {});
 
   S.socket.emit('call:invite', { to: chat.peer.id, callId: call.callId, kind }, (res) => {
-    if (S.call !== call) return;
+    if (S.call !== call) {
+      // panggilan sudah dibatalkan lokal (mis. izin media ditolak) SEBELUM server
+      // sempat membalas — hangup tadi bisa tiba di server lebih dulu dan jadi
+      // no-op, jadi tutup lagi setelah server mengonfirmasi panggilan dibuat
+      if (res?.ok) S.socket?.emit('call:hangup', { to: chat.peer.id, callId: call.callId });
+      return;
+    }
     if (!res?.ok) {
       toast(res?.error || 'Tidak dapat menghubungi pengguna');
       closeCall();
@@ -6108,8 +6152,6 @@ function startCall(kind) {
     setCallState('Berdering...');
     startRingTone('out'); // nada ringback berulang sampai dijawab / ditutup
     armRingTimeout(call);
-    // aktifkan mic/kamera lebih awal supaya pratinjau tampil saat berdering
-    ensurePeer().catch(() => {});
   });
 }
 
@@ -6246,21 +6288,6 @@ function ensurePeer() {
   return call.peerReady;
 }
 
-/* izin yang dibutuhkan panggilan ini: mikrofon untuk suara, mikrofon + kamera
-   untuk video. dipastikan SEBELUM getUserMedia supaya yang ditolak langsung
-   diarahkan ke panduan, bukan pesan generik. */
-async function mediaDeniedKind(call) {
-  if (!navigator.permissions || !navigator.permissions.query) return null;
-  const need = call.kind === 'video' ? ['microphone', 'camera'] : ['microphone'];
-  for (const kind of need) {
-    try {
-      const st = await navigator.permissions.query({ name: kind });
-      if (st.state === 'denied') return kind;
-    } catch { /* browser tak bisa mengecek status -> biarkan prompt yang bekerja */ }
-  }
-  return null;
-}
-
 // tentukan izin mana yang bermasalah dari kegagalan getUserMedia
 async function mediaFailKind(call, err) {
   const name = (err && err.name) || '';
@@ -6288,13 +6315,11 @@ async function createPeer(call) {
     throw err;
   }
 
-  const denied = await mediaDeniedKind(call);
-  if (denied) {
-    abortCall(call, `Izin ${denied === 'camera' ? 'kamera' : 'mikrofon'} diblokir — izinkan lewat panduan`);
-    openPermHelp(denied);
-    throw new Error('Izin mikrofon/kamera diblokir');
-  }
-
+  /* Catatan penting untuk aplikasi terpasang (PWA / "Tambahkan ke Layar Utama"):
+     status dari navigator.permissions.query() bisa keliru (sering "denied"
+     padahal izin asli masih ada), sehingga dulu panggilan mati sebelum
+     mikrofon sempat dicoba. Sekarang getUserMedia SELALU dicoba lebih dulu —
+     galat nyatalah yang menentukan (lalu diarahkan ke panduan). */
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({

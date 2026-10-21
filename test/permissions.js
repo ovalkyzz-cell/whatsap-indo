@@ -34,7 +34,7 @@ ok(/renotify:\s*true/.test(sw), 'sw: renotify aktif (dering ulang notifikasi)');
 ok(/options\.vibrate\s*=/.test(sw), 'sw: pola getar notifikasi diatur');
 ok(/getSWPref\('vibrate'/.test(sw), 'sw: getar mengikuti preferensi pengguna');
 ok(/setAppBadge/.test(sw), 'sw: lencana aplikasi (badge) ditangani');
-ok(/rtc-core-v14/.test(sw), 'sw: versi cache diperbarui (v14)');
+  ok(/rtc-core-v15/.test(sw), 'sw: versi cache diperbarui (v15 — aplikasi terpasang ikut menerima perbaikan)');
 
 const sIndex = read('server/index.js');
 ok(/async function pushChatTargets/.test(sIndex), 'server: push memakai pushChatTargets (privasi + bisukan)');
@@ -205,11 +205,16 @@ async function probeRequests() {
   ok(info.perm === false && /aplikasi lain/i.test(info.msg), 'NotReadableError -> perangkat dipakai aplikasi lain', info.msg);
   ok(mk && run('mediaErrorInfo({ name: "OverconstrainedError" }, "camera").perm') === false, 'OverconstrainedError -> bukan masalah izin');
 
-  ctx.__permStates = { microphone: 'granted', camera: 'denied' };
-  ok(await run('mediaDeniedKind({ kind: "video" })') === 'camera', 'panggilan video: izin kamera yang diblokir terdeteksi', await run('mediaDeniedKind({ kind: "video" })'));
-  ok(await run('mediaDeniedKind({ kind: "audio" })') === null, 'panggilan suara: kamera tidak ikut diperiksa (mikrofon granted)');
-  ctx.__permStates = { microphone: 'denied' };
-  ok(await run('mediaDeniedKind({ kind: "audio" })') === 'microphone', 'panggilan suara: mikrofon diblokir terdeteksi');
+  /* Perbaikan PWA terpasang: status navigator.permissions bisa keliru
+     (sering "denied" di aplikasi terpasang) — panggilan tidak boleh mati
+     sebelum getUserMedia sempat dicoba. */
+  const appSrc = read('public/js/app.js');
+  ok(!/mediaDeniedKind/.test(appSrc), 'createPeer tidak lagi memblokir panggilan dari hasil query Permissions API yang bisa keliru');
+  ok(/await navigator\.mediaDevices\.getUserMedia\(\{\s*audio: true/.test(appSrc.replace(/\n\s*/g, ' ')) || /stream = await navigator\.mediaDevices\.getUserMedia/.test(appSrc), 'getUserMedia tetap dicoba lebih dulu; galat nyata yang menentukan');
+  ok(fn('isInstalledPwa') && fn('waitForSW'), 'modul aplikasi terpasang (isInstalledPwa/waitForSW) tersedia');
+  ok(run('typeof isInstalledPwa()') === 'boolean', 'isInstalledPwa() aman dipanggil di tab biasa');
+  await run('waitForSW(50)');
+  ok(true, 'waitForSW tidak menggantung (beri batas waktu)');
   ok(await run('mediaFailKind({ kind: "audio" }, { name: "NotAllowedError" })') === 'microphone', 'kegagalan panggilan suara menunjuk mikrofon');
   ok(await run('mediaFailKind({ kind: "video" }, { name: "NotFoundError" })') === 'camera', 'kamera hilang pada video -> ditunjuk kamera');
 
