@@ -91,6 +91,8 @@ function publicUser(row) {
       bio: !!row.priv_bio,
       status: !!row.priv_status,
       avatar: !!row.priv_avatar,
+      // true = isi pesan tidak ditampilkan di notifikasi layar kunci
+      hideNotifContent: !!row.priv_hide_notif_content,
     },
     createdAt: row.created_at,
     lastSeen: row.last_seen,

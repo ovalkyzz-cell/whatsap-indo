@@ -294,6 +294,12 @@
           fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"
           transform="rotate(133.5 12 12)" />
       </symbol>
+      <symbol id="ic-speaker" viewBox="0 0 24 24">
+        <path d="M4 9.5h3.4L12.5 5v14L7.4 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M15.6 9a4.4 4.4 0 0 1 0 6M18.2 6.6a8 8 0 0 1 0 10.8" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" />
+      </symbol>
       <symbol id="ic-archive" viewBox="0 0 24 24">
         <rect x="3.2" y="4.4" width="17.6" height="4.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7" />
         <path d="M4.8 8.8v9.4a1.4 1.4 0 0 0 1.4 1.4h11.6a1.4 1.4 0 0 0 1.4-1.4V8.8" fill="none" stroke="currentColor"
@@ -519,6 +525,11 @@
       </header>
       <div class="search-wrap">
         <input type="search" id="userSearchInput" placeholder="Cari berdasarkan email atau nama..." />
+      </div>
+      <div class="newchat-extras">
+        <button class="btn-ghost" id="btnPickContact" type="button">
+          <svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-users" /></svg> Pilih dari kontak perangkat
+        </button>
       </div>
       <div class="chat-list" id="userSearchResults">
         <div class="empty-state">Ketik email atau nama teman untuk mulai chat.</div>
@@ -1098,6 +1109,38 @@
           <div class="pv-text"><strong>Nada &amp; getar</strong><small>Bunyi ketika pesan baru masuk</small></div>
           <label class="switch"><input type="checkbox" id="notifSoundToggle" /><span></span></label>
         </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Getar</strong><small>Vibrasi saat pesan &amp; panggilan masuk</small></div>
+          <label class="switch"><input type="checkbox" id="notifVibrateToggle" /><span></span></label>
+        </div>
+
+        <div class="pv-sec"><strong>Layar kunci &amp; latar belakang</strong></div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Sembunyikan isi pesan</strong><small>Nama pengirim tetap tampil, isi pesan disembunyikan</small></div>
+          <label class="switch"><input type="checkbox" data-pv="hideNotifContent" /><span></span></label>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Notifikasi latar belakang</strong><small id="permBgText">Dikirim lewat push saat aplikasi ditutup</small></div>
+          <button class="pv-btn" id="btnPermBg" data-perm="background" type="button">Periksa</button>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Layar kunci</strong><small id="permLockText">Cara notifikasi tampil saat layar terkunci</small></div>
+          <button class="pv-btn" id="btnPermLock" data-perm="lockscreen" type="button">Panduan</button>
+        </div>
+
+        <div class="pv-sec"><strong>Izin perangkat</strong></div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Mikrofon</strong><small id="permMicText">Dipinta saat memulai panggilan suara</small></div>
+          <button class="pv-btn" id="btnPermMic" data-perm="microphone" type="button">Periksa</button>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Kamera</strong><small id="permCamText">Dipinta saat memulai panggilan video</small></div>
+          <button class="pv-btn" id="btnPermCam" data-perm="camera" type="button">Periksa</button>
+        </div>
+        <div class="pv-row">
+          <div class="pv-text"><strong>Kontak perangkat</strong><small id="permContactsText">Dipinta saat memilih kontak di Chat baru</small></div>
+          <button class="pv-btn" id="btnPermContacts" data-perm="contacts" type="button">Periksa</button>
+        </div>
 
         <div class="pv-sec"><strong>Privasi</strong></div>
         <div class="pv-row">
@@ -1257,6 +1300,7 @@
       <div class="call-actions">
         <button class="call-btn toggle" id="btnToggleMic" title="Mic"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-mic" /></svg></button>
         <button class="call-btn toggle" id="btnToggleCam" title="Kamera"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-video" /></svg></button>
+        <button class="call-btn toggle" id="btnToggleSpeaker" title="Speaker"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-speaker" /></svg></button>
         <button class="call-btn decline" id="btnHangup"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-hangup" /></svg> Akhiri</button>
       </div>
     </div>
@@ -1359,6 +1403,40 @@
       <div class="crop-actions">
         <button type="button" class="btn-ghost" id="btnCropCancel">Batal</button>
         <button type="button" class="btn-primary" id="btnCropOk"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-check" /></svg> Pakai Foto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PANDUAN IZIN PERANGKAT ============ -->
+  <div class="call-modal hidden" id="permHelpModal" role="dialog" aria-modal="true" aria-labelledby="permHelpTitle">
+    <div class="call-box perm-box">
+      <div class="perm-ico" id="permHelpIco" aria-hidden="true">⚙️</div>
+      <h3 id="permHelpTitle">Izin perangkat</h3>
+      <p id="permHelpWhy">—</p>
+      <ul class="perm-steps" id="permHelpSteps"></ul>
+      <div class="call-actions">
+        <button class="call-btn decline" id="btnPermHelpClose" type="button">Tutup</button>
+        <button class="call-btn accept" id="btnPermHelpRetry" type="button">Coba lagi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PENGANTAR IZIN (sekali saat pertama masuk) ============ -->
+  <div class="call-modal hidden" id="permIntroModal" role="dialog" aria-modal="true" aria-labelledby="permIntroTitle">
+    <div class="call-box perm-box">
+      <div class="perm-ico" aria-hidden="true">🔔</div>
+      <h3 id="permIntroTitle">Kenali izin aplikasi</h3>
+      <p>RTC-Core hanya meminta izin saat fiturnya dipakai — tidak sekaligus.</p>
+      <ul class="perm-steps">
+        <li><strong>Notifikasi</strong> — tahu saat ada pesan &amp; panggilan, walau aplikasi ditutup.</li>
+        <li><strong>Mikrofon</strong> — hanya saat memulai panggilan suara/video.</li>
+        <li><strong>Kamera</strong> — hanya saat memulai panggilan video.</li>
+        <li><strong>Kontak</strong> — hanya saat memilih kontak dari perangkat di Chat baru.</li>
+        <li><strong>Latar belakang &amp; layar kunci</strong> — notifikasi tetap muncul; isi pesan bisa disembunyikan di Privasi.</li>
+      </ul>
+      <div class="call-actions">
+        <button class="call-btn decline" id="btnPermIntroSkip" type="button">Nanti saja</button>
+        <button class="call-btn accept" id="btnPermIntroNotif" type="button">Aktifkan notifikasi</button>
       </div>
     </div>
   </div>

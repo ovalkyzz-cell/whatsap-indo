@@ -1,7 +1,7 @@
 /* Service Worker: notifikasi WhatsApp-style (online & offline) */
 'use strict';
 
-const CACHE = 'rtc-core-v13';
+const CACHE = 'rtc-core-v14';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -77,6 +77,50 @@ function readPayload(event) {
   }
 }
 
+/* Preferensi pengguna disimpan klien di IndexedDB (localStorage tidak ada di
+   service worker) — dipakai saat notifikasi dibuat tanpa ada jendela terbuka. */
+function getSWPref(key, def) {
+  return new Promise((resolve) => {
+    try {
+      const open = indexedDB.open('rtc-prefs', 1);
+      open.onupgradeneeded = () => { open.result.createObjectStore('kv'); };
+      open.onsuccess = () => {
+        const dbx = open.result;
+        try {
+          const req = dbx.transaction('kv', 'readonly').objectStore('kv').get(key);
+          req.onsuccess = () => { resolve(req.result === undefined ? def : req.result); try { dbx.close(); } catch { /* noop */ } };
+          req.onerror = () => { resolve(def); try { dbx.close(); } catch { /* noop */ } };
+        } catch { resolve(def); }
+      };
+      open.onerror = () => resolve(def);
+    } catch { resolve(def); }
+  });
+}
+
+// simpan preferensi klien agar notifikasi tanpa jendela tetap mengikutinya
+function setSWPref(key, value) {
+  try {
+    const open = indexedDB.open('rtc-prefs', 1);
+    open.onupgradeneeded = () => { open.result.createObjectStore('kv'); };
+    open.onsuccess = () => {
+      const dbx = open.result;
+      try {
+        dbx.transaction('kv', 'readwrite').objectStore('kv').put(value, key);
+      } catch { /* noop */ }
+      try { dbx.close(); } catch { /* noop */ }
+    };
+  } catch { /* IndexedDB tidak tersedia */ }
+}
+
+// lencana aplikasi (angka/ titik pada ikon) — jumlah belum dibaca bila diketahui
+function setBadgeCount(n) {
+  try {
+    if (!self.navigator || typeof self.navigator.setAppBadge !== 'function') return;
+    const p = (typeof n === 'number' && n > 0) ? self.navigator.setAppBadge(n) : self.navigator.setAppBadge();
+    if (p && p.catch) p.catch(() => {});
+  } catch { /* badge tidak didukung */ }
+}
+
 self.addEventListener('push', (event) => {
   const data = readPayload(event);
   const isCall = data.type === 'call';
@@ -98,8 +142,13 @@ self.addEventListener('push', (event) => {
       data,
     };
     if (data.icon) options.icon = data.icon;
+    // getar mengikuti pengaturan "Getar" pengguna (disimpan di IndexedDB)
+    const vibrate = await getSWPref('vibrate', true);
+    if (vibrate) options.vibrate = isCall ? [400, 200, 400, 200, 400] : [200, 100, 200];
     // panggilan: notifikasi menempel sampai disentuh (apa pun status daringnya)
     if (isCall) options.requireInteraction = true;
+    // lencana ikon aplikasi: pesan baru tanpa jendela -> tandai ada yang belum dibaca
+    if (!isCall) setBadgeCount(typeof data.badge === 'number' ? data.badge : undefined);
     await self.registration.showNotification(title, options);
   })());
 });
@@ -121,5 +170,8 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data === 'skip-waiting') self.skipWaiting();
+  if (event.data === 'skip-waiting') { self.skipWaiting(); return; }
+  if (!event.data || typeof event.data !== 'object') return;
+  if (event.data.type === 'wa-badge') setBadgeCount(Number(event.data.n) || 0);
+  if (event.data.type === 'wa-pref' && event.data.key) setSWPref(event.data.key, event.data.value);
 });

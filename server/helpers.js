@@ -208,7 +208,7 @@ async function loadChatBundle(rows, viewerId) {
   const bundle = {
     peers: new Map(), last: new Map(), unread: new Map(), statuses: new Map(),
     counts: new Map(), roles: new Map(), archived: new Map(), bots: new Map(),
-    viewerId,
+    mutes: new Map(), viewerId,
   };
   const chatIds = rows.map((r) => r.id);
   if (!chatIds.length) return bundle;
@@ -267,6 +267,14 @@ async function loadChatBundle(rows, viewerId) {
   );
   for (const row of unreadRows) bundle.unread.set(row.chat_id, Number(row.n));
 
+  // notifikasi chat per penerima (bisukan percakapan ini)
+  const muteRows = await db.all(
+    `SELECT chat_id FROM chat_notifs WHERE chat_id IN (${ids}) AND user_id = ? AND muted = 1`,
+    ...chatIds,
+    viewerId
+  );
+  for (const row of muteRows) bundle.mutes.set(row.chat_id, true);
+
   const statusIds = [...bundle.last.values()].map((m) => m.id);
   if (statusIds.length) bundle.statuses = await statusesFor(statusIds);
   return bundle;
@@ -298,6 +306,7 @@ function buildChat(row, bundle, online) {
     lastMessage: last ? serializeMessage(last, bundle.statuses.get(last.id) || 'sent') : null,
     unread: bundle.unread.get(row.id) || 0,
     archived: !!bundle.archived.get(row.id),
+    muted: !!bundle.mutes.get(row.id),
     createdAt: row.created_at,
   };
 }

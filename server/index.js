@@ -824,6 +824,7 @@ const PRIVACY_COLUMNS = {
   bio: 'priv_bio',
   status: 'priv_status',
   avatar: 'priv_avatar',
+  hideNotifContent: 'priv_hide_notif_content',
 };
 
 app.patch('/api/me', auth.requireAuth, ah(async (req, res) => {
@@ -1289,6 +1290,24 @@ app.post('/api/chats/:id/archive', auth.requireAuth, ah(async (req, res) => {
     req.user.id
   );
   res.json({ ok: true, chatId: req.params.id, archived });
+}));
+
+// notifikasi per chat: bisukan percakapan ini untuk satu pengguna.
+// disimpan di server supaya push saat aplikasi tutup ikut dibungkam.
+app.post('/api/chats/:id/notifications', auth.requireAuth, ah(async (req, res) => {
+  if (!(await helpers.isMember(req.params.id, req.user.id))) {
+    return res.status(403).json({ error: 'Bukan anggota chat ini' });
+  }
+  const muted = !!req.body?.muted;
+  await db.run(
+    `INSERT INTO chat_notifs (chat_id, user_id, muted, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (chat_id, user_id) DO UPDATE SET muted = excluded.muted, updated_at = excluded.updated_at`,
+    req.params.id,
+    req.user.id,
+    muted ? 1 : 0,
+    Date.now()
+  );
+  res.json({ ok: true, chatId: req.params.id, muted });
 }));
 
 /* ================= terminal mini (admin / permanen / bisnis) =================
@@ -2525,6 +2544,42 @@ async function pushNotify(userIds, payload) {
   return sent;
 }
 
+/* Push pesan chat — menghormati preferensi tiap penerima:
+   1. chat yang dibisukan penerima -> tidak dikirim push sama sekali,
+   2. penerima yang menyembunyikan isi pesan -> badan jadi "Pesan baru"
+      (nama pengirim tetap tampil pada judul, sesuai privasi layar kunci). */
+async function pushChatTargets(userIds, chatId, payload) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (!ids.length) return 0;
+  const marks = ids.map(() => '?').join(',');
+  let mutedRows = [];
+  let privRows = [];
+  try {
+    [mutedRows, privRows] = await Promise.all([
+      db.all(
+        `SELECT user_id FROM chat_notifs WHERE chat_id = ? AND muted = 1 AND user_id IN (${marks})`,
+        chatId,
+        ...ids
+      ),
+      db.all(`SELECT id, priv_hide_notif_content FROM users WHERE id IN (${marks})`, ...ids),
+    ]);
+  } catch (err) {
+    // preferensi tidak terbaca -> tetap kirim push (jangan sampai notifikasi hilang)
+    console.error('push pref:', err.message);
+    return pushNotify(ids, payload);
+  }
+  const muted = new Set(mutedRows.map((r) => String(r.user_id)));
+  const hidden = new Set(
+    privRows.filter((r) => Number(r.priv_hide_notif_content) === 1).map((r) => String(r.id))
+  );
+  const clear = ids.filter((i) => !muted.has(String(i)) && !hidden.has(String(i)));
+  const masked = ids.filter((i) => !muted.has(String(i)) && hidden.has(String(i)));
+  let sent = 0;
+  if (clear.length) sent += await pushNotify(clear, payload);
+  if (masked.length) sent += await pushNotify(masked, { ...payload, body: 'Pesan baru', hidePreview: true });
+  return sent;
+}
+
 // ---------- static frontend ----------
 // panel admin pemeriksa bug menempel di aplikasi (https://<domain>/admin)
 // sehingga pemeriksaan bisa dijalankan langsung dari domain produksi
@@ -3062,7 +3117,7 @@ async function deliverBotMessage(bot, chatId, text, targets, media) {
   const offline = targets.filter((uid) => !deliveredTo.includes(uid));
   if (offline.length) {
     await Promise.race([
-      pushNotify(offline, {
+      pushChatTargets(offline, chatId, {
         title: bot.name,
         body: (String(caption || '').trim() || (hasMedia ? String(mediaName || 'Mengirim media') : 'Pesan')).slice(0, 140),
         chatId,
@@ -3381,7 +3436,7 @@ async function handleSend(user, payload) {
       url: `/?chat=${chatId}`,
     };
     await Promise.race([
-      pushNotify(notifyTargets, payload),
+      pushChatTargets(notifyTargets, chatId, payload),
       new Promise((resolve) => setTimeout(() => resolve(0), 2500)),
     ]);
   }

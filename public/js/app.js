@@ -350,13 +350,8 @@ async function bootSession(data) {
   S.token = data.token;
   S.me = data.user;
   localStorage.setItem('wa_token', S.token);
-  if ('Notification' in window && Notification.permission === 'default') {
-    // gesture klik tombol Masuk: izin notifikasi agar bisa tampil saat aplikasi ditutup
-    Notification.requestPermission().then((perm) => {
-      syncNotifUI();
-      if (perm === 'granted') void subscribePush();
-    }).catch(() => {});
-  }
+  // izin notifikasi tidak lagi diminta diam-diam di sini: pengantar izin
+  // (maybeShowPermIntro) yang menjelaskan lalu memintanya dengan sadar
   await startApp();
 }
 
@@ -371,6 +366,9 @@ async function startApp() {
   updateComposerButtons();
   connectSocket();
   void handleDeepLinks(); // ?join=<kode grup> & ?u=<id kontak>
+  void refreshPermUI();
+  setSWPref('vibrate', NOTIF.vibrate); // selaraskan preferensi getar untuk service worker
+  setTimeout(maybeShowPermIntro, 600); // pengantar izin bertahap (sekali per perangkat)
 }
 
 /* deep link: ?join=<kode> -> bergabung ke grup; ?u=<id> -> buka chat kontak.
@@ -1747,6 +1745,7 @@ function connectSocket() {
 /* ================= notifikasi (melayang + sistem + push offline) ================= */
 const NOTIF = {
   sound: localStorage.getItem('wa_notif_sound') !== '0',
+  vibrate: localStorage.getItem('wa_notif_vibrate') !== '0',
   sw: null,
   seen: new Map(),
 };
@@ -1755,11 +1754,15 @@ function notifPerm() {
   return ('Notification' in window) ? Notification.permission : 'unsupported';
 }
 
+// jejak pesan sudah dinotifikasi -> penanda deduplikasi (5 menit, mencegah
+// notifikasi ganda saat socket mengirim ulang / push & socket berbarengan)
+const SEEN_TTL_MS = 300000;
+
 function markSeen(id) {
   if (!id) return;
   NOTIF.seen.set(id, Date.now());
-  if (NOTIF.seen.size > 120) {
-    const cutoff = Date.now() - 120000;
+  if (NOTIF.seen.size > 240) {
+    const cutoff = Date.now() - SEEN_TTL_MS;
     for (const [k, t] of NOTIF.seen) if (t < cutoff) NOTIF.seen.delete(k);
   }
 }
@@ -1767,7 +1770,12 @@ function markSeen(id) {
 function seenRecently(id) {
   if (!id) return false;
   const t = NOTIF.seen.get(id);
-  return !!t && Date.now() - t < 60000;
+  return !!t && Date.now() - t < SEEN_TTL_MS;
+}
+
+function vibrate(pattern) {
+  if (!NOTIF.vibrate) return;
+  try { navigator.vibrate && navigator.vibrate(pattern); } catch { /* getar tidak tersedia */ }
 }
 
 function buildNotifPayload(m) {
@@ -1784,9 +1792,12 @@ function buildNotifPayload(m) {
     body = `👤 ${n}`;
   } else if (m.body) body = kind ? `${kind} • ${m.body}` : m.body;
   else body = kind || 'Pesan baru';
+  // privasi layar kunci: nama pengirim tetap di judul, isi pesan disembunyikan
+  const hideBody = !!(S.me && S.me.privacy && S.me.privacy.hideNotifContent);
   return {
     title: isGroup ? `${sender} @ ${chatTitle(chat)}` : sender,
-    body: body.slice(0, 160),
+    body: hideBody ? 'Pesan baru' : body.slice(0, 160),
+    hidePreview: hideBody,
     chatId: m.chatId,
     messageId: m.id,
     icon: m.senderAvatar || null,
@@ -1797,20 +1808,28 @@ function buildNotifPayload(m) {
 // dipanggil setiap pesan masuk lewat socket
 function notify(m) {
   if (!m || !S.me || m.senderId === S.me.id) return;
+  // deduplikasi: pengiriman ulang dari socket / push tidak boleh dobel
+  if (m.id && seenRecently(m.id)) return;
   const payload = buildNotifPayload(m);
   const visible = document.visibilityState === 'visible';
   const focused = visible && document.hasFocus();
   const reading = focused && S.activeChatId === m.chatId;
+  const chat = S.chats.find((c) => c.id === m.chatId);
+  const muted = !!(chat && chat.muted);
   // riwayat pusat notifikasi selalu dicatat; yang sedang dibaca langsung ditandai
   ncAdd({ kind: 'message', title: payload.title, body: payload.body, chatId: payload.chatId, messageId: payload.messageId, icon: payload.icon, at: m.createdAt || Date.now(), read: reading });
-  if (reading) { if (NOTIF.sound) beep('notif'); return; }
+  // chat dibisukan pengguna: hanya riwayat, tanpa bunyi/banner/notifikasi sistem
+  if (muted) { if (m.id) markSeen(m.id); return; }
+  if (reading) { if (m.id) markSeen(m.id); if (NOTIF.sound) beep('notif'); return; }
   if (!visible) {
     // luring: bunyikan di sini (showNotifCard tidak dipanggil)
     if (NOTIF.sound) notifSound();
     void showSystemNotif(payload);
+    if (m.id) markSeen(m.id);
     return;
   }
   showNotifCard(payload); // sudah membunyikan notifikasi sendiri — jangan dobel
+  if (m.id) markSeen(m.id);
   // jendela terbuka tapi sedang tidak fokus -> notifikasi sistem ala WhatsApp
   if (!focused) void showSystemNotif(payload);
 }
@@ -1821,15 +1840,19 @@ function notifyFromPush(data) {
   if (data.type === 'call') { onCallPush(data); return; }
   if (!data.chatId) return;
   if (data.messageId && seenRecently(data.messageId)) return;
+  const mutedChat = (S.chats || []).find((c) => c.id === data.chatId);
+  if (mutedChat && mutedChat.muted) return; // server sudah menyaring push; jaga-jaga bila tiba bersamaan
   ncAdd({ kind: 'message', title: data.title, body: data.body, chatId: data.chatId, messageId: data.messageId, icon: data.icon, at: Date.now() });
   const visible = document.visibilityState === 'visible';
   const reading = S.activeChatId === data.chatId && document.hasFocus();
   if (visible) {
-    if (reading) return;
+    if (reading) { if (data.messageId) markSeen(data.messageId); return; }
     showNotifCard(data);
   } else {
     void showSystemNotif(data);
   }
+  // penandaan setelah tampil supaya kartu/sendiri tidak melewati deduplikasi
+  if (data.messageId) markSeen(data.messageId);
 }
 
 function showNotifCard(data) {
@@ -1863,7 +1886,7 @@ function showNotifCard(data) {
   while (layer.children.length > 3) dismissNotif(layer.firstElementChild, true);
   // silent = pemanggil sudah membunyikan bunyi sendiri (mis. bunyi khusus admin)
   if (NOTIF.sound && !data.silent) notifSound();
-  try { navigator.vibrate && navigator.vibrate([50, 30, 50]); } catch { /* getar tidak tersedia */ }
+  vibrate([50, 30, 50]);
   card._t = setTimeout(() => dismissNotif(card), 5200);
   card.addEventListener('mouseenter', () => clearTimeout(card._t));
   card.addEventListener('mouseleave', () => { card._t = setTimeout(() => dismissNotif(card), 2600); });
@@ -1887,6 +1910,7 @@ async function showSystemNotif(data) {
     data,
   };
   if (data.icon) options.icon = data.icon;
+  if (NOTIF.vibrate) options.vibrate = data.type === 'call' ? [400, 200, 400, 200, 400] : [200, 100, 200];
   try {
     const reg = NOTIF.sw || (await navigator.serviceWorker?.ready);
     if (reg && reg.showNotification) {
@@ -1933,7 +1957,7 @@ function adminAlert() {
       o.start(t + delay);
       o.stop(t + delay + .21);
     });
-    try { navigator.vibrate && navigator.vibrate([40, 60, 40, 60, 80]); } catch { /* getar tak tersedia */ }
+    vibrate([40, 60, 40, 60, 80]);
   } catch { beep('out'); }
 }
 
@@ -2005,13 +2029,328 @@ function syncNotifUI() {
   const btn = $('btnEnableNotif');
   const txt = $('notifPermText');
   const snd = $('notifSoundToggle');
+  const vib = $('notifVibrateToggle');
   if (snd) snd.checked = NOTIF.sound;
+  if (vib) vib.checked = NOTIF.vibrate;
   if (!btn || !txt) return;
   const p = notifPerm();
   if (p === 'granted') { txt.textContent = 'Sistem • aktif (online & offline)'; btn.textContent = 'Aktif'; btn.disabled = true; }
   else if (p === 'denied') { txt.textContent = 'Sistem • diblokir oleh browser'; btn.textContent = 'Diblokir'; btn.disabled = true; }
   else if (p === 'unsupported') { txt.textContent = 'Sistem • tidak didukung browser ini'; btn.textContent = 'Tidak didukung'; btn.disabled = true; }
   else { txt.textContent = 'Sistem • izinkan agar muncul walau aplikasi ditutup'; btn.textContent = 'Aktifkan'; btn.disabled = false; }
+}
+
+/* ================= izin perangkat: bertahap, sesuai fitur yang dipakai =================
+   mikrofon -> hanya saat panggilan dimulai; kamera -> hanya saat panggilan video;
+   kontak -> hanya saat tombol "Pilih dari kontak perangkat" ditekan;
+   notifikasi -> saat onboarding / tombol Aktifkan; latar belakang & layar kunci -> info + panduan. */
+const PERM = { active: null };
+
+function permSupported(kind) {
+  if (kind === 'notifications' || kind === 'lockscreen') return 'Notification' in window;
+  if (kind === 'microphone' || kind === 'camera') return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  if (kind === 'contacts') return !!(navigator.contacts && typeof navigator.contacts.select === 'function');
+  if (kind === 'background') return 'serviceWorker' in navigator && 'PushManager' in window;
+  return false;
+}
+
+// status izin: granted | denied | prompt | unsupported (tanpa memicu dialog)
+async function permState(kind) {
+  if (!permSupported(kind)) return 'unsupported';
+  if (kind === 'notifications') return notifPerm();
+  if (kind === 'background') {
+    try {
+      // .ready bisa menggantung bila pendaftaran service worker gagal -> beri batas waktu
+      const reg = NOTIF.sw || await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((r) => setTimeout(() => r(null), 1500)),
+      ]);
+      if (reg && reg.pushManager) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub && notifPerm() === 'granted') return 'granted';
+      }
+    } catch { /* langganan push belum ada */ }
+    return notifPerm();
+  }
+  if (kind === 'lockscreen') return notifPerm();
+  try {
+    const st = await navigator.permissions.query({ name: kind });
+    return st.state || 'prompt';
+  } catch { return 'prompt'; } // browser tak mendukung pengecekan -> minta saat fitur dipakai
+}
+
+const PERM_STATE_DESC = {
+  granted: 'Diizinkan oleh perangkat',
+  denied: 'Diblokir — ikuti panduan untuk mengaktifkan',
+  prompt: 'Belum diminta — akan muncul saat fitur dipakai',
+  unsupported: 'Tidak didukung browser/perangkat ini',
+};
+
+function permBtnText(kind, state) {
+  if (kind === 'lockscreen') return { text: 'Panduan', disabled: false };
+  if (state === 'granted') return { text: 'Diizinkan', disabled: true };
+  if (state === 'denied') return { text: 'Panduan', disabled: false };
+  if (state === 'unsupported') return { text: 'Tidak didukung', disabled: true };
+  return { text: 'Aktifkan', disabled: false };
+}
+
+// perbarui baris status di drawer Privasi & Notifikasi
+async function refreshPermUI() {
+  const rows = [
+    ['microphone', 'permMicText', 'Dipinta saat memulai panggilan suara', 'btnPermMic'],
+    ['camera', 'permCamText', 'Dipinta saat memulai panggilan video', 'btnPermCam'],
+    ['contacts', 'permContactsText', 'Dipinta saat memilih kontak di Chat baru', 'btnPermContacts'],
+    ['background', 'permBgText', 'Dikirim lewat push saat aplikasi ditutup', 'btnPermBg'],
+    ['lockscreen', 'permLockText', 'Cara notifikasi tampil saat layar terkunci', 'btnPermLock'],
+  ];
+  for (const [kind, txtId, base, btnId] of rows) {
+    const state = await permState(kind);
+    const txt = $(txtId);
+    const btn = $(btnId);
+    if (txt) {
+      if (kind === 'background' && state === 'granted') txt.textContent = 'Push aktif • notifikasi tetap masuk walau aplikasi ditutup';
+      else if (kind === 'background') txt.textContent = state === 'denied' ? PERM_STATE_DESC.denied : 'Push belum aktif • buka panduan';
+      else if (kind === 'lockscreen') txt.textContent = 'Nama pengirim & isi pesan sesuai pengaturan privasi';
+      else txt.textContent = (state === 'prompt' || state === 'unsupported') ? base : PERM_STATE_DESC[state] || base;
+    }
+    if (btn) {
+      const cfg = permBtnText(kind, state);
+      btn.textContent = cfg.text;
+      btn.disabled = cfg.disabled;
+    }
+  }
+  syncNotifUI();
+}
+
+// minta satu izin (dipanggil saat fitur dipakai atau lewat tombol di Pengaturan)
+async function requestPerm(kind) {
+  if (kind === 'notifications' || kind === 'lockscreen') {
+    if (!('Notification' in window)) return 'unsupported';
+    const p = await Notification.requestPermission();
+    if (p === 'granted') void subscribePush();
+    return p;
+  }
+  if (kind === 'microphone' || kind === 'camera') {
+    // hanya memeriksa izin: stream langsung dihentikan, tidak direkam/dikirim
+    const stream = await navigator.mediaDevices.getUserMedia(
+      kind === 'camera' ? { video: { width: { ideal: 640 } }, audio: false } : { audio: true, video: false }
+    );
+    stream.getTracks().forEach((t) => t.stop());
+    return 'granted';
+  }
+  if (kind === 'background') { await enableNotif(); return notifPerm(); }
+  return permState(kind);
+}
+
+async function tryRequestPerm(kind) {
+  if (!permSupported(kind)) { toast('Fitur ini tidak didukung browser/perangkat Anda'); return 'unsupported'; }
+  try {
+    const state = await requestPerm(kind);
+    if (state === 'granted') toast('Izin diberikan ✓');
+    else if (state === 'denied') { toast('Izin diblokir — ikuti panduan untuk mengaktifkannya'); openPermHelp(kind); }
+    return state;
+  } catch (err) {
+    const info = mediaErrorInfo(err, kind === 'contacts' ? 'contacts' : kind);
+    toast(info.msg);
+    if (info.perm) openPermHelp(kind);
+    return 'denied';
+  } finally {
+    void refreshPermUI();
+    syncNotifUI();
+  }
+}
+
+// pesan ramah per jenis kegagalan izin/perangkat
+function mediaErrorInfo(err, kind) {
+  const name = (err && err.name) || '';
+  const label = kind === 'camera' ? 'Kamera' : kind === 'contacts' ? 'Kontak' : kind === 'notifications' ? 'Notifikasi' : 'Mikrofon';
+  const lower = label.toLowerCase();
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+    return { perm: true, kind, title: `${label} diblokir`, msg: `Izin ${lower} ditolak oleh browser` };
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return { perm: false, kind, title: `${label} tidak ditemukan`, msg: `${label} tidak ada di perangkat ini` };
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') {
+    return { perm: false, kind, title: `${label} sedang dipakai`, msg: `${label} sedang digunakan aplikasi lain — tutup aplikasi itu lalu coba lagi` };
+  }
+  if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+    return { perm: false, kind, title: 'Pengaturan tidak didukung', msg: `Perangkat tidak mendukung pengaturan ${lower}` };
+  }
+  if (name === 'TypeError' || name === 'NotSupportedError') {
+    return { perm: false, kind, title: 'Tidak didukung', msg: `${label} hanya bisa diakses lewat HTTPS atau localhost` };
+  }
+  return { perm: false, kind, title: `Gagal mengakses ${lower}`, msg: (err && err.message) ? String(err.message) : 'Kesalahan tidak diketahui' };
+}
+
+const PERM_HELP = {
+  microphone: {
+    ico: '🎙️',
+    title: 'Izin mikrofon',
+    why: 'Mikrofon dibutuhkan agar lawan bicara dapat mendengar Anda. Izin hanya diminta ketika Anda menekan tombol panggil.',
+    steps: [
+      ['Chrome / Edge (Android & desktop)', 'Klik ikon gembok 🔒 di bilah alamat → Izin → Mikrofon → Izinkan, lalu muat ulang halaman.'],
+      ['Safari (iPhone / iPad)', 'Pengaturan → Safari → Mikrofon → Izinkan; atau pilih "Izinkan" pada dialog saat panggilan dimulai.'],
+      ['Firefox', 'Klik ikon gembok di bilah alamat → hapus pembatasan situs → muat ulang halaman.'],
+    ],
+  },
+  camera: {
+    ico: '📷',
+    title: 'Izin kamera',
+    why: 'Kamera hanya dipakai untuk panggilan video. Panggilan suara tidak pernah meminta kamera.',
+    steps: [
+      ['Chrome / Edge (Android & desktop)', 'Klik ikon gembok 🔒 di bilah alamat → Izin → Kamera → Izinkan, lalu muat ulang halaman.'],
+      ['Safari (iPhone / iPad)', 'Pengaturan → Safari → Kamera → Izinkan; atau pilih "Izinkan" saat panggilan video dimulai.'],
+      ['Firefox', 'Klik ikon gembok di bilah alamat → hapus pembatasan situs → muat ulang halaman.'],
+    ],
+  },
+  notifications: {
+    ico: '🔔',
+    title: 'Izin notifikasi',
+    why: 'Notifikasi membuat pesan & panggilan tetap terlihat walau aplikasi ditutup atau tab tersembunyi.',
+    steps: [
+      ['Chrome / Edge / Firefox (desktop & Android)', 'Klik ikon gembok 🔒 di bilah alamat → Izin → Notifikasi → Izinkan.'],
+      ['Safari (iPhone / iPad)', 'Pengaturan → Safari → Notifikasi → Izinkan, lalu muat ulang halaman.'],
+      ['Android (aplikasi terpasang)', 'Pengaturan perangkat → Aplikasi → RTC-Core → Notifikasi → aktifkan.'],
+    ],
+  },
+  contacts: {
+    ico: '👥',
+    title: 'Izin kontak perangkat',
+    why: 'Kontak hanya dibaca saat Anda menekan "Pilih dari kontak perangkat" di Chat baru — tidak pernah diam-diam.',
+    steps: [
+      ['Chrome / Edge (Android)', 'Ketuk "Pilih dari kontak perangkat" lalu pilih Izinkan pada dialog sistem.'],
+      ['Browser lain (desktop/iOS)', 'Contact Picker API belum didukung — gunakan pencarian manual berdasarkan email atau nama.'],
+      ['Jika sebelumnya diblokir', 'Buka Pengaturan situs perangkat → Kontak → Izinkan, lalu muat ulang halaman.'],
+    ],
+  },
+  background: {
+    ico: '📲',
+    title: 'Notifikasi latar belakang',
+    why: 'Push service memberi tahu saat ada pesan/panggilan walau aplikasi ditutup. Izin notifikasi harus aktif lebih dulu.',
+    steps: [
+      ['Aktifkan notifikasi', 'Tekan tombol Aktifkan pada baris "Notifikasi sistem" di atas, lalu izinkan notifikasi.'],
+      ['Chrome (Android)', 'Pastikan "Izinkan notifikasi" aktif dan penghemat baterai tidak mematikan situs ini.'],
+      ['Safari (iPhone / iPad)', 'Tambahkan ke Layar Utama (Share → Tambahkan ke Layar Utama) agar notifikasi berjalan penuh.'],
+    ],
+  },
+  lockscreen: {
+    ico: '🔒',
+    title: 'Notifikasi layar kunci',
+    why: 'Saat layar terkunci, notifikasi tetap menampilkan nama pengirim. Isi pesan mengikuti pengaturan "Sembunyikan isi pesan".',
+    steps: [
+      ['Sembunyikan isi pesan', 'Aktifkan sakelar "Sembunyikan isi pesan" di bagian Layar kunci & latar belakang.'],
+      ['Android', 'Pengaturan perangkat → Notifikasi → aplikasi ini → "Sembunyikan konten saat terkunci".'],
+      ['iPhone / iPad', 'Pengaturan → Notifikasi → aplikasi ini → Tampilan → "Saat Terkunci".'],
+      ['Chrome (desktop)', 'Pengaturan sistem notifikasi Windows/macOS mengatur isi notifikasi yang tampil.'],
+    ],
+  },
+};
+
+const PERM_STATE_TEXT = {
+  granted: 'diizinkan ✓',
+  denied: 'diblokir ✗',
+  prompt: 'menunggu izin',
+  unsupported: 'tidak didukung',
+};
+
+async function openPermHelp(kind) {
+  const info = PERM_HELP[kind];
+  if (!info || !$('permHelpModal')) return;
+  PERM.active = kind;
+  $('permHelpIco').textContent = info.ico;
+  $('permHelpTitle').textContent = info.title;
+  $('permHelpWhy').textContent = info.why;
+  const steps = $('permHelpSteps');
+  const render = (state) => {
+    steps.innerHTML = info.steps.map(([plat, text]) => `<li><strong>${esc(plat)}</strong> — ${esc(text)}</li>`).join('')
+      + `<li><strong>Status saat ini</strong> — ${PERM_STATE_TEXT[state] || state}.</li>`;
+  };
+  render('memeriksa...');
+  $('permHelpModal').classList.remove('hidden');
+  const state = await permState(kind).catch(() => 'prompt');
+  if (PERM.active === kind) render(state);
+}
+
+function closePermHelp() {
+  $('permHelpModal').classList.add('hidden');
+  PERM.active = null;
+}
+
+document.querySelectorAll('[data-perm]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const kind = btn.dataset.perm;
+    if (btn.disabled) return;
+    if (kind === 'lockscreen') { openPermHelp(kind); return; }
+    const state = await permState(kind);
+    if (state === 'denied') { openPermHelp(kind); return; }
+    await tryRequestPerm(kind);
+  });
+});
+$('btnPermHelpClose').addEventListener('click', closePermHelp);
+$('btnPermHelpRetry').addEventListener('click', () => {
+  const kind = PERM.active;
+  closePermHelp();
+  if (kind) void tryRequestPerm(kind);
+});
+$('notifVibrateToggle').addEventListener('change', (e) => {
+  NOTIF.vibrate = !!e.target.checked;
+  try { localStorage.setItem('wa_notif_vibrate', NOTIF.vibrate ? '1' : '0'); } catch { /* storage diblokir */ }
+  setSWPref('vibrate', NOTIF.vibrate); // notifikasi saat aplikasi tutup ikut mengikuti
+  if (!NOTIF.vibrate) { try { navigator.vibrate && navigator.vibrate(0); } catch { /* noop */ } }
+});
+
+/* ---------- pengantar izin (sekali di perangkat, tanpa meminta mikrofon/kamera) ---------- */
+function maybeShowPermIntro() {
+  try { if (localStorage.getItem('wa_perm_intro_v1')) return; } catch { /* storage diblokir */ }
+  const btn = $('btnPermIntroNotif');
+  if (btn) {
+    const granted = notifPerm() === 'granted';
+    btn.textContent = granted ? 'Lanjutkan' : 'Aktifkan notifikasi';
+  }
+  $('permIntroModal').classList.remove('hidden');
+}
+
+function closePermIntro() {
+  $('permIntroModal').classList.add('hidden');
+  try { localStorage.setItem('wa_perm_intro_v1', '1'); } catch { /* storage diblokir */ }
+}
+
+$('btnPermIntroSkip').addEventListener('click', closePermIntro);
+$('btnPermIntroNotif').addEventListener('click', () => {
+  closePermIntro();
+  if (notifPerm() !== 'granted') void tryRequestPerm('notifications');
+});
+
+/* ---------- lencana aplikasi (badge jumlah belum dibaca) ---------- */
+function updateAppBadge() {
+  let n = 0;
+  for (const c of S.chats || []) n += Number(c.unread) || 0;
+  try {
+    if ('setAppBadge' in navigator) {
+      if (n > 0) { const p = navigator.setAppBadge(n); if (p && p.catch) p.catch(() => {}); }
+      else if (navigator.clearAppBadge) { const p = navigator.clearAppBadge(); if (p && p.catch) p.catch(() => {}); }
+    }
+  } catch { /* badge tidak didukung */ }
+  // diteruskan ke service worker supaya lencana ikut terbawa saat tab ditutup
+  try { NOTIF.sw && NOTIF.sw.postMessage({ type: 'wa-badge', n }); } catch { /* noop */ }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') updateAppBadge();
+});
+
+/* preferensi ditulis ke IndexedDB (dipakai service worker saat notifikasi
+   dibuat tanpa ada jendela terbuka — localStorage tidak terbaca di sana) */
+function setSWPref(key, value) {
+  try {
+    const req = indexedDB.open('rtc-prefs', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('kv'); };
+    req.onsuccess = () => {
+      try { req.result.transaction('kv', 'readwrite').objectStore('kv').put(value, key); } catch { /* noop */ }
+      try { req.result.close(); } catch { /* noop */ }
+    };
+  } catch { /* IndexedDB tidak tersedia */ }
 }
 
 let audioCtx;
@@ -2711,6 +3050,35 @@ async function startDirect(peerId) {
     openChat(data.chat.id);
   } catch (err) { toast(err.message); }
 }
+
+/* Kontak perangkat (Contact Picker API): izin hanya diminta ketika tombol ini
+   ditekan — tidak pernah diam-diam saat aplikasi dibuka. */
+$('btnPickContact').addEventListener('click', async () => {
+  if (!permSupported('contacts')) {
+    toast('Pemilih kontak tidak didukung browser ini — cari manual berdasarkan email/nama');
+    openPermHelp('contacts');
+    return;
+  }
+  let picked;
+  try {
+    picked = await navigator.contacts.select(['name', 'email', 'tel'], { multiple: false });
+  } catch {
+    toast('Kontak tidak dapat diakses');
+    openPermHelp('contacts');
+    return;
+  }
+  const c = (picked && picked[0]) || null;
+  if (!c) return;
+  void refreshPermUI(); // izin baru saja dipakai -> perbarui baris status
+  const email = (c.email && c.email[0]) || '';
+  const name = (c.name && c.name[0]) || '';
+  const q = email || name;
+  if (!q) { toast('Kontak tidak memiliki email atau nama yang bisa dicari'); return; }
+  $('userSearchInput').value = q;
+  clearTimeout(searchTimer);
+  await searchUsers();
+  if (!email) toast(`Mencari "${name}" — cocokkan hasilnya dengan email pengguna`);
+});
 
 /* ================= tema: mode +10 warna (aksen) ================= */
 const THEME_ACCENTS = [
@@ -4901,6 +5269,45 @@ function bindBotProfileEdit(user, peer) {
   });
 }
 
+/* ---------- notifikasi per chat (bisukan percakapan ini) ---------- */
+async function setChatMuted(chatId, muted) {
+  const chat = (S.chats || []).find((c) => c.id === chatId);
+  if (!chat) return;
+  const prev = !!chat.muted;
+  chat.muted = !!muted;
+  renderChatList();
+  try {
+    await api(`/api/chats/${chatId}/notifications`, { method: 'POST', body: { muted: !!muted } });
+    toast(muted ? 'Notifikasi chat ini dimatikan' : 'Notifikasi chat ini dinyalakan ✓');
+  } catch (err) {
+    chat.muted = prev;
+    renderChatList();
+    toast(err.message);
+  }
+}
+
+function muteRowHtml(chat, inputId) {
+  const on = !!(chat && chat.muted);
+  return `
+    <div class="pv-row">
+      <div class="pv-text"><strong>Notifikasi chat ini</strong><small id="${inputId}Text">${on ? 'Senyap — pesan tetap masuk tanpa bunyi, getar & banner' : 'Bunyi, getar & notifikasi saat pesan masuk'}</small></div>
+      <label class="switch"><input type="checkbox" id="${inputId}" ${on ? 'checked' : ''} /><span></span></label>
+    </div>`;
+}
+
+function bindMuteRow(chatId, inputId) {
+  const el = $(inputId);
+  if (!el) return;
+  el.addEventListener('change', async (e) => {
+    const on = !!e.target.checked;
+    await setChatMuted(chatId, on);
+    const txt = $(`${inputId}Text`);
+    if (txt) txt.textContent = on
+      ? 'Senyap — pesan tetap masuk tanpa bunyi, getar & banner'
+      : 'Bunyi, getar & notifikasi saat pesan masuk';
+  });
+}
+
 async function openContactInfo() {
   const chat = currentChat();
   if (!chat || !chat.peer) return;
@@ -4954,6 +5361,7 @@ async function openContactInfo() {
         <div class="contact-row"><span class="cr-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-calendar" /></svg></span><div><small>Bergabung</small><strong>${fmtDate(u.createdAt)}</strong></div></div>
         <div class="contact-row"><span class="cr-ico"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-lock" /></svg></span><div><small>Enkripsi</small><strong>Pesan tersimpan aman di server</strong></div></div>
       </div>
+      ${muteRowHtml(chat, 'ciMuteToggle')}
       <div class="contact-actions">
         <button class="btn-ghost" id="ciChat"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-chat" /></svg> Pesan</button>
         ${u.isBot ? '' : `
@@ -4961,6 +5369,7 @@ async function openContactInfo() {
         <button class="btn-ghost" id="ciVideo"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-video" /></svg> Video</button>`}
       </div>`;
     setAvatar($('contactAvatar'), peer);
+    bindMuteRow(chat.id, 'ciMuteToggle');
     $('ciChat').addEventListener('click', () => { closeDrawers(); $('messageInput').focus(); });
     if (!u.isBot) {
       $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
@@ -5068,7 +5477,7 @@ $('btnSaveProfile').addEventListener('click', async () => {
 });
 
 /* ================= privasi ================= */
-const PV_KEYS = ['lastSeen', 'receipts', 'email', 'bio', 'status', 'avatar'];
+const PV_KEYS = ['lastSeen', 'receipts', 'email', 'bio', 'status', 'avatar', 'hideNotifContent'];
 
 function pvStatus(msg, isError) {
   const el = $('pvStatus');
@@ -5085,6 +5494,7 @@ function openPrivacy() {
   });
   $('pvStatus').classList.add('hidden');
   syncNotifUI();
+  void refreshPermUI(); // status izin perangkat dibaca ulang setiap panel dibuka
   openDrawer('privacyDrawer');
 }
 
@@ -5614,10 +6024,56 @@ const DROP_GRACE_MS = 8000;       // toleransi 'disconnected' sebelum menutup pa
 
 function newCallId() { return 'call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 
+/* dering berulang selama menunggu jawaban: nada ganda untuk panggilan masuk
+   (plus getar loop), ringback pelan untuk panggilan keluar */
+const RING = { timer: null, mode: null };
+
+function ringBurst(mode) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    const notes = mode === 'in'
+      ? [[941.2, 0], [1477.7, .05], [941.2, .62], [1477.7, .67]]
+      : [[425, 0], [450, .5]];
+    notes.forEach(([freq, delay]) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.type = 'sine';
+      o.frequency.value = freq;
+      const s = t + delay;
+      const dur = mode === 'in' ? .34 : .42;
+      g.gain.setValueAtTime(.0001, s);
+      g.gain.exponentialRampToValueAtTime(.15, s + .02);
+      g.gain.exponentialRampToValueAtTime(.0001, s + dur);
+      o.start(s);
+      o.stop(s + dur + .04);
+    });
+  } catch { beep('notif'); }
+}
+
+function startRingTone(mode) {
+  stopRingTone();
+  RING.mode = mode;
+  const tick = () => {
+    if (NOTIF.sound) ringBurst(mode);
+    if (mode === 'in') vibrate([350, 180, 350, 180, 350]);
+  };
+  tick();
+  RING.timer = setInterval(tick, mode === 'in' ? 2600 : 4600);
+}
+
+function stopRingTone() {
+  if (RING.timer) clearInterval(RING.timer);
+  RING.timer = null;
+  RING.mode = null;
+  try { navigator.vibrate && navigator.vibrate(0); } catch { /* noop */ }
+}
+
 function blankCall(fields) {
   return {
     startedAt: null, timer: null, ringTimer: null, connectTimer: null, dropTimer: null,
-    pendingSignals: [], pc: null, localStream: null, peerReady: null,
+    pendingSignals: [], pc: null, localStream: null, peerReady: null, speaker: true,
     ...fields,
   };
 }
@@ -5650,6 +6106,7 @@ function startCall(kind) {
     }
     call.state = 'ringing';
     setCallState('Berdering...');
+    startRingTone('out'); // nada ringback berulang sampai dijawab / ditutup
     armRingTimeout(call);
     // aktifkan mic/kamera lebih awal supaya pratinjau tampil saat berdering
     ensurePeer().catch(() => {});
@@ -5694,11 +6151,11 @@ function onCallIncoming({ callId, kind, from }) {
   $('inCallKind').textContent = cleanKind === 'video' ? 'Panggilan video masuk...' : 'Panggilan suara masuk...';
   setAvatar($('inCallerAvatar'), from);
   $('incomingCall').classList.remove('hidden');
-  if (NOTIF.sound) beep('notif');
-  try { navigator.vibrate && navigator.vibrate([400, 200, 400, 200, 400]); } catch { /* getar tidak tersedia */ }
+  startRingTone('in'); // dering ganda + getar loop selama layar dering tampil
   // layar terbuka tanpa fokus tetap memberi tahu sistem ala WhatsApp
   if (document.visibilityState !== 'visible' || !document.hasFocus()) {
     void showSystemNotif({
+      type: 'call',
       title: cleanKind === 'video' ? 'Panggilan video masuk' : 'Panggilan suara masuk',
       body: from.name,
       tag: `call-${callId}`,
@@ -5719,6 +6176,7 @@ $('btnAcceptCall').addEventListener('click', async () => {
   if (!call || !call.incoming) return;
   if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
 
+  stopRingTone();
   $('incomingCall').classList.add('hidden');
   call.incoming = false;
   call.state = 'connecting';
@@ -5788,6 +6246,37 @@ function ensurePeer() {
   return call.peerReady;
 }
 
+/* izin yang dibutuhkan panggilan ini: mikrofon untuk suara, mikrofon + kamera
+   untuk video. dipastikan SEBELUM getUserMedia supaya yang ditolak langsung
+   diarahkan ke panduan, bukan pesan generik. */
+async function mediaDeniedKind(call) {
+  if (!navigator.permissions || !navigator.permissions.query) return null;
+  const need = call.kind === 'video' ? ['microphone', 'camera'] : ['microphone'];
+  for (const kind of need) {
+    try {
+      const st = await navigator.permissions.query({ name: kind });
+      if (st.state === 'denied') return kind;
+    } catch { /* browser tak bisa mengecek status -> biarkan prompt yang bekerja */ }
+  }
+  return null;
+}
+
+// tentukan izin mana yang bermasalah dari kegagalan getUserMedia
+async function mediaFailKind(call, err) {
+  const name = (err && err.name) || '';
+  if (call.kind !== 'video') return 'microphone';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return 'camera';
+  try {
+    if (navigator.permissions) {
+      const cam = await navigator.permissions.query({ name: 'camera' }).catch(() => null);
+      if (cam && cam.state === 'denied') return 'camera';
+      const mic = await navigator.permissions.query({ name: 'microphone' }).catch(() => null);
+      if (mic && mic.state === 'denied') return 'microphone';
+    }
+  } catch { /* fallback di bawah */ }
+  return 'camera';
+}
+
 async function createPeer(call) {
   const pc = new RTCPeerConnection(ICE);
   call.pc = pc;
@@ -5795,7 +6284,15 @@ async function createPeer(call) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     const err = new Error('Akses kamera/mikrofon butuh HTTPS atau localhost');
     abortCall(call, err.message);
+    openPermHelp(call.kind === 'video' ? 'camera' : 'microphone');
     throw err;
+  }
+
+  const denied = await mediaDeniedKind(call);
+  if (denied) {
+    abortCall(call, `Izin ${denied === 'camera' ? 'kamera' : 'mikrofon'} diblokir — izinkan lewat panduan`);
+    openPermHelp(denied);
+    throw new Error('Izin mikrofon/kamera diblokir');
   }
 
   let stream;
@@ -5805,7 +6302,10 @@ async function createPeer(call) {
       video: call.kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
     });
   } catch (err) {
-    abortCall(call, 'Akses kamera/mikrofon ditolak: ' + (err.message || 'izin ditolak'));
+    const kind = await mediaFailKind(call, err);
+    const info = mediaErrorInfo(err, kind);
+    abortCall(call, info.msg);
+    if (info.perm) openPermHelp(kind);
     throw err;
   }
 
@@ -5824,6 +6324,7 @@ async function createPeer(call) {
   pc.ontrack = (e) => {
     if (S.call !== call || !e.streams || !e.streams[0]) return;
     clearTimeout(call.ringTimer); // jalur media terbentuk: dering tak boleh mematikan panggilan
+    stopRingTone();
     if (!$('remoteVideo').srcObject) $('remoteVideo').srcObject = e.streams[0];
     $('remoteVideo').style.display = 'block';
     // panggilan suara: avatar tetap tampil; video: avatar hilang saat video tiba
@@ -5895,6 +6396,7 @@ async function handleSignal(signal) {
       armConnectTimeout(call);
     } else if (signal.type === 'answer') {
       clearTimeout(call.ringTimer); // penerima sudah menjawab: masa dering selesai
+      stopRingTone();
       await call.pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
       await flushCandidates(call);
       setCallState('Menunggu koneksi...');
@@ -5955,7 +6457,7 @@ function onCallMissed(data) {
     ref: `call-${data.callId}`,
   });
   if (NOTIF.sound) notifSound();
-  try { navigator.vibrate && navigator.vibrate([70, 40, 70]); } catch { /* getar tidak tersedia */ }
+  vibrate([70, 40, 70]);
   if (!callNotifVisible()) {
     void showSystemNotif({ ...data, chatId, tag: data.tag || `call-${data.callId}` });
   }
@@ -6019,8 +6521,32 @@ function openCallUI(call) {
   $('btnToggleCam').classList.remove('off');
   $('btnToggleMic').disabled = true;
   $('btnToggleCam').disabled = true;
+  call.speaker = true;
+  $('btnToggleSpeaker').classList.remove('off');
+  $('btnToggleSpeaker').disabled = false;
+  void applySpeaker(true); // keluaran bawaan: speaker menyala
   $('callTimer').textContent = '00:00';
   $('activeCall').classList.remove('hidden');
+}
+
+// speaker aktif = keluaran bawaan; mati = earpiece bila tersedia, kalau tidak
+// tidak ada earpiece di perangkat -> suara lawan dibisukan (fallback aman)
+async function applySpeaker(on) {
+  const v = $('remoteVideo');
+  if (!v) return;
+  try {
+    if (!on && typeof v.setSinkId === 'function' && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const ear = devices.find((d) => d.kind === 'audiooutput' && /earpiece|receiver|ear.?phone|hands-free/i.test(d.label || ''));
+      if (ear && ear.deviceId) {
+        await v.setSinkId(ear.deviceId);
+        v.muted = false;
+        return;
+      }
+    }
+    if (typeof v.setSinkId === 'function' && v.sinkId && v.sinkId !== 'default') await v.setSinkId('default');
+    v.muted = !on;
+  } catch { v.muted = !on; }
 }
 
 function setCallState(text) {
@@ -6042,6 +6568,7 @@ function startCallTimer() {
 
 function closeCall() {
   const call = S.call;
+  stopRingTone(); // dering/getar berhenti apa pun penyebab penutupan
   if (!call) return;
   clearInterval(call.timer);
   clearTimeout(call.ringTimer);
@@ -6096,6 +6623,14 @@ $('btnToggleCam').addEventListener('click', () => {
   track.enabled = !track.enabled;
   call.cam = track.enabled;
   $('btnToggleCam').classList.toggle('off', !track.enabled);
+});
+$('btnToggleSpeaker').addEventListener('click', async () => {
+  const call = S.call;
+  if (!call) return;
+  call.speaker = !call.speaker;
+  $('btnToggleSpeaker').classList.toggle('off', !call.speaker);
+  await applySpeaker(call.speaker);
+  toast(call.speaker ? 'Speaker aktif' : 'Speaker mati');
 });
 
 /* ================= misc ui ================= */
@@ -6328,6 +6863,7 @@ function updateNavBadges() {
     const hasNew = (S.statusFeed || []).some((g) => !g.isSelf && (g.statuses || []).some((s) => !s.viewed));
     dot.classList.toggle('hidden', !hasNew);
   }
+  updateAppBadge(); // lencana aplikasi (icon dock/taskbar) mengikuti jumlah tak terbaca
 }
 
 /* ================= status wa ================= */
@@ -7052,11 +7588,13 @@ async function openGroupInfo() {
         </div>
         <p class="wp-hint">Siapa pun yang membuka link ini (dan sudah punya akun aktif) bisa langsung bergabung ke grup.</p>
       </div>
+      ${muteRowHtml(chat, 'giMuteToggle')}
       <div class="ps-label" style="padding:0 4px 8px">Anggota</div>
       <div class="member-list" id="giMembers"></div>
       <button class="btn-ghost danger" id="giLeave"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-exit" /></svg> Keluar dari grup</button>`;
 
     setAvatar($('giAvatar'), { name: chat.name, avatar: chat.avatar });
+    bindMuteRow(chat.id, 'giMuteToggle');
 
     const list = body.querySelector('#giMembers');
     list.innerHTML = members.map((m) => `

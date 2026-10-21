@@ -496,6 +496,26 @@ input, textarea { font: inherit; }
 .call-btn:hover { filter: brightness(1.12); }
 .call-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .call-btn:disabled:hover { filter: none; }
+
+/* ---------- panduan & pengantar izin ---------- */
+.perm-box {
+  width: min(440px, 100%); max-height: min(86vh, 620px); overflow-y: auto;
+  background: var(--wa-panel-dark); border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 16px; padding: 22px 20px; text-align: center;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .5); animation: msgIn .2s ease;
+}
+.perm-box h3 { margin-top: 8px; font-size: 20px; font-weight: 600; }
+.perm-box p { color: #a9c7bf; font-size: 13.5px; line-height: 1.55; }
+.perm-ico { font-size: 34px; line-height: 1; }
+.perm-steps {
+  margin: 14px 0 0; padding: 0 0 0 18px; text-align: left;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.perm-steps li { color: #a9c7bf; font-size: 13px; line-height: 1.5; }
+.perm-steps li strong { color: #fff; font-weight: 600; }
+.perm-box .call-actions { margin-top: 20px; flex-wrap: wrap; }
+.newchat-extras { padding: 4px 12px 10px; display: flex; }
+.newchat-extras .btn-ghost { width: 100%; justify-content: center; }
 .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .call-timer { font-variant-numeric: tabular-nums; color: #a9c7bf; }
 .call-videos { position: relative; background: #0b141a; border-radius: 14px; overflow: hidden; min-height: 320px; display: flex; align-items: center; justify-content: center; }

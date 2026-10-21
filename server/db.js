@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
   priv_bio        SMALLINT NOT NULL DEFAULT 0,
   priv_status     SMALLINT NOT NULL DEFAULT 0,
   priv_avatar     SMALLINT NOT NULL DEFAULT 0,
+  priv_hide_notif_content SMALLINT NOT NULL DEFAULT 0,
   home_bg_type    TEXT NOT NULL DEFAULT 'default',
   home_bg_url     TEXT,
   session_id      TEXT,
@@ -123,6 +124,15 @@ CREATE TABLE IF NOT EXISTS chat_members (
   PRIMARY KEY (chat_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members (user_id);
+
+CREATE TABLE IF NOT EXISTS chat_notifs (
+  chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted      SMALLINT NOT NULL DEFAULT 0,
+  updated_at BIGINT NOT NULL,
+  PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_notifs_user ON chat_notifs (user_id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id         TEXT PRIMARY KEY,
@@ -336,6 +346,7 @@ CREATE TABLE IF NOT EXISTS users (
   priv_bio        INTEGER NOT NULL DEFAULT 0,
   priv_status     INTEGER NOT NULL DEFAULT 0,
   priv_avatar     INTEGER NOT NULL DEFAULT 0,
+  priv_hide_notif_content INTEGER NOT NULL DEFAULT 0,
   home_bg_type    TEXT NOT NULL DEFAULT 'default',
   home_bg_url     TEXT,
   session_id      TEXT,
@@ -418,6 +429,15 @@ CREATE TABLE IF NOT EXISTS chat_members (
   PRIMARY KEY (chat_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members (user_id);
+
+CREATE TABLE IF NOT EXISTS chat_notifs (
+  chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted      INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_notifs_user ON chat_notifs (user_id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id         TEXT PRIMARY KEY,
@@ -624,6 +644,7 @@ const TABLE_MIGRATIONS = {
     ['priv_bio', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['priv_status', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['priv_avatar', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    ['priv_hide_notif_content', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
     ['home_bg_type', "TEXT NOT NULL DEFAULT 'default'", "TEXT NOT NULL DEFAULT 'default'"],
     ['home_bg_url', 'TEXT', 'TEXT'],
     ['session_id', 'TEXT', 'TEXT'],
