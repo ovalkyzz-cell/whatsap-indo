@@ -8,8 +8,9 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "admin": "node admin/server.js",
-    "test": "node test/crop.js && node test/calls.js && node test/antispam.js && node test/callflow.js && node test/groupbot.js && node test/groupbotfull.js && node test/admingroup.js && node test/adminread.js && node test/statuscx.js && node test/renderlist.js && node test/backbtn.js && node test/xbuttons.js && node test/permissions.js && node test/reggreet.js && node test/storageram.js && node test/zip64.js && node test/galleryexport.js && node test/serverconsole.js && node test/e2e.js && node test/import.js",
+    "test": "node test/crop.js && node test/calls.js && node test/antispam.js && node test/callflow.js && node test/groupbot.js && node test/groupbotfull.js && node test/admingroup.js && node test/adminread.js && node test/statuscx.js && node test/renderlist.js && node test/backbtn.js && node test/xbuttons.js && node test/permissions.js && node test/callmedia.js && node test/reggreet.js && node test/storageram.js && node test/zip64.js && node test/galleryexport.js && node test/serverconsole.js && node test/e2e.js && node test/import.js",
     "test:permissions": "node test/permissions.js",
+    "test:callmedia": "node test/callmedia.js",
     "test:serverconsole": "node test/serverconsole.js",
     "test:zip64": "node test/zip64.js",
     "test:galleryexport": "node test/galleryexport.js",
@@ -64,6 +65,7 @@
   },
   "devDependencies": {
     "jsdom": "^30.1.3",
-    "socket.io-client": "^4.8.4"
+    "socket.io-client": "^4.8.4",
+    "werift": "^0.25.1"
   }
 }
