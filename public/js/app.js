@@ -4038,42 +4038,23 @@ $('btnStBulkDelete').addEventListener('click', async () => {
 $('btnStCancel').addEventListener('click', () => exitStSelectMode());
 
 /* ---------- ekspor galeri: semua / terpilih -> satu arsip ZIP ----------
-   api() hanya menerima JSON, jadi unduhan ZIP pakai fetch sendiri:
-   balasan non-JSON (error) tetap dibaca sebagai JSON agar pesan tampil. */
+   Alur unduhan NATIVE: klien hanya meminta tiket (JSON, cepat), lalu
+   peramban memuat URL tiket sebagai unduhan — ZIP di-stream langsung ke
+   bilah unduhan/disk peramban. Tanpa res.blob() => arsip besar tidak
+   pernah ditampung di memori JS (aman bebas ukuran), progres tampil sejak
+   byte pertama, dan halaman tetap responsif selama unduhan berjalan. */
 async function exportGalleryZip(items) {
-  const res = await fetch('/api/storage/export', {
+  const r = await api('/api/storage/export/ticket', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(S.token ? { Authorization: `Bearer ${S.token}` } : {}),
-    },
-    body: JSON.stringify(items ? { items } : {}),
+    body: items ? { items } : {},
   });
-  const ct = res.headers.get('content-type') || '';
-  if (!res.ok || ct.includes('json')) {
-    let data = null;
-    try { data = await res.json(); } catch { /* balasan bukan JSON */ }
-    if (res.status === 401 && S.token) {
-      logout(false, (data && data.error) || 'Sesi berakhir. Silakan masuk kembali.');
-    }
-    const err = new Error((data && data.error) || `Gagal mengekspor (${res.status})`);
-    err.status = res.status;
-    throw err;
-  }
-  const blob = await res.blob();
-  let name = 'galeri.zip';
-  const cd = res.headers.get('content-disposition') || '';
-  const m = cd.match(/filename="([^"]+)"/);
-  if (m) name = m[1];
-  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
+  a.href = r.url;
+  a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 8000);
-  return { bytes: blob.size, name };
+  return r;
 }
 
 async function runGalleryExport(btn, items, scopeLabel) {
@@ -4084,8 +4065,8 @@ async function runGalleryExport(btn, items, scopeLabel) {
   btn.disabled = true;
   if (span) span.textContent = 'Menyiapkan…'; else btn.textContent = 'Menyiapkan…';
   try {
-    const r = await exportGalleryZip(items);
-    toast(`Ekspor ${scopeLabel} selesai — ${fmtBytes(r.bytes)} · ${r.name}`, 3200);
+    await exportGalleryZip(items);
+    toast(`Unduhan ekspor ${scopeLabel} dimulai — lihat bilah unduhan peramban`, 3600);
   } catch (err) {
     toast(err.message || 'Gagal mengekspor galeri', 3200);
   } finally {

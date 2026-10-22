@@ -18,6 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 const db = require('./db');
 const stickers = require('./stickers');
@@ -198,13 +199,25 @@ async function openDbFile(url) {
     if (row.data && row.data.length) return Readable.from([Buffer.from(row.data)]);
     const total = Number(row.total_chunks) || 0;
     if (!(total > 0)) return null;
-    const chunks = await db.all(
-      'SELECT idx, data FROM db_file_chunks WHERE file_id = ? ORDER BY idx',
-      id
-    );
-    if (chunks.length !== total) return null;
+    // validasi jumlah potongan dulu (murah), tapi MUAT datanya per-batch —
+    // file besar tidak pernah seluruhnya bersemayam di RAM
+    const cnt = await db.get('SELECT COUNT(*) AS n FROM db_file_chunks WHERE file_id = ?', id);
+    if (!cnt || Number(cnt.n) !== total) return null;
+    const BATCH = 32;
     async function* gen() {
-      for (const c of chunks) yield Buffer.isBuffer(c.data) ? c.data : Buffer.from(c.data);
+      let after = -1;
+      for (;;) {
+        const batch = await db.all(
+          'SELECT idx, data FROM db_file_chunks WHERE file_id = ? AND idx > ? ORDER BY idx LIMIT ' + BATCH,
+          id, after
+        );
+        if (!batch.length) break;
+        for (const c of batch) {
+          after = c.idx;
+          yield Buffer.isBuffer(c.data) ? c.data : Buffer.from(c.data);
+        }
+        if (batch.length < BATCH) break;
+      }
     }
     return Readable.from(gen());
   } catch {
@@ -288,6 +301,15 @@ function uniqueName(dir, base, used) {
 }
 
 /* ---------- driver ekspor: tulis semua entri lalu tutup arsip ---------- */
+
+async function openSafe(item) {
+  try {
+    return await openSource(item.url);
+  } catch {
+    return null;
+  }
+}
+
 async function streamZip(res, rows) {
   const sink = new zip.Sink(res);
   const entries = [];
@@ -295,14 +317,22 @@ async function streamZip(res, rows) {
   const skipped = [];
   const used = new Set();
 
-  for (const item of rows) {
-    if (res.writableEnded || res.destroyed) throw new Error('Klien menutup koneksi');
-    let source = null;
-    try {
-      source = await openSource(item.url);
-    } catch {
-      source = null;
+  // pipeline satu-maju: sambil entri ke-i ditulis ke ZIP, sumber entri ke-i+1
+  // sudah dibuka lebih dulu — latensi jaringan Blob/disk tidak menganggur
+  // menunggu giliran. Bila koneksi klien putus di tengah jalan, stream yang
+  // sudah terlanjur dibuka namun belum dipakai ikut dibuang (tanpa bocor).
+  let abandoned = false;
+  let nextOpen = rows.length ? openSafe(rows[0]) : null;
+  nextOpen.then((s) => { if (abandoned && s && typeof s.destroy === 'function') s.destroy(); }, () => {});
+
+  for (let i = 0; i < rows.length; i += 1) {
+    if (res.writableEnded || res.destroyed) {
+      abandoned = true;
+      throw new Error('Klien menutup koneksi');
     }
+    const item = rows[i];
+    const source = await nextOpen;
+    if (i + 1 < rows.length) nextOpen = openSafe(rows[i + 1]);
     if (!source) {
       skipped.push({
         kind: item.kind,
@@ -315,7 +345,14 @@ async function streamZip(res, rows) {
     }
     const dir = TYPE_DIR[item.type] || 'berkas';
     const entryName = uniqueName(dir, safeBase(item.name, fallbackName(item)), used);
-    const entry = await zip.writeEntry(sink, entryName, source, new Date(item.at || Date.now()));
+    let entry;
+    try {
+      entry = await zip.writeEntry(sink, entryName, source, new Date(item.at || Date.now()));
+    } catch (err) {
+      abandoned = true;
+      if (source && typeof source.destroy === 'function' && !source.destroyed) source.destroy();
+      throw err;
+    }
     entries.push(entry);
     exported.push({
       path: entryName,
@@ -355,6 +392,49 @@ function endExport(userId) {
   activeExports.delete(userId);
 }
 
+/* ---------- tiket unduhan (alur GET native browser) ----------
+
+   Klien minta tiket lewat POST (otentikasi + validasi awal), lalu memicu
+   unduhan biasa lewat <a href> — peramban men-stream ZIP langsung ke disk
+   unduhannya sendiri: tanpa menampung arsip di memori JS, progres tampil
+   sejak byte pertama, dan ukuran galeri bebas apa pun (tersendat hanya oleh
+   durasi maksimal platform, bukan oleh aplikasi). Tiket tersimpan di
+   database (aman lintas-proses serverless), satu pakai, kedaluwarsa. */
+
+const TICKET_TTL_MS = 10 * 60 * 1000;
+const TICKET_ID_RE = /^[a-f0-9]{48}$/;
+
+async function createTicket(userId, items) {
+  await db.ready;
+  // bersihkan tiket kadaluarsa secara oportunis (tabel kecil, aman diulang)
+  await db.run('DELETE FROM export_tickets WHERE expires_at < ?', Date.now() - 60_000);
+  const id = crypto.randomBytes(24).toString('hex');
+  const now = Date.now();
+  await db.run(
+    'INSERT INTO export_tickets (id, user_id, items_json, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)',
+    id, userId, items ? JSON.stringify(items) : null, now, now + TICKET_TTL_MS
+  );
+  return { id, ttlSec: Math.round(TICKET_TTL_MS / 1000) };
+}
+
+/* Klaim atomik (satu pakai) + cek pemilik & masa berlaku dalam satu langkah. */
+async function consumeTicket(ticketId) {
+  if (!TICKET_ID_RE.test(String(ticketId || ''))) return null;
+  await db.ready;
+  const now = Date.now();
+  const claim = await db.run(
+    'UPDATE export_tickets SET used_at = ? WHERE id = ? AND used_at IS NULL AND expires_at > ?',
+    now, ticketId, now
+  );
+  if (!claim || !claim.changes) return null;
+  const row = await db.get('SELECT user_id, items_json FROM export_tickets WHERE id = ?', ticketId);
+  if (!row) return null;
+  let items = null;
+  try { items = row.items_json ? JSON.parse(row.items_json) : null; } catch { items = null; }
+  if (!Array.isArray(items) || !items.length) items = null;
+  return { userId: row.user_id, items };
+}
+
 module.exports = {
   MAX_ITEMS,
   MAX_BYTES,
@@ -362,4 +442,6 @@ module.exports = {
   streamZip,
   beginExport,
   endExport,
+  createTicket,
+  consumeTicket,
 };

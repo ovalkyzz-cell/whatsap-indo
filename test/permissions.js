@@ -34,7 +34,7 @@ ok(/renotify:\s*true/.test(sw), 'sw: renotify aktif (dering ulang notifikasi)');
 ok(/options\.vibrate\s*=/.test(sw), 'sw: pola getar notifikasi diatur');
 ok(/getSWPref\('vibrate'/.test(sw), 'sw: getar mengikuti preferensi pengguna');
 ok(/setAppBadge/.test(sw), 'sw: lencana aplikasi (badge) ditangani');
-  ok(/rtc-core-v15/.test(sw), 'sw: versi cache diperbarui (v15 — aplikasi terpasang ikut menerima perbaikan)');
+  ok(/rtc-core-v16/.test(sw), 'sw: versi cache diperbarui (v16 — ekspor unduhan native + PWA ikut terbaru)');
 
 const sIndex = read('server/index.js');
 ok(/async function pushChatTargets/.test(sIndex), 'server: push memakai pushChatTargets (privasi + bisukan)');

@@ -42,7 +42,11 @@ const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch
 // anonim tetap tak bisa mengirim body besar (pembatasan tetap berlaku untuk
 // seluruh rute lain yang tidak diautentikasi).
 const jsonBody = express.json({ limit: '1mb' });
-app.use((req, res, next) => (req.path === '/api/storage/export' ? next() : jsonBody(req, res, next)));
+app.use((req, res, next) => (
+  req.path === '/api/storage/export' || req.path === '/api/storage/export/ticket'
+    ? next()
+    : jsonBody(req, res, next)
+));
 
 // Di belakang proxy (Vercel/nginx) req.ip harus diambil dari X-Forwarded-For —
 // tanpa ini semua pengguna berbagi satu kuota rate-limit login (60/menit) dan
@@ -582,24 +586,44 @@ app.post('/api/storage/bulk-delete', auth.requireAuth, ah(async (req, res) => {
 // body-nya sendiri diberi pagu besar. Urutan penting: auth dulu, body belakang
 // — request tanpa sesi langsung ditolak sebelum buffer besar dialokasikan.
 const EXPORT_JSON_LIMIT = '64mb';
-app.post('/api/storage/export', auth.requireAuth, express.json({ limit: EXPORT_JSON_LIMIT }), ah(async (req, res) => {
-  const wanted = Array.isArray(req.body?.items) && req.body.items.length ? req.body.items : null;
-  if (!galleryzip.beginExport(req.user.id)) {
-    return res.status(429).json({ error: 'Ekspor sedang berjalan — tunggu sebentar' });
+
+function exportHtmlFail(res, status, msg) {
+  const safe = String(msg || 'Gagal mengekspor').replace(/[<>&"]/g, (c) => (
+    { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]
+  ));
+  res.status(status).type('html').send(
+    `<!doctype html><meta charset="utf-8"><title>Ekspor galeri</title>` +
+    `<body style="font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;line-height:1.5">` +
+    `<h2 style="font-size:1.1rem">Ekspor galeri</h2><p>${safe}</p>` +
+    `<p><a href="/" style="color:#0a8">Kembali ke aplikasi</a> — buat ekspor baru bila perlu.</p></body>`
+  );
+}
+
+/* Inti ekspor: koleksi -> header unduhan -> ZIP streaming. Dipakai oleh
+   POST (kompatibilitas API) dan GET ?ticket= (unduhan native peramban). */
+async function runExport(res, userId, wanted, { html = false } = {}) {
+  const fail = (status, message) => (html
+    ? exportHtmlFail(res, status, message)
+    : res.status(status).json({ error: message }));
+  if (!galleryzip.beginExport(userId)) {
+    return fail(429, 'Ekspor sedang berjalan — tunggu sebentar');
   }
   try {
-    const { rows } = await galleryzip.collect(req.user.id, wanted);
-    if (!rows.length) return res.status(404).json({ error: 'Tidak ada media untuk diekspor' });
+    const { rows } = await galleryzip.collect(userId, wanted);
+    if (!rows.length) return fail(404, 'Tidak ada media untuk diekspor');
 
-    const filename = `galeri-${new Date().toISOString().slice(0, 10)}.zip`;
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const filename = `galeri-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.zip`;
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('X-Accel-Buffering', 'no'); // proksi (nginx) jangan menyangga stream
     res.status(200);
     try {
       const out = await galleryzip.streamZip(res, rows);
-      console.log(`export: user=${req.user.id} ${out.exported} berkas, ${out.skipped} dilewati, ${out.bytes} byte`);
+      console.log(`export: user=${userId} ${out.exported} berkas, ${out.skipped} dilewati, ${out.bytes} byte`);
     } catch (err) {
       if (res.writableEnded || res.destroyed) return; // klien batal
       console.error('export zip gagal:', err.message);
@@ -607,7 +631,38 @@ app.post('/api/storage/export', auth.requireAuth, express.json({ limit: EXPORT_J
       else throw err;
     }
   } finally {
-    galleryzip.endExport(req.user.id);
+    galleryzip.endExport(userId);
+  }
+}
+
+app.post('/api/storage/export', auth.requireAuth, express.json({ limit: EXPORT_JSON_LIMIT }), ah(async (req, res) => {
+  const wanted = Array.isArray(req.body?.items) && req.body.items.length ? req.body.items : null;
+  await runExport(res, req.user.id, wanted);
+}));
+
+/* Langkah 1 alur unduhan native: buat tiket satu-kali (validasi awal di sini —
+   404/413 tetap JSON karena masih dari fetch klien). */
+app.post('/api/storage/export/ticket', auth.requireAuth, express.json({ limit: EXPORT_JSON_LIMIT }), ah(async (req, res) => {
+  const wanted = Array.isArray(req.body?.items) && req.body.items.length ? req.body.items : null;
+  const { rows } = await galleryzip.collect(req.user.id, wanted);
+  if (!rows.length) return res.status(404).json({ error: 'Tidak ada media untuk diekspor' });
+  const t = await galleryzip.createTicket(req.user.id, wanted);
+  res.json({ ticket: t.id, url: `/api/storage/export?ticket=${t.id}`, expiresIn: t.ttlSec });
+}));
+
+/* Langkah 2: peramban memuat URL ini sebagai unduhan — stream ZIP langsung
+   ke pengelola unduhan (tanpa buffer JS, progres sejak byte pertama).
+   Kegagalan di sini dijawab halaman HTML mini agar navigasi tidak
+   menampilkan JSON mentah. */
+app.get('/api/storage/export', ah(async (req, res) => {
+  try {
+    const t = await galleryzip.consumeTicket(String(req.query.ticket || ''));
+    if (!t) return exportHtmlFail(res, 410, 'Tiket unduhan sudah dipakai atau kedaluwarsa.');
+    await runExport(res, t.userId, t.items, { html: true });
+  } catch (err) {
+    if (res.headersSent || res.writableEnded || res.destroyed) return;
+    console.error('export ticket gagal:', err.message);
+    exportHtmlFail(res, err.status || 500, err.message || 'Gagal mengekspor galeri');
   }
 }));
 

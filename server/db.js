@@ -310,6 +310,18 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit (action, at);
 
+-- tiket unduhan ekspor galeri (satu pakai, kedaluwarsa otomatis) — GET native
+CREATE TABLE IF NOT EXISTS export_tickets (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  items_json TEXT,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  used_at    BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_export_tickets_user ON export_tickets (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_export_tickets_expires ON export_tickets (expires_at);
+
 -- indeks skala besar (900k pengguna): pencarian nama, kode undangan,
 -- urutan riwayat, dan pemeriksaan referensi url media
 CREATE INDEX IF NOT EXISTS idx_users_ref_code ON users (ref_code) WHERE ref_code IS NOT NULL;
@@ -318,6 +330,7 @@ CREATE INDEX IF NOT EXISTS idx_users_lower_name ON users (LOWER(name));
 CREATE INDEX IF NOT EXISTS idx_users_role_admin ON users (role) WHERE role = 'admin';
 CREATE INDEX IF NOT EXISTS idx_messages_media_url ON messages (media_url) WHERE media_url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_saved_files_media_url ON saved_files (media_url) WHERE media_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_sender_media ON messages (sender_id, created_at) WHERE media_url IS NOT NULL;
 `;
 
 const SQLITE_SCHEMA = `
@@ -615,6 +628,18 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit (action, at);
 
+-- tiket unduhan ekspor galeri (satu pakai, kedaluwarsa otomatis) — GET native
+CREATE TABLE IF NOT EXISTS export_tickets (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  items_json TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_export_tickets_user ON export_tickets (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_export_tickets_expires ON export_tickets (expires_at);
+
 -- indeks skala besar (900k pengguna): pencarian nama, kode undangan,
 -- urutan riwayat, dan pemeriksaan referensi url media
 CREATE INDEX IF NOT EXISTS idx_users_ref_code ON users (ref_code) WHERE ref_code IS NOT NULL;
@@ -623,6 +648,7 @@ CREATE INDEX IF NOT EXISTS idx_users_lower_name ON users (LOWER(name));
 CREATE INDEX IF NOT EXISTS idx_users_role_admin ON users (role) WHERE role = 'admin';
 CREATE INDEX IF NOT EXISTS idx_messages_media_url ON messages (media_url) WHERE media_url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_saved_files_media_url ON saved_files (media_url) WHERE media_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_sender_media ON messages (sender_id, created_at) WHERE media_url IS NOT NULL;
 `;
 
 // migrasi kolom per tabel (dijalankan saat boot, aman diulang)

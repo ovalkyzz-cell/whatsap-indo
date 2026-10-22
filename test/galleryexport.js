@@ -11,8 +11,10 @@
       isi identik dengan sumber, manifest.json sebagai entri terakhir
       dengan hitungan exported/skipped tepat.
    D) ekspor terpilih (item tertentu / campuran pesan) -> hanya entri itu.
+   D2) alur tiket unduhan native: POST ticket -> GET stream ZIP satu-kali
+       pakai (bekas -> 410 HTML), tanpa res.blob() di klien.
    E) id bodong -> 404; server kedua dengan EXPORT_MAX_ITEMS/BYTES rendah
-      -> 413 jumlah & 413 ukuran (jalur batas benar-benar dieksekusi).
+       -> 413 jumlah & 413 ukuran (jalur batas benar-benar dieksekusi).
    F) statis: tombol/handler ekspor ada di halaman & klien. */
 
 const fs = require('fs');
@@ -34,6 +36,7 @@ const USER_PASS = 'SandiUji123';
 const TMP_ZIP1 = path.join('/tmp', `rtc-galeri-${stamp}-all.zip`);
 const TMP_ZIP2 = path.join('/tmp', `rtc-galeri-${stamp}-sel.zip`);
 const TMP_ZIP3 = path.join('/tmp', `rtc-galeri-${stamp}-msg.zip`);
+const TMP_ZIP4 = path.join('/tmp', `rtc-galeri-${stamp}-ticket.zip`);
 const TMP_PAYLOAD = path.join('/tmp', `rtc-galeri-${stamp}-payload.bin`);
 
 let pass = 0;
@@ -329,9 +332,9 @@ async function testExportAll(base, tok, paths) {
   const r = await req(base, 'POST', '/api/storage/export', { token: tok, body: {} });
   ok(r.status === 200, 'ekspor semua -> 200');
   ok(String(r.headers['content-type'] || '').includes('application/zip'), 'Content-Type application/zip');
-  ok(
-    /^attachment; filename="galeri-\d{4}-\d{2}-\d{2}\.zip"$/.test(String(r.headers['content-disposition'] || '')),
-    'Content-Disposition unduhan galeri-YYYY-MM-DD.zip'
+   ok(
+    /^attachment; filename="galeri-\d{4}-\d{2}-\d{2}-\d{6}\.zip"$/.test(String(r.headers['content-disposition'] || '')),
+    'Content-Disposition unduhan galeri-YYYY-MM-DD-HHMMSS.zip'
   );
   ok(r.buf.length > 200 && r.buf.slice(0, 2).toString() === 'PK', 'badan respons benar-benar ZIP (magic PK)');
   ok(String(r.headers['cache-control'] || '').includes('no-store'), 'Cache-Control no-store');
@@ -399,6 +402,52 @@ async function testExportSelected(base, tok) {
   ok(bad.status === 404, 'id bodong / tak dikenal -> 404');
 }
 
+/* Alur unduhan NATIVE: tiket satu-kali -> GET stream ZIP (tanpa buffer JS).
+   Membuktikan kecepatan/keandalan path baru: tiket sah sekali pakai,
+   GET men-STREAM zip valid, tiket bekas -> 410 HTML, tiket bodong -> ditolak. */
+async function testTicketFlow(base, tok, paths) {
+  console.log('\n[D2] Tiket unduhan native (POST tiket -> GET stream ZIP)');
+  const anon = await req(base, 'POST', '/api/storage/export/ticket', { body: {} });
+  ok(anon.status === 401, 'POST ticket anon -> 401');
+
+  const t = await req(base, 'POST', '/api/storage/export/ticket', {
+    token: tok,
+    body: { items: [{ kind: 'saved', id: ids.saved[0] }] },
+  });
+  ok(t.status === 200 && t.json && /^[a-f0-9]{48}$/.test(String(t.json.ticket || '')), 'ticket POST -> 200 + id 48-hex', t.json && t.json.ticket);
+  ok(String(t.json.url || '').startsWith('/api/storage/export?ticket='), 'url unduhan menunjuk GET ?ticket=');
+  ok(Number(t.json.expiresIn) >= 60, 'ticket punya masa berlaku');
+
+  const g = await req(base, 'GET', String(t.json.url));
+  ok(g.status === 200, 'GET ?ticket= -> 200');
+  ok(String(g.headers['content-type'] || '').includes('application/zip'), 'GET: Content-Type application/zip');
+  ok(/^attachment; filename="galeri-/.test(String(g.headers['content-disposition'] || '')), 'GET: Content-Disposition unduhan');
+  ok(String(g.headers['cache-control'] || '').includes('no-store'), 'GET: Cache-Control no-store');
+  ok(g.buf.slice(0, 2).toString() === 'PK', 'GET: badan benar-benar ZIP (stream native)');
+  fs.writeFileSync(TMP_ZIP4, g.buf);
+  const c = await runPython(PY_SEL, [TMP_ZIP4, ids.saved[0]]);
+  ok(c.testzip === true && c.only_one === true && c.man_id === true, 'GET: arsip valid, isi sesuai pilihan, manifest benar');
+
+  const reuse = await req(base, 'GET', String(t.json.url));
+  ok(reuse.status === 410, 'ticket bekas pakai -> 410');
+  ok(String(reuse.headers['content-type'] || '').includes('text/html'), '410 berupa HTML (navigasi aman, bukan JSON mentah)');
+
+  const bogus = await req(base, 'GET', '/api/storage/export?ticket=' + 'f'.repeat(48));
+  ok(bogus.status === 410, 'ticket tak dikenal -> 410');
+
+  const malformed = await req(base, 'GET', '/api/storage/export?ticket=abc');
+  ok(malformed.status === 410, 'ticket format salah -> 410');
+
+  const noTok = await req(base, 'GET', '/api/storage/export');
+  ok(noTok.status === 410, 'tanpa ticket -> 410 (tidak ada unduhan liar)');
+
+  // ticket untuk "semua" (items null) juga bekerja
+  const tall = await req(base, 'POST', '/api/storage/export/ticket', { token: tok, body: {} });
+  ok(tall.status === 200 && tall.json && tall.json.url, 'ticket "semua" -> 200');
+  const g2 = await req(base, 'GET', String(tall.json.url));
+  ok(g2.status === 200 && g2.buf.slice(0, 2).toString() === 'PK', 'GET ticket "semua" -> ZIP valid');
+}
+
 async function testLimits() {
   console.log('\n[E] Jalur batas 413 (server terpisah, batas rendah)');
   const s2 = spawnServer(PORT2, { EXPORT_MAX_ITEMS: '3', EXPORT_MAX_BYTES: '1500' });
@@ -434,14 +483,20 @@ async function testStatics() {
     ok(idx.includes(marker), `index.html memuat "${marker}"`);
   }
   const js = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
-  for (const marker of ['exportGalleryZip', 'runGalleryExport', "$('btnStExportAll')", "$('btnStBulkExport')", '/api/storage/export']) {
+  for (const marker of ['exportGalleryZip', 'runGalleryExport', "$('btnStExportAll')", "$('btnStBulkExport')", '/api/storage/export/ticket']) {
     ok(js.includes(marker), `app.js memuat "${marker}"`);
   }
+  ok(!/await res\.blob\(\)/.test(js), 'app.js TIDAK memakai res.blob() (tanpa buffer arsip di memori)');
   const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'style.css'), 'utf8');
   ok(css.includes('.st-bulk-export'), 'style.css memuat .st-bulk-export');
   ok(css.includes('.st-export-btn'), 'style.css memuat .st-export-btn');
   const srv = fs.readFileSync(path.join(ROOT, 'server', 'index.js'), 'utf8');
   ok(srv.includes("'/api/storage/export'"), 'server/index.js memuat route /api/storage/export');
+  ok(srv.includes("'/api/storage/export/ticket'"), 'server/index.js memuat route ticket');
+  ok(srv.includes('consumeTicket'), 'server/index.js memakai consumeTicket');
+  const gz = fs.readFileSync(path.join(ROOT, 'server', 'galleryzip.js'), 'utf8');
+  ok(gz.includes('createTicket') && gz.includes('consumeTicket'), 'galleryzip.js memuat tiket satu-kali');
+  ok(gz.includes('openSafe'), 'galleryzip.js memakai prefetch pipelined (openSafe)');
   const zipw = fs.readFileSync(path.join(ROOT, 'server', 'zipwriter.js'), 'utf8');
   ok(zipw.includes('0x08074b50') && zipw.includes('0x02014b50'), 'zipwriter.js memuat signature data descriptor + central dir');
 }
@@ -450,7 +505,7 @@ async function cleanup() {
   for (const p of filesToUnlink) {
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* lewati */ }
   }
-  for (const p of [TMP_ZIP1, TMP_ZIP2, TMP_ZIP3, TMP_PAYLOAD]) {
+  for (const p of [TMP_ZIP1, TMP_ZIP2, TMP_ZIP3, TMP_ZIP4, TMP_PAYLOAD]) {
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* lewati */ }
   }
   try {
@@ -482,6 +537,7 @@ async function main() {
     const paths = await setupData(s1.base, userTok);
     await testExportAll(s1.base, userTok, paths);
     await testExportSelected(s1.base, userTok);
+    await testTicketFlow(s1.base, userTok, paths);
   } finally {
     await s1.kill();
   }
