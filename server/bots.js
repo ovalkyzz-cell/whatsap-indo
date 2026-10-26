@@ -692,6 +692,134 @@ async function aiAsk(model, prompt, timeout) {
   return answer;
 }
 
+// Fallback AI gratis tanpa API key (menggunakan HuggingFace/G4F style endpoints)
+async function freeAiAsk(prompt, timeout) {
+  const services = [
+    // Blackbox AI (gratis, no key)
+    {
+      url: 'https://api.blackbox.ai/api/chat',
+      body: { messages: [{ role: 'user', content: prompt }], model: 'gpt-4o' },
+      extract: (b) => b.response || b.message || b.result || b.answer,
+    },
+    // G4F-style endpoint (jika tersedia)
+    {
+      url: 'https://g4f-api.vercel.app/api/chat',
+      body: { messages: [{ role: 'user', content: prompt }], model: 'gpt-3.5-turbo' },
+      extract: (b) => b.choices?.[0]?.message?.content || b.response || b.result,
+    },
+  ];
+  
+  for (const svc of services) {
+    try {
+      const res = await fetch(svc.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(svc.body),
+        signal: AbortSignal.timeout(timeout || 30000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const text = svc.extract(data);
+      if (text && typeof text === 'string' && text.length > 10) return text;
+    } catch { /* continue */ }
+  }
+  return null;
+}
+
+// Template jawaban offline untuk topik umum (fallback terakhir)
+function offlineAiResponse(prompt) {
+  const lower = String(prompt || '').toLowerCase();
+  
+  const templates = [
+    {
+      match: /apa itu ai|artificial intelligence|kecerdasan buatan/i,
+      answer: `AI (Artificial Intelligence) atau Kecerdasan Buatan adalah teknologi yang memungkinkan mesin untuk:
+• Belajar dari data (machine learning)
+• Membuat keputusan otomatis
+• Memproses bahasa alami (NLP)
+• Mengenali pola dan gambar
+• Menganalisis data kompleks
+
+Contoh aplikasi AI: ChatGPT, Gemini, sistem rekomendasi, autonomous vehicles, medical diagnosis.`
+    },
+    {
+      match: /buatkan kode|buat fungsi|contoh program/i,
+      answer: `Silakan spesifikasi lebih detail:
+• Bahasa pemrograman apa? (JavaScript, Python, Java, dll)
+• Untuk apa? (REST API, web app, CLI tool, dll)
+• Fitur utama yang dibutuhkan?
+
+Contoh pertanyaan yang lebih jelas:
+- "buatkan fungsi sorting di Python"
+- "buat REST API login dengan JWT di Node.js"
+- "contoh kode validation form di JavaScript"`
+    },
+    {
+      match: /javascript|js|node|express/i,
+      answer: `JavaScript adalah bahasa pemrograman versatile yang berjalan di:
+• Browser (frontend)
+• Server Node.js (backend)
+• Mobile (React Native, Ionic)
+
+Framework/Library populer:
+• Frontend: React, Vue, Angular, Svelte
+• Backend: Express, Fastify, Nest.js
+• Testing: Jest, Mocha
+
+Keunggulan: asynchronous, event-driven, large ecosystem (npm)`
+    },
+    {
+      match: /python/i,
+      answer: `Python adalah bahasa pemrograman tingkat tinggi populer untuk:
+• Data Science & Machine Learning (TensorFlow, PyTorch)
+• Web Development (Django, Flask, FastAPI)
+• Automation & Scripting
+• AI & NLP
+
+Library penting:
+• pandas, numpy, scikit-learn
+• Django, Flask
+• Matplotlib, Seaborn (visualization)
+
+Kelebihan: readable syntax, banyak library, komunitas besar`
+    },
+    {
+      match: /database|sql|mongodb|postgres/i,
+      answer: `Database adalah sistem penyimpanan data terstruktur:
+
+SQL (Relational):
+• PostgreSQL, MySQL, SQLite, SQL Server
+• Tabel dengan rows & columns
+• Akurat, ACID compliance
+
+NoSQL (Non-relational):
+• MongoDB, Firebase, Redis, Cassandra
+• Dokumen, key-value, graph
+• Fleksibel, scalable
+
+Pilihan tergantung kebutuhan: struktur ketat → SQL, flexible schema → NoSQL`
+    },
+  ];
+  
+  for (const tmpl of templates) {
+    if (tmpl.match.test(lower)) {
+      return tmpl.answer;
+    }
+  }
+  
+  // Default response jika topik tidak cocok
+  return `Maaf, saya sedang dalam mode offline (tanpa koneksi API).
+
+Anda dapat menanyakan:
+• Konsep programming (JavaScript, Python, Java, etc)
+• Database & SQL
+• Web development
+• Tools & framework populer
+• Best practices engineering
+
+Untuk jawaban lebih detail, pastikan server terhubung ke API cloud.`;
+}
+
 async function aiReply(raw) {
   const text = String(raw || '').trim();
   const cmd = firstWord(text);
@@ -729,34 +857,54 @@ async function aiReply(raw) {
   let permanent = null;
   let transientFails = 0;
 
-  for (const candidate of chain) {
-    const tries = candidate.path === active.path ? 3 : 1;
-    for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
-      const remaining = AI_BUDGET - (Date.now() - startedAt);
-      // satu panggilan AI bisa memakan ±50 detik (API menunggu kuota provider),
-      // jadi jangan mulai percobaan baru bila anggaran tersisa kurang dari itu
-      if (remaining < 45000) break;
-      if (attempt) await aiDelay(10000);
-      try {
-        answer = await aiAsk(candidate, prompt, Math.min(AI_TIMEOUT, remaining));
-        used = candidate;
-      } catch (err) {
-        const kind = trackAiError(err, errors, candidate.label);
-        // key kosong / ditolak: semua model pasti gagal sama -> berhenti sekarang
-        if (kind === 'permanent') { permanent = err; break; }
-        if (kind === 'transient') {
-          transientFails += 1;
-          if (transientFails >= 2) break;
+  // JIKA API KEY ADA, gunakan api-mazval
+  if (API_KEY) {
+    for (const candidate of chain) {
+      const tries = candidate.path === active.path ? 3 : 1;
+      for (let attempt = 0; attempt < tries && !answer; attempt += 1) {
+        const remaining = AI_BUDGET - (Date.now() - startedAt);
+        if (remaining < 45000) break;
+        if (attempt) await aiDelay(10000);
+        try {
+          answer = await aiAsk(candidate, prompt, Math.min(AI_TIMEOUT, remaining));
+          used = candidate;
+        } catch (err) {
+          const kind = trackAiError(err, errors, candidate.label);
+          if (kind === 'permanent') { permanent = err; break; }
+          if (kind === 'transient') {
+            transientFails += 1;
+            if (transientFails >= 2) break;
+          }
         }
       }
+      if (answer || permanent) break;
+      await aiDelay(8000);
     }
-    if (answer || permanent) break;
-    await aiDelay(8000);
+  }
+
+  // JIKA TIDAK ADA API KEY atau semua model gagal, gunakan FREE AI
+  if (!answer) {
+    try {
+      const remaining = AI_BUDGET - (Date.now() - startedAt);
+      if (remaining > 5000) {
+        const freeAnswer = await freeAiAsk(prompt, Math.min(30000, remaining));
+        if (freeAnswer) {
+          answer = freeAnswer;
+          used = { label: 'AI Gratis' };
+        }
+      }
+    } catch (e) {
+      errors.push(`Free AI: ${e.message}`);
+    }
+  }
+
+  // TERAKHIR: gunakan template offline
+  if (!answer) {
+    answer = offlineAiResponse(question);
+    used = { label: 'AI Offline (template)' };
   }
 
   if (!answer && permanent) {
-    // masalah konfigurasi tidak akan membaik dengan menunggu: jelaskan seketika
-    // supaya pengguna langsung tahu penyebabnya, bukan mengira AI "tidak respon"
     return [
       '⚠️ AI belum bisa menjawab — konfigurasi bot bermasalah',
       '',
@@ -764,18 +912,9 @@ async function aiReply(raw) {
     ].join('\n');
   }
 
-  if (!answer) {
-    return [
-      '⚠️ Jawaban AI belum bisa diberikan sekarang',
-      '',
-      'Semua model sedang mengalami gangguan sesaat. Kirim ulang pertanyaanmu beberapa saat lagi, jawaban langsung muncul.',
-      errors.length ? `\nCatatan: ${errors[errors.length - 1]}` : '',
-    ].filter(Boolean).join('\n');
-  }
-
-  const header = used.path === active.path
+  const header = used.label === active.label
     ? `🤖 ${active.label}`
-    : `🤖 ${active.label} (cadangan: ${used.label})`;
+    : `🤖 ${used.label}`;
 
   return [
     header,
