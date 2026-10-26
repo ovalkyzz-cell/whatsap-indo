@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DASHBOARD AI - ADMIN</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #0a0a0a; color: #e0e0e0; min-height: 100vh; }
+        
+        /* Header */
+        header { background: #1a1a2e; border-bottom: 3px solid #e94560; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        header h1 { font-size: 1.5rem; color: #e94560; text-transform: uppercase; letter-spacing: 2px; }
+        .status { background: #0f3460; padding: 8px 16px; border-radius: 8px; font-size: 0.85rem; }
+        .status.online { border-left: 4px solid #00ff88; }
+        .status.offline { border-left: 4px solid #ff4444; }
+        
+        /* Main */
+        main { padding: 20px; max-width: 1600px; margin: 0 auto; }
+        
+        /* Stats Cards */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: #16213e; border: 2px solid #0f3460; border-radius: 12px; padding: 20px; }
+        .stat-card h3 { font-size: 0.8rem; color: #888; text-transform: uppercase; margin-bottom: 10px; }
+        .stat-card .value { font-size: 2.5rem; font-weight: 700; color: #e94560; }
+        .stat-card .sub { font-size: 0.9rem; color: #666; margin-top: 5px; }
+        
+        /* Bot List */
+        .bot-section h2 { font-size: 1.2rem; color: #00ff88; margin-bottom: 15px; text-transform: uppercase; }
+        .bot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(450px, 1fr)); gap: 15px; }
+        
+        .bot-card { background: #16213e; border: 2px solid #0f3460; border-radius: 12px; overflow: hidden; transition: 0.3s; }
+        .bot-card:hover { border-color: #e94560; box-shadow: 0 0 20px rgba(233, 69, 96, 0.3); }
+        
+        .bot-header { background: #0f3460; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .bot-name { font-weight: 700; color: #fff; }
+        .bot-status { font-size: 0.75rem; padding: 4px 10px; border-radius: 20px; }
+        .status-active { background: #00ff88; color: #000; }
+        .status-depleted { background: #ff4444; color: #fff; }
+        .status-empty { background: #ffaa00; color: #000; }
+        
+        .bot-body { padding: 15px; }
+        
+        .bot-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .info-item label { display: block; font-size: 0.7rem; color: #888; margin-bottom: 3px; }
+        .info-item .val { font-size: 0.9rem; color: #fff; font-family: monospace; }
+        
+        /* Token Progress Bar */
+        .token-bar { margin: 15px 0; }
+        .token-label { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .token-bar-bg { background: #0f3460; height: 10px; border-radius: 5px; overflow: hidden; }
+        .token-bar-fill { height: 100%; background: linear-gradient(90deg, #e94560, #ffaa00, #00ff88); transition: width 0.3s; }
+        
+        /* Actions */
+        .bot-actions { display: flex; gap: 10px; border-top: 1px solid #0f3460; padding-top: 10px; margin-top: 15px; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.8rem; transition: 0.2s; }
+        .btn-refill { background: #00ff88; color: #000; }
+        .btn-refill:hover { background: #00cc6a; }
+        .btn-check { background: #e94560; color: #fff; }
+        .btn-check:hover { background: #c73451; }
+        
+        /* Logs */
+        .logs-section { margin-top: 30px; background: #16213e; border: 2px solid #0f3460; border-radius: 12px; overflow: hidden; }
+        .logs-header { background: #0f3460; padding: 15px; border-bottom: 1px solid #0f3460; }
+        .logs-header h3 { color: #fff; font-size: 1rem; }
+        .logs-content { max-height: 400px; overflow-y: auto; padding: 15px; }
+        .log-entry { padding: 8px; margin-bottom: 8px; border-left: 3px solid #e94560; background: #0f3460; font-family: monospace; font-size: 0.8rem; }
+        .log-time { color: #888; font-size: 0.75rem; margin-bottom: 3px; }
+        
+        /* Refresh Button */
+        .refresh-btn { background: #e94560; color: #fff; padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; }
+        .refresh-btn:hover { background: #c73451; }
+        
+        /* Modal */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal.show { display: flex; }
+        .modal-content { background: #16213e; padding: 30px; border-radius: 12px; max-width: 500px; width: 90%; border: 2px solid #e94560; }
+        .modal h3 { color: #e94560; margin-bottom: 20px; }
+        .modal input { width: 100%; padding: 12px; margin: 15px 0; background: #0f3460; border: 2px solid #00ff88; color: #fff; border-radius: 8px; font-size: 1rem; }
+        .modal button { width: 100%; padding: 12px; margin-top: 10px; background: #00ff88; color: #000; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+        .modal button.close { background: #ff4444; color: #fff; margin-top: 5px; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            header { flex-direction: column; gap: 10px; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .bot-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🤖 AI DASHBOARD</h1>
+        <div class="status online" id="statusIndicator">● ONLINE</div>
+    </header>
+
+    <main>
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Requests</h3>
+                <div class="value" id="totalRequests">0</div>
+                <div class="sub">Semua bot</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active Bots</h3>
+                <div class="value" id="activeBots">0</div>
+                <div class="sub">Bot tersedia</div>
+            </div>
+            <div class="stat-card">
+                <h3>Depleted Tokens</h3>
+                <div class="value" id="depletedBots">0</div>
+                <div class="sub">Perlu refill</div>
+            </div>
+            <div class="stat-card">
+                <h3>Pool Capacity</h3>
+                <div class="value" id="poolCapacity">-</div>
+                <div class="sub">Total token pool</div>
+            </div>
+        </div>
+
+        <!-- Bot List -->
+        <div class="bot-section">
+            <h2>LIST BOT AI & TOKEN</h2>
+            <div class="bot-grid" id="botList"></div>
+        </div>
+
+        <!-- Refill Modal -->
+        <div class="modal" id="refillModal">
+            <div class="modal-content">
+                <h3>REFILL TOKEN BOT</h3>
+                <p id="modalBotName" style="margin-bottom: 10px; color: #e94560;"></p>
+                <label>Token baru (angka):</label>
+                <input type="number" id="tokenAmount" placeholder="Contoh: 10000" min="100">
+                <button class="btn-refill" onclick="confirmRefill()">REFILL TOKEN</button>
+                <button class="close" onclick="closeModal()">BATAL</button>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="logs-section">
+            <div class="logs-header">
+                <h3>📋 LOG REFILL & ACTIVITY</h3>
+            </div>
+            <div class="logs-content" id="logsContent"></div>
+        </div>
+
+        <!-- Refresh Button -->
+        <div style="text-align: center; margin-top: 30px;">
+            <button class="refresh-btn" onclick="refreshData()">↻ REFRESH DATA</button>
+        </div>
+    </main>
+
+    <script>
+        // Bot configuration (sesuai server/bots.js)
+        const BOTS = [
+            { id: 'bot-ai', name: 'AI Chat (GPT/Gemini/DeepSeek)', defaultTokens: 5000, type: 'chat' },
+            { id: 'bot-down', name: 'Downloader (TikTok/IG/YouTube)', defaultTokens: 3000, type: 'download' },
+            { id: 'bot-verif-am', name: 'Verif AM Premium', defaultTokens: 1000, type: 'action' },
+            { id: 'bot-nftoken', name: 'Generate NFToken', defaultTokens: 1000, type: 'action' },
+            { id: 'bot-email', name: 'Email Generator', defaultTokens: 1000, type: 'action' },
+            { id: 'bot-tools', name: 'Tools (15+ tools)', defaultTokens: 2000, type: 'action' },
+            { id: 'bot-kodesnap', name: 'Screenshot Kode', defaultTokens: 500, type: 'action' },
+            { id: 'bot-npm-zip', name: 'Unduh Kode npm', defaultTokens: 500, type: 'action' },
+            { id: 'bot-model-ai', name: 'Katalog Model AI', defaultTokens: 500, type: 'info' },
+        ];
+
+        let botsState = {};
+        let totalPool = 0;
+
+        // Load from localStorage or API
+        async function loadState() {
+            try {
+                const stored = localStorage.getItem('ai_bots_state');
+                if (stored) {
+                    botsState = JSON.parse(stored);
+                } else {
+                    // Initialize with default values
+                    botsState = {};
+                    BOTS.forEach(bot => {
+                        botsState[bot.id] = {
+                            tokens: bot.defaultTokens,
+                            requests: 0,
+                            status: 'active'
+                        };
+                    });
+                }
+                totalPool = Object.values(botsState).reduce((sum, b) => sum + b.tokens, 0);
+            } catch (e) {
+                console.error('Load error:', e);
+            }
+        }
+
+        // Save to localStorage
+        function saveState() {
+            localStorage.setItem('ai_bots_state', JSON.stringify(botsState));
+        }
+
+        // Add log
+        function addLog(message) {
+            const logs = document.getElementById('logsContent');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const time = new Date().toLocaleString('id-ID');
+            entry.innerHTML = `<div class="log-time">[${time}]</div>${message}`;
+            logs.prepend(entry);
+            
+            // Keep only last 50 logs
+            while (logs.children.length > 50) {
+                logs.removeChild(logs.lastChild);
+            }
+        }
+
+        // Render bots
+        function renderBots() {
+            const container = document.getElementById('botList');
+            container.innerHTML = '';
+            
+            let activeCount = 0;
+            let depletedCount = 0;
+            let totalRequests = 0;
+
+            BOTS.forEach(bot => {
+                const state = botsState[bot.id] || { tokens: bot.defaultTokens, requests: 0, status: 'active' };
+                const percentage = (state.tokens / (bot.defaultTokens * 2)) * 100;
+                
+                let statusClass = 'status-active';
+                let statusText = 'Aktif';
+                
+                if (state.tokens <= 0) {
+                    statusClass = 'status-depleted';
+                    statusText = 'Token Habis';
+                    depletedCount++;
+                } else if (state.tokens < bot.defaultTokens * 0.2) {
+                    statusClass = 'status-empty';
+                    statusText = 'Hampir Habis';
+                } else {
+                    activeCount++;
+                }
+
+                totalRequests += state.requests;
+
+                const card = document.createElement('div');
+                card.className = 'bot-card';
+                card.innerHTML = `
+                    <div class="bot-header">
+                        <span class="bot-name">${bot.name}</span>
+                        <span class="bot-status ${statusClass}">${statusText}</span>
+                    </div>
+                    <div class="bot-body">
+                        <div class="bot-info">
+                            <div class="info-item">
+                                <label>Tokens</label>
+                                <div class="val">${state.tokens.toLocaleString()}</div>
+                            </div>
+                            <div class="info-item">
+                                <label>Requests</label>
+                                <div class="val">${state.requests.toLocaleString()}</div>
+                            </div>
+                            <div class="info-item">
+                                <label>Default</label>
+                                <div class="val">${bot.defaultTokens.toLocaleString()}</div>
+                            </div>
+                            <div class="info-item">
+                                <label>Type</label>
+                                <div class="val">${bot.type}</div>
+                            </div>
+                        </div>
+                        <div class="token-bar">
+                            <div class="token-label">
+                                <span>Progress Token</span>
+                                <span>${Math.min(100, Math.round(percentage))}%</span>
+                            </div>
+                            <div class="token-bar-bg">
+                                <div class="token-bar-fill" style="width: ${Math.min(100, percentage)}%"></div>
+                            </div>
+                        </div>
+                        <div class="bot-actions">
+                            <button class="btn btn-refill" onclick="openRefill('${bot.id}')">REFILL</button>
+                            <button class="btn btn-check" onclick="checkToken('${bot.id}')">CHECK</button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            // Update stats
+            document.getElementById('totalRequests').textContent = totalRequests.toLocaleString();
+            document.getElementById('activeBots').textContent = activeCount;
+            document.getElementById('depletedBots').textContent = depletedCount;
+            document.getElementById('poolCapacity').textContent = totalPool.toLocaleString();
+        }
+
+        // Open refill modal
+        function openRefill(botId) {
+            const bot = BOTS.find(b => b.id === botId);
+            document.getElementById('modalBotName').textContent = bot ? bot.name : botId;
+            document.getElementById('tokenAmount').value = '';
+            document.getElementById('refillModal').classList.add('show');
+        }
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('refillModal').classList.remove('show');
+        }
+
+        // Confirm refill
+        function confirmRefill() {
+            const amount = parseInt(document.getElementById('tokenAmount').value);
+            if (!amount || amount < 100) {
+                alert('Token minimal 100');
+                return;
+            }
+
+            const botId = Object.keys(botsState).find(k => botsState[k].tokens === null || botsState[k].tokens === undefined) || 'bot-ai';
+            
+            // Update token (add to existing)
+            let totalAdded = 0;
+            Object.keys(botsState).forEach(id => {
+                if (botsState[id]) {
+                    const added = Math.floor(amount / 5); // Distribute to all bots
+                    if (added > 0) {
+                        botsState[id].tokens += added;
+                        totalAdded += added;
+                    }
+                }
+            });
+
+            // Update pool total
+            totalPool = Object.values(botsState).reduce((sum, b) => sum + b.tokens, 0);
+            
+            saveState();
+            renderBots();
+            addLog(`Refill: +${totalAdded.toLocaleString()} tokens distributed`);
+            
+            closeModal();
+            alert(`Refill successful! Total: ${totalAdded.toLocaleString()} tokens`);
+        }
+
+        // Check token
+        async function checkToken(botId) {
+            const bot = BOTS.find(b => b.id === botId);
+            if (!bot) return;
+            
+            const state = botsState[botId];
+            alert(`Bot: ${bot.name}\nTokens: ${state.tokens.toLocaleString()}\nRequests: ${state.requests.toLocaleString()}\nStatus: ${state.tokens <= 0 ? 'HABIS' : state.tokens < bot.defaultTokens * 0.2 ? 'HAMPIS' : 'AKTIF'}`);
+        }
+
+        // Refresh data
+        async function refreshData() {
+            document.getElementById('statusIndicator').textContent = '● MEMUAT...';
+            document.getElementById('statusIndicator').className = 'status offline';
+            
+            // Simulate API refresh
+            await new Promise(r => setTimeout(r, 500));
+            
+            loadState();
+            renderBots();
+            
+            document.getElementById('statusIndicator').textContent = '● ONLINE';
+            document.getElementById('statusIndicator').className = 'status online';
+            addLog('Data refresh: Berhasil');
+        }
+
+        // Load and render
+        loadState();
+        renderBots();
+
+        // Auto refresh every 30 seconds
+        setInterval(() => {
+            refreshData();
+        }, 30000);
+
+        // Close modal on outside click
+        document.getElementById('refillModal').addEventListener('click', (e) => {
+            if (e.target.id === 'refillModal') closeModal();
+        });
+    </script>
+</body>
+</html>
