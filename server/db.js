@@ -706,6 +706,7 @@ const TABLE_MIGRATIONS = {
   ],
   calls: [
     ['answered_at', 'BIGINT', 'INTEGER'],
+    ['chat_id', 'TEXT', 'TEXT'],
   ],
   messages: [
     ['view_once', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
@@ -819,6 +820,23 @@ async function migratePg() {
   }
   if (countedAdded) await backfillCountedPg();
   await migrateDbFilesPg();
+  await fixCallsSchemaPg();
+}
+
+// Tabel calls lama punya callee_id NOT NULL tanpa chat_id — panggilan grup
+// menyisipkan callee_id NULL dan chat_id terisi. Drop NOT NULL di callee_id.
+async function fixCallsSchemaPg() {
+  try {
+    const res = await pool.query(
+      `SELECT is_nullable FROM information_schema.columns
+       WHERE table_name = 'calls' AND column_name = 'callee_id'`
+    );
+    if (res.rows.length && res.rows[0].is_nullable === 'NO') {
+      await pool.query('ALTER TABLE calls ALTER COLUMN callee_id DROP NOT NULL');
+    }
+  } catch (err) {
+    console.error('pg fix calls schema:', err.message);
+  }
 }
 
 // Sekali saja saat kolom counted pertama ditambahkan: berkas lama yang tak lagi
