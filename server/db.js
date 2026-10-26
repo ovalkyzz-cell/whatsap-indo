@@ -800,7 +800,7 @@ function statements(schema) {
 }
 
 function ignorableSchemaError(err) {
-  return /already exists|duplicat|unique constraint|conflict/i.test(String(err && err.message));
+  return /already exists|duplicat|unique constraint|conflict|does not exist/i.test(String(err && err.message));
 }
 
 async function migratePg() {
@@ -821,6 +821,23 @@ async function migratePg() {
   if (countedAdded) await backfillCountedPg();
   await migrateDbFilesPg();
   await fixCallsSchemaPg();
+  await ensurePgIndexes();
+}
+
+// Buat ulang index yang mungkin gagal saat boot pertama (kolom ditambahkan
+// oleh migrasi SETELAH loop schema). Aman dijalankan berulang.
+async function ensurePgIndexes() {
+  const idx = [
+    'CREATE INDEX IF NOT EXISTS idx_calls_chat ON calls (chat_id)',
+    'CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members (user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_chat_notifs_user ON chat_notifs (user_id)',
+  ];
+  for (const sql of idx) {
+    try { await pool.query(sql); } catch (err) {
+      if (!ignorableSchemaError(err)) console.error('pg index:', err.message);
+    }
+  }
 }
 
 // Tabel calls lama punya callee_id NOT NULL tanpa chat_id — panggilan grup
