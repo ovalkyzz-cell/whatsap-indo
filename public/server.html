@@ -626,8 +626,10 @@
       t.accounted || 0,
       (t.chatMediaBytes || 0) + (t.drawerBytes || 0) + (t.dbFileBytes || 0)
     );
-    var tb = cap.bytes / (1024 * 1024 * 1024 * 1024);
-    var pct = cap.bytes > 0 ? (used / cap.bytes) * 100 : 0;
+    // Gunakan poolCapacity jika ada, fallback ke bytes (jumlah user)
+    var totalCapacity = cap.poolCapacity || cap.bytes;
+    var tb = totalCapacity / (1024 * 1024 * 1024 * 1024);
+    var pct = totalCapacity > 0 ? (used / totalCapacity) * 100 : 0;
     var state = pct >= 85 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
     var box = $('scCap');
     box.dataset.state = state;

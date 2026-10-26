@@ -28,6 +28,7 @@ const STARTED_AT = Date.now();
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const EXPORT_MAX_JSON = 25 * 1024 * 1024; // batas arsip mentah 25 MB
 const AUDIT_KEEP = 5000; // jejak audit disimpan paling banyak 5000 baris
+const POOL_CAPACITY = 508.21 * 1000 ** 4; // Total pool kapasitas: 508.21 TB
 const ONLINE_TTL = 90_000; // sama dengan TTL presence server
 
 // penghitung permintaan HTTP (dipanggil dari middleware di index.js)
@@ -200,7 +201,7 @@ function capacityOf(activeRows, planById) {
       free += 1;
     }
   }
-  return { bytes, accounts: premium + free, premium, free, unlimited };
+  return { bytes, poolCapacity: POOL_CAPACITY, accounts: premium + free, premium, free, unlimited };
 }
 
 // ---------- rincian storage ----------
