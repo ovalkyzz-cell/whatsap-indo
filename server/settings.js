@@ -17,7 +17,7 @@ const DEFAULT_PLANS = [
   { id: 'bulanan', label: 'Bulanan', days: 30, price: 25000, dailyLimit: 0, storageLimit: 2 * 1000 ** 4, excluded: [], permanent: false },
   { id: 'bisnis', label: 'Bisnis', days: 30, price: 50000, dailyLimit: 0, storageLimit: 3 * 1000 ** 4, excluded: [], permanent: false },
   { id: 'reseller-bulanan', label: 'Reseller Bulanan', days: 30, price: 75000, dailyLimit: 0, storageLimit: 5 * 1000 ** 4, excluded: [], permanent: false },
-  { id: 'permanen', label: 'Permanen', days: 3650, price: 50000, dailyLimit: 0, storageLimit: 5 * 1000 ** 4, excluded: [], permanent: true },
+  { id: 'permanen', label: 'Permanen', days: 3650, price: 50000, dailyLimit: 0, storageLimit: 508.21 * 1000 ** 4, excluded: [], permanent: true },
 ];
 
 // storageCadangan per id ketika paket lama tersimpan tanpa field storageLimit
@@ -25,7 +25,7 @@ const LEGACY_STORAGE = {
   harian: 10 * 1000 ** 3,
   mingguan: 100 * 1000 ** 3,
   bulanan: 2 * 1000 ** 4,
-  permanen: 5 * 1000 ** 4,
+  permanen: 508.21 * 1000 ** 4,
 };
 
 const cache = new Map();
