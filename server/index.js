@@ -2928,6 +2928,94 @@ io.on('connection', (socket) => {
       .catch((err) => console.error('chat:read:', err.message));
   });
 
+  socket.on('chat:kick', ({ chatId, userId } = {}, ack) => {
+    const reply = (payload) => { try { ack?.(payload); } catch { /* ack tutup */ } };
+    void (async () => {
+      try {
+        const cid = String(chatId || '');
+        const uid = String(userId || '');
+        if (!cid || !uid) return reply({ ok: false, error: 'Data tidak valid' });
+
+        const chat = await db.get('SELECT id, type FROM chats WHERE id = ?', cid);
+        if (!chat || chat.type !== 'group') return reply({ ok: false, error: 'Grup tidak ditemukan' });
+
+        const actorRole = await helpers.getChatRole(cid, user.id);
+        if (actorRole !== 'admin') return reply({ ok: false, error: 'Hanya admin grup yang dapat mengeluarkan anggota' });
+
+        if (uid === user.id) return reply({ ok: false, error: 'Tidak dapat mengeluarkan diri sendiri' });
+
+        const targetMember = await db.get('SELECT role FROM chat_members WHERE chat_id = ? AND user_id = ?', cid, uid);
+        if (!targetMember) return reply({ ok: false, error: 'Pengguna bukan anggota grup' });
+
+        await db.run('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?', cid, uid);
+        
+        await emitToChat(cid, 'chat:member_left', { chatId: cid, userId: uid, reason: 'kicked', by: user.id });
+        
+        const target = await db.get('SELECT name FROM users WHERE id = ?', uid);
+        const sysMsgId = crypto.randomUUID();
+        const body = `${user.name} mengeluarkan ${target ? target.name : 'anggota'}`;
+        await db.run(
+          `INSERT INTO messages (id, chat_id, sender_id, type, body, created_at)
+           VALUES (?, ?, ?, 'system', ?, ?)`,
+          sysMsgId, cid, 'system', body, Date.now()
+        );
+        await emitToChat(cid, 'message:new', {
+          id: sysMsgId, chatId: cid, sender_id: 'system', type: 'system',
+          body, created_at: Date.now()
+        });
+
+        reply({ ok: true });
+      } catch (err) {
+        console.error('chat:kick:', err.message);
+        reply({ ok: false, error: 'Gagal mengeluarkan anggota' });
+      }
+    })();
+  });
+
+  socket.on('chat:promote', ({ chatId, userId } = {}, ack) => {
+    const reply = (payload) => { try { ack?.(payload); } catch { /* ack tutup */ } };
+    void (async () => {
+      try {
+        const cid = String(chatId || '');
+        const uid = String(userId || '');
+        if (!cid || !uid) return reply({ ok: false, error: 'Data tidak valid' });
+
+        const chat = await db.get('SELECT id, type FROM chats WHERE id = ?', cid);
+        if (!chat || chat.type !== 'group') return reply({ ok: false, error: 'Grup tidak ditemukan' });
+
+        const actorRole = await helpers.getChatRole(cid, user.id);
+        if (actorRole !== 'admin') return reply({ ok: false, error: 'Hanya admin grup yang dapat mengangkat admin baru' });
+
+        const targetMember = await db.get('SELECT role FROM chat_members WHERE chat_id = ? AND user_id = ?', cid, uid);
+        if (!targetMember) return reply({ ok: false, error: 'Pengguna bukan anggota grup' });
+        if (targetMember.role === 'admin') return reply({ ok: false, error: 'Pengguna sudah menjadi admin' });
+
+        await db.run('UPDATE chat_members SET role = "admin" WHERE chat_id = ? AND user_id = ?', cid, uid);
+        
+        await emitToChat(cid, 'chat:member_update', { chatId: cid, userId: uid, role: 'admin' });
+
+        const target = await db.get('SELECT name FROM users WHERE id = ?', uid);
+        const sysMsgId = crypto.randomUUID();
+        const body = `${user.name} menjadikan ${target ? target.name : 'anggota'} sebagai admin`;
+        await db.run(
+          `INSERT INTO messages (id, chat_id, sender_id, type, body, created_at)
+           VALUES (?, ?, ?, 'system', ?, ?)`,
+          sysMsgId, cid, 'system', body, Date.now()
+        );
+        await emitToChat(cid, 'message:new', {
+          id: sysMsgId, chatId: cid, sender_id: 'system', type: 'system',
+          body, created_at: Date.now()
+        });
+
+        reply({ ok: true });
+      } catch (err) {
+        console.error('chat:promote:', err.message);
+        reply({ ok: false, error: 'Gagal mengangkat admin' });
+      }
+    })();
+  });
+
+
   // ---------- WebRTC signaling ----------
   // hanya pemanggil & penerima yang boleh mengendalikan sebuah panggilan
   const callPeerId = (call, who) => (call.caller_id === who ? call.callee_id : call.caller_id);

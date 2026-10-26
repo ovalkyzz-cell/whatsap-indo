@@ -16,14 +16,15 @@ function ringMs() {
   return RING_MS;
 }
 
-async function create({ id, callerId, calleeId, kind }) {
+async function create({ id, callerId, calleeId, chatId, kind }) {
   const now = Date.now();
   await db.run(
-    `INSERT INTO calls (id, caller_id, callee_id, kind, state, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'ringing', ?, ?)`,
+    `INSERT INTO calls (id, caller_id, callee_id, chat_id, kind, state, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'ringing', ?, ?)`,
     id,
     callerId,
-    calleeId,
+    calleeId || null,
+    chatId || null,
     kind === 'video' ? 'video' : 'audio',
     now,
     now

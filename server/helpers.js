@@ -20,7 +20,16 @@ function isUniqueViolation(err) {
   return /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(String((err && err.message) || ''));
 }
 
-async function findDirectChat(userA, userB, key) {
+async function getChatRole(chatId, userId) {
+  const row = await db.get('SELECT role FROM chat_members WHERE chat_id = ? AND user_id = ?', chatId, userId);
+  return row ? row.role : null;
+}
+
+async function isGroupAdmin(chatId, userId) {
+  const role = await getChatRole(chatId, userId);
+  return role === 'admin';
+}
+
   return db.get(
     `SELECT c.* FROM chats c
      JOIN chat_members m1 ON m1.chat_id = c.id AND m1.user_id = ?
