@@ -692,59 +692,38 @@ async function aiAsk(model, prompt, timeout) {
   return answer;
 }
 
-// API Mazval tanpa key (rahasia endpoint)
-const API_MAZVAL_NO_KEY = 'https://api-mazval.zone.id/o/LCNJPGEM';
-const AI_MODELS_NO_KEY = [
-  { words: ['gpt', 'chatgpt'], path: '/chatgpt', label: 'ChatGPT' },
-  { words: ['gemini'], path: '/gemini', label: 'Gemini' },
-  { words: ['deepseek', 'ds', 'deepseekr1'], path: '/deepseekr1', label: 'DeepSeek R1' },
-  { words: ['claude'], path: '/claude-ai', label: 'Claude' },
-];
+// REAL AI: Pollinations AI (gratis, no API key, real-time)
+// Sumber: api-mazval/src/lib/apiHandler.ts
+const POLLINATIONS_URL = 'https://text.pollinations.ai';
 
 async function freeAiAsk(prompt, timeout) {
-  // Coba pakai API Mazval tanpa key via GET (semua endpoint GET kecuali mimo/nik)
-  for (const model of AI_MODELS_NO_KEY) {
+  // Model options: openai, llama, hermes, etc
+  const models = ['openai', 'llama-3.3-70b-instruct', 'qwen-2.5-72b-instruct'];
+  
+  for (const model of models) {
     try {
-      const url = new URL(API_MAZVAL_NO_KEY + model.path);
-      url.searchParams.set('prompt', prompt);
+      const url = `${POLLINATIONS_URL}/${encodeURIComponent(prompt)}?model=${model}&json=false`;
       
-      const res = await fetch(url.toString(), {
+      const res = await fetch(url, {
         method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(timeout || 20000),
+        headers: {
+          'Accept': 'text/plain',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        signal: AbortSignal.timeout(timeout || 30000),
       });
       
       if (!res.ok) continue;
-      const data = await res.json();
-      const answer = pickAnswer(data);
-      if (answer && typeof answer === 'string' && answer.length > 10) {
-        return answer;
+      
+      const text = await res.text();
+      
+      // Validasi: bukan error message
+      if (text && typeof text === 'string' && text.length > 20 && 
+          !text.toLowerCase().includes('error') && 
+          !text.toLowerCase().includes('quota')) {
+        return text;
       }
     } catch { /* lanjut ke model berikutnya */ }
-  }
-  
-  // Fallback ke service gratis lainnya
-  const services = [
-    {
-      url: 'https://api.blackbox.ai/api/chat',
-      body: { messages: [{ role: 'user', content: prompt }], model: 'gpt-4o' },
-      extract: (b) => b.response || b.message || b.result || b.answer,
-    },
-  ];
-  
-  for (const svc of services) {
-    try {
-      const res = await fetch(svc.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(svc.body),
-        signal: AbortSignal.timeout(timeout || 25000),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const text = svc.extract(data);
-      if (text && typeof text === 'string' && text.length > 10) return text;
-    } catch { /* continue */ }
   }
   return null;
 }
