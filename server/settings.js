@@ -62,7 +62,7 @@ function normalizeExcluded(input) {
   return [...new Set(input.map((v) => String(v || '').trim().slice(0, 40)).filter(Boolean))].slice(0, 30);
 }
 
-const MAX_STORAGE = 100 * 1000 ** 4; // 100 TB (batas wajar)
+const MAX_STORAGE = 508.21 * 1000 ** 4; // 508.21 TB (pool kapasitas real)
 
 function normalizeStorage(input, id) {
   if (input === undefined || input === null || input === '') {
