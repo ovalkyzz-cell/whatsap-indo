@@ -692,20 +692,43 @@ async function aiAsk(model, prompt, timeout) {
   return answer;
 }
 
-// Fallback AI gratis tanpa API key (menggunakan HuggingFace/G4F style endpoints)
+// API Mazval tanpa key (rahasia endpoint)
+const API_MAZVAL_NO_KEY = 'https://api-mazval.zone.id/o/LCNJPGEM';
+const AI_MODELS_NO_KEY = [
+  { words: ['gpt', 'chatgpt'], path: '/chatgpt', label: 'ChatGPT' },
+  { words: ['gemini'], path: '/gemini', label: 'Gemini' },
+  { words: ['deepseek', 'ds', 'deepseekr1'], path: '/deepseekr1', label: 'DeepSeek R1' },
+  { words: ['claude'], path: '/claude-ai', label: 'Claude' },
+];
+
 async function freeAiAsk(prompt, timeout) {
+  // Coba pakai API Mazval tanpa key via GET (semua endpoint GET kecuali mimo/nik)
+  for (const model of AI_MODELS_NO_KEY) {
+    try {
+      const url = new URL(API_MAZVAL_NO_KEY + model.path);
+      url.searchParams.set('prompt', prompt);
+      
+      const res = await fetch(url.toString(), {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(timeout || 20000),
+      });
+      
+      if (!res.ok) continue;
+      const data = await res.json();
+      const answer = pickAnswer(data);
+      if (answer && typeof answer === 'string' && answer.length > 10) {
+        return answer;
+      }
+    } catch { /* lanjut ke model berikutnya */ }
+  }
+  
+  // Fallback ke service gratis lainnya
   const services = [
-    // Blackbox AI (gratis, no key)
     {
       url: 'https://api.blackbox.ai/api/chat',
       body: { messages: [{ role: 'user', content: prompt }], model: 'gpt-4o' },
       extract: (b) => b.response || b.message || b.result || b.answer,
-    },
-    // G4F-style endpoint (jika tersedia)
-    {
-      url: 'https://g4f-api.vercel.app/api/chat',
-      body: { messages: [{ role: 'user', content: prompt }], model: 'gpt-3.5-turbo' },
-      extract: (b) => b.choices?.[0]?.message?.content || b.response || b.result,
     },
   ];
   
@@ -715,7 +738,7 @@ async function freeAiAsk(prompt, timeout) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(svc.body),
-        signal: AbortSignal.timeout(timeout || 30000),
+        signal: AbortSignal.timeout(timeout || 25000),
       });
       if (!res.ok) continue;
       const data = await res.json();
@@ -3570,4 +3593,5 @@ module.exports = {
   // tetap hanya ada di server, tidak pernah dikirim ke browser
   callApi,
   unwrapBody,
+  freeAiAsk,
 };
