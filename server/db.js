@@ -549,7 +549,8 @@ CREATE INDEX IF NOT EXISTS idx_presence_user ON presence (user_id, at);
 CREATE TABLE IF NOT EXISTS calls (
   id         TEXT PRIMARY KEY,
   caller_id  TEXT NOT NULL,
-  callee_id  TEXT NOT NULL,
+  callee_id  TEXT,
+  chat_id    TEXT,
   kind       TEXT NOT NULL DEFAULT 'audio',
   state      TEXT NOT NULL DEFAULT 'ringing',
   created_at INTEGER NOT NULL,
@@ -558,6 +559,7 @@ CREATE TABLE IF NOT EXISTS calls (
 );
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls (caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls (callee_id);
+CREATE INDEX IF NOT EXISTS idx_calls_chat ON calls (chat_id);
 CREATE INDEX IF NOT EXISTS idx_calls_state ON calls (state, created_at);
 
 CREATE TABLE IF NOT EXISTS bus (

@@ -30,6 +30,7 @@ async function isGroupAdmin(chatId, userId) {
   return role === 'admin';
 }
 
+async function findDirectChat(userA, userB, key) {
   return db.get(
     `SELECT c.* FROM chats c
      JOIN chat_members m1 ON m1.chat_id = c.id AND m1.user_id = ?
