@@ -7630,8 +7630,8 @@ async function openGroupInfo() {
         ${m.role === 'admin' ? '<span class="role-badge">Admin</span>' : ''}
         ${isAdmin && m.id !== S.me.id ? `
           <div class="member-actions">
-            ${m.role !== 'admin' ? `<button class="btn-ghost-sm" data-gpromote="${m.id}" title="Jadikan Admin">Promote</button>` : ''}
-            <button class="btn-ghost-sm danger" data-gkick="${m.id}" title="Keluarkan">Kick</button>
+            ${m.role !== 'admin' ? `<button class="btn-admin-action" data-gpromote="${m.id}" title="Jadikan Admin">⭐ Add Admin</button>` : ''}
+            <button class="btn-admin-action danger" data-gkick="${m.id}" title="Keluarkan Anggota">🚫 Kick</button>
           </div>
         ` : ''}
       </div>`).join('');
