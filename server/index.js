@@ -1213,6 +1213,21 @@ app.delete('/api/chats/:id/members/:userId', auth.requireAuth, ah(async (req, re
   res.json({ ok: true });
 }));
 
+// Promote user jadi admin grup
+app.patch('/api/chats/:id/members/:userId/role', auth.requireAuth, ah(async (req, res) => {
+  const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
+  if (!chat || chat.type !== 'group') return res.status(404).json({ error: 'Grup tidak ditemukan' });
+  if (!(await helpers.isGroupAdmin(chat.id, req.user.id))) {
+    return res.status(403).json({ error: 'Hanya admin grup yang bisa mempromosikan' });
+  }
+  const targetId = String(req.params.userId || '');
+  const role = req.body?.role === 'admin' ? 'admin' : 'member';
+  await db.run('UPDATE chat_members SET role = ? WHERE chat_id = ? AND user_id = ?', role, chat.id, targetId);
+  const members = await helpers.getChatMemberIds(chat.id);
+  await emitToUsers(members, 'chat:updated', { chatId: chat.id });
+  res.json({ ok: true });
+}));
+
 app.post('/api/chats/:id/leave', auth.requireAuth, ah(async (req, res) => {
   const chat = await db.get('SELECT * FROM chats WHERE id = ?', req.params.id);
   if (!chat || chat.type !== 'group') return res.status(404).json({ error: 'Grup tidak ditemukan' });

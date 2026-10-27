@@ -1293,6 +1293,23 @@ function bindSwipeReply() {
   box.addEventListener('touchcancel', resetSwipe);
 }
 
+// Kick anggota grup
+async function kickMember(chatId, userId) {
+  if (!confirm('Yakin ingin mengeluarkan anggota ini?')) return;
+  try {
+    await api(`/api/chats/${chatId}/members/${userId}`, { method: 'DELETE' });
+    toast('Anggota dikeluarkan');
+  } catch (err) { toast(err.message); }
+}
+
+// Promote user jadi admin grup
+async function promoteMember(chatId, userId) {
+  try {
+    await api(`/api/chats/${chatId}/members/${userId}/role`, { method: 'PATCH', body: { role: 'admin' } });
+    toast('Anggota dipromosikan jadi admin');
+  } catch (err) { toast(err.message); }
+}
+
 /* ---------- scroll: lancar, tanpa lompat ---------- */
 function scrollToBottom(smooth) {
   const box = $('messages');
@@ -7611,8 +7628,28 @@ async function openGroupInfo() {
           <small>${m.isBot ? 'Bot' : esc(m.email)}${m.online ? ' • online' : ''}</small>
         </div>
         ${m.role === 'admin' ? '<span class="role-badge">Admin</span>' : ''}
+        ${isAdmin && m.id !== S.me.id ? `
+          <div class="member-actions">
+            ${m.role !== 'admin' ? `<button class="btn-ghost-sm" data-gpromote="${m.id}" title="Jadikan Admin">Promote</button>` : ''}
+            <button class="btn-ghost-sm danger" data-gkick="${m.id}" title="Keluarkan">Kick</button>
+          </div>
+        ` : ''}
       </div>`).join('');
     list.querySelectorAll('.avatar').forEach((av, i) => { if (!members[i].isBot) setAvatar(av, members[i]); });
+
+    list.querySelectorAll('[data-gpromote]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await promoteMember(chat.id, btn.dataset.gpromote);
+        openGroupInfo();
+      });
+    });
+
+    list.querySelectorAll('[data-gkick]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await kickMember(chat.id, btn.dataset.gkick);
+        openGroupInfo();
+      });
+    });
 
     // kelola bot grup: pasang (admin premium) / keluarkan (admin)
     const botRemoveBtn = body.querySelector('#giBotRemove');
