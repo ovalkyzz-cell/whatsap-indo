@@ -408,15 +408,16 @@ function renderMe() {
   $('menuName').innerHTML = esc(S.me.name) + badge(S.me.verified);
   $('menuBio').textContent = S.me.about || 'Belum ada bio. Ketuk Profil & Info untuk menambahkan.';
   $('menuVerified').classList.toggle('hidden', !S.me.verified);
+  const isAdmin = S.me.role === 'admin';
   const isPremium = S.me.premium?.active;
   
   // Update menu theme untuk premium
   const themeItem = $('menuTheme');
   if (themeItem) {
-    themeItem.dataset.premium = isPremium || isAdmin;
-    if (!themeItem.dataset.premium && !themeItem.querySelector('.lock-icon')) {
+    themeItem.dataset.premium = String(isPremium || isAdmin);
+    if (themeItem.dataset.premium !== 'true' && !themeItem.querySelector('.lock-icon')) {
       themeItem.insertAdjacentHTML('beforeend', '<svg class="lock-icon" viewBox="0 0 24 24" style="width:16px;height:16px;margin-left:auto;"><use href="#ic-lock"/></svg>');
-    } else if (themeItem.dataset.premium && themeItem.querySelector('.lock-icon')) {
+    } else if (themeItem.dataset.premium === 'true' && themeItem.querySelector('.lock-icon')) {
       themeItem.querySelector('.lock-icon').remove();
     }
   }
