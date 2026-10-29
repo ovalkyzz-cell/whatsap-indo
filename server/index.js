@@ -525,8 +525,15 @@ app.post('/api/storage/files', auth.requireAuth, ah(async (req, res) => {
   // URL sudah dikembalikan = bukti file tersimpan), TIDAK dicek ulang via
   // HEAD karena pemeriksaan HEAD ke Blob tidak andal di fungsi serverless
   // dan akan membuat pendaftaran gagal palsu.
-  if (url.startsWith('/uploads/') && !(await storedFileExists(url))) {
-    return res.status(400).json({ error: 'File tidak ditemukan di penyimpanan — unggah ulang filenya' });
+  if (url.startsWith('/uploads/')) {
+    // di hosting folder uploads ikut reset tiap recycle dan tak pernah lagi
+    // ditulis — jangan catat referensi yang pasti mati
+    if (process.env.VERCEL) {
+      return res.status(400).json({ error: 'File lokal tidak tersedia di hosting — unggah ulang filenya' });
+    }
+    if (!(await storedFileExists(url))) {
+      return res.status(400).json({ error: 'File tidak ditemukan di penyimpanan — unggah ulang filenya' });
+    }
   }
   const result = await storage.saveFile(req.user, {
     url,

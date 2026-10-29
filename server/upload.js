@@ -16,6 +16,14 @@ const { floodGuard } = require('./flood');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || '';
 const useBlob = Boolean(BLOB_TOKEN);
+// Hosting serverless (Vercel): folder proyek di-reset tiap kali container
+// di-recycle, sehingga file yang ditulis ke sana hilang tanpa jejak. Media
+// di hosting WAJIB lewat penyimpanan tahan lama (GitHub/Postgres); disk
+// lokal hanya dipakai di mesin sendiri.
+const hosted = Boolean(process.env.VERCEL);
+// mode memori: tampung file di RAM lalu simpan tahan lama. Aktif di hosting
+// (maupun saat token Blob terpasang) — tidak pernah menulis ke disk ephemeral.
+const useMem = useBlob || hosted;
 
 // mime yang aman ditampilkan inline; sisanya dipaksa unduh (cegah XSS)
 const INLINE_SAFE = /^(image\/(png|jpe?g|gif|webp|avif|bmp|ico)|video\/(mp4|webm|mov|m4v)|audio\/(mp3|ogg|wav|m4a|opus|aac|flac)|application\/(pdf)|text\/(plain|csv))$/i;
@@ -27,15 +35,18 @@ try {
   fs.accessSync(UPLOAD_DIR, fs.constants.W_OK);
   fsWritable = true;
 } catch { /* filesystem read-only (mis. serverless) -> pakai Blob */ }
+// disk boleh menjadi tujuan media hanya di mesin sendiri; di serverless
+// kemampuan menulis ada, tetapi isinya ikut hilang — jangan dipakai.
+const canPersistDisk = fsWritable && !hosted;
 
-const storageEnabled = useBlob || fsWritable;
+const storageEnabled = useMem || fsWritable;
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB (mode filesystem)
 // batas permintaan Vercel 4,5MB per request -> di hosting file dikirim via Blob
 const HOSTED_MAX_FILE_SIZE = 4 * 1024 * 1024;
 // ukuran potongan unggah ke database (raw binary). Aman di bawah 4,5MB.
 const DB_CHUNK_SIZE = 4 * 1024 * 1024;
 
-const storage = useBlob
+const storage = useMem
   ? multer.memoryStorage()
   : multer.diskStorage({
       destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
@@ -47,7 +58,7 @@ const storage = useBlob
 
 const upload = multer({
   storage,
-  limits: { fileSize: useBlob ? HOSTED_MAX_FILE_SIZE : MAX_FILE_SIZE },
+  limits: { fileSize: useMem ? HOSTED_MAX_FILE_SIZE : MAX_FILE_SIZE },
 });
 
 const router = express.Router();
@@ -91,12 +102,31 @@ async function rejectIfQuotaFull(req, res, size) {
 
 // Tanda tangan presigned: browser mengunggah langsung ke Blob tanpa melewati
 // fungsi Vercel, sehingga file > 4,5MB (batas body permintaan) tetap terkirim.
+// Store yang dihapus/disuspend membuat issueSignedToken melempar galat pada
+// SETIAP permintaan — status matinya dicache agar endpoint cepat menjawab 501
+// dan klien langsung memilih jalur yang tersedia (multipart/potongan).
+let blobDeadUntil = 0;
+
+// batas terbesar yang sanggup ditampung server ini dalam SATU permintaan
+// multipart; disertakan pada respons penolakan supaya klien dapat memilih
+// jalur yang tepat tanpa mencoba lalu gagal (413) untuk file besar.
+function multipartLimit() {
+  return useMem ? HOSTED_MAX_FILE_SIZE : MAX_FILE_SIZE;
+}
+
+function signUnavailable(res, code, message) {
+  return res.status(code).json({ error: message, multipartLimit: multipartLimit() });
+}
+
 router.post('/uploads/sign', requireAuth, async (req, res) => {
   if (!useBlob) {
-    return res.status(501).json({ error: 'Upload langsung belum tersedia' });
+    return signUnavailable(res, 501, 'Upload langsung belum tersedia');
+  }
+  if (Date.now() < blobDeadUntil) {
+    return signUnavailable(res, 501, 'Upload langsung tidak tersedia');
   }
   if (!floodGuard(`storage-sign:${req.user.id}`, 60, 60_000)) {
-    return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.' });
+    return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.', multipartLimit: multipartLimit() });
   }
   const original = quota.cleanStr(req.body?.name || 'file', 255) || 'file';
   const size = Number(req.body?.size) || 0;
@@ -133,10 +163,16 @@ router.post('/uploads/sign', requireAuth, async (req, res) => {
       size,
       mime: mime || 'application/octet-stream',
       type: classify(mime, original),
+      multipartLimit: multipartLimit(),
     });
   } catch (err) {
     console.error('sign:', err.message);
-    res.status(500).json({ error: 'Gagal menyiapkan upload' });
+    // store sudah dihapus/tak terjangkau -> tandai mati 10 menit, jawab 501
+    if (/does not exist|not[_ ]?found|\b404\b/i.test(String(err.message || ''))) {
+      blobDeadUntil = Date.now() + 10 * 60 * 1000;
+      return signUnavailable(res, 501, 'Upload langsung tidak tersedia');
+    }
+    return signUnavailable(res, 500, 'Gagal menyiapkan upload');
   }
 });
 
@@ -148,7 +184,7 @@ router.post('/upload', requireAuth, (req, res) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({
-          error: useBlob
+          error: useMem
             ? 'File terlalu besar untuk hosting (maksimal 4MB)'
             : 'Ukuran file maksimal 2GB',
         });
@@ -159,18 +195,18 @@ router.post('/upload', requireAuth, (req, res) => {
 
     const meta = {
       name: quota.cleanStr(req.file.originalname, 255) || 'file',
-      size: useBlob ? req.file.buffer.length : req.file.size,
+      size: useMem ? req.file.buffer.length : req.file.size,
       mime: quota.cleanMime(req.file.mimetype || ''),
       type: classify(req.file.mimetype || '', req.file.originalname),
     };
     if (!floodGuard(`storage-upload:${req.user.id}`, 60, 60_000)) {
-      if (!useBlob && req.file.path) {
+      if (!useMem && req.file.path) {
         try { await fs.promises.unlink(req.file.path); } catch { /* sudah hilang */ }
       }
       return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.' });
     }
 
-    if (!useBlob) {
+    if (!useMem) {
       // berkas tersimpan sebagai /uploads/ — kuota dihitung saat dikirim
       // sebagai pesan / disimpan (model lama), jadi cukup tolak bila penuh
       if (await rejectIfQuotaFull(req, res, meta.size)) {
@@ -257,6 +293,9 @@ router.post('/upload', requireAuth, (req, res) => {
 
 // inisialisasi sesi unggah: buat baris metadata (belum lengkap)
 router.post('/storage/dbfiles/init', requireAuth, async (req, res) => {
+  // sapu bersih unggahan yatim secara oportunistik: setInterval tidak andal
+  // di serverless (proses sering mati antar permintaan)
+  quota.sweepStaleUploads().catch(() => undefined);
   if (!floodGuard(`storage-init:${req.user.id}`, 60, 60_000)) {
     return res.status(429).json({ error: 'Terlalu banyak permintaan unggahan. Coba lagi sebentar lagi.' });
   }
@@ -685,7 +724,7 @@ async function storeBuffer(buffer, kind, filename, opts = {}) {
       .slice(0, 48);
     if (base) stored = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${base}${ext}`;
   }
-  if (useBlob) {
+  if (useMem) {
     // jalur utama: simpan ke GitHub Releases (bertahan lama, tak tergantung
     // kuota Blob yang sering disuspend)
     if (ghstore.enabled()) {
@@ -720,20 +759,24 @@ async function storeBuffer(buffer, kind, filename, opts = {}) {
       }
     }
     // cadangan lama: Vercel Blob (bila aktif)
-    try {
-      const { put } = require('@vercel/blob');
-      const object = await put(`uploads/${stored}`, buffer, {
-        access: 'public',
-        token: BLOB_TOKEN || undefined,
-        addRandomSuffix: false,
-        allowOverwrite: false,
-        contentType: EXT_MIME[ext] || 'application/octet-stream',
-      });
-      return { url: object.url, size: buffer.length, name };
-    } catch {
-      return null;
+    if (useBlob) {
+      try {
+        const { put } = require('@vercel/blob');
+        const object = await put(`uploads/${stored}`, buffer, {
+          access: 'public',
+          token: BLOB_TOKEN || undefined,
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          contentType: EXT_MIME[ext] || 'application/octet-stream',
+        });
+        return { url: object.url, size: buffer.length, name };
+      } catch {
+        return null;
+      }
     }
+    return null;
   }
+  if (!canPersistDisk) return null; // serverless tanpa penyimpanan tahan lama
   try {
     await fs.promises.writeFile(path.join(UPLOAD_DIR, stored), buffer);
     return { url: `/uploads/${stored}`, size: buffer.length, name };
@@ -783,11 +826,105 @@ async function streamToDisk(res, kind, filename, limit) {
   }
 }
 
+/* Alirkan unduhan jarak jauh langsung ke GitHub Releases per-potongan 4MB.
+   Dipakai di hosting tempat disk proyek bersifat sementara: memori terbatas
+   (tak pernah menampung file utuh), ukuran berapa pun, hasilnya tahan lama
+   dan bisa di-seek via HTTP Range seperti unggahan chunked biasa. */
+async function streamToGh(res, kind, filename, limit, mime) {
+  const id = crypto.randomUUID();
+  const name = safeName(filename, kind);
+  const chunkSize = DB_CHUNK_SIZE;
+  const compress = shouldCompress(mime);
+  let received = 0;
+  let idx = 0;
+  let head = Buffer.alloc(0);
+  let validated = false;
+  // penampungan potongan: digabung hanya sekali per 4MB (bukan per paket
+  // jaringan) supaya unduhan video besar tidak membakar CPU untuk menyalin
+  const bufs = [];
+  let buffered = 0;
+  const uploadedAssets = [];
+
+  async function pushPart(part) {
+    if (!validated) {
+      // magic bytes dicek SEBELUM aset pertama diunggah — tolak halaman
+      // error berkedup file (HTML/JSON) tanpa jejak di penyimpanan
+      if (!looksLike(head, kind, name)) throw new Error('isi file tidak sesuai');
+      validated = true;
+      await db.run(
+        `INSERT INTO db_files (id, user_id, mime, name, size, chunk_size, total_chunks, complete, content_key, compress, created_at)
+         VALUES (?, 'system', ?, ?, 0, ?, 0, 0, NULL, ?, ?)`,
+        id, mime, name, chunkSize, compress ? 1 : 0, Date.now()
+      );
+    }
+    const hash = crypto.createHash('sha256').update(part).digest('hex');
+    const stored = compress ? await ghstore.compressBuf(part) : part;
+    const assetId = await ghstore.uploadPart(id, idx, stored);
+    uploadedAssets.push(assetId);
+    await db.run(
+      'INSERT INTO db_file_parts (file_id, idx, asset_id, hash) VALUES (?, ?, ?, ?)',
+      id, idx, assetId, hash
+    );
+    idx += 1;
+  }
+
+  // ambil tepat satu potongan chunkSize dari antrean
+  function takeChunk() {
+    const pieces = [];
+    let need = chunkSize;
+    while (bufs.length && need > 0) {
+      const first = bufs[0];
+      if (first.length <= need) {
+        pieces.push(first);
+        need -= first.length;
+        bufs.shift();
+      } else {
+        pieces.push(first.subarray(0, need));
+        bufs[0] = first.subarray(need);
+        need = 0;
+      }
+    }
+    const part = Buffer.concat(pieces);
+    buffered -= part.length;
+    return part;
+  }
+
+  try {
+    for await (const chunk of res.body) {
+      const buf = Buffer.from(chunk);
+      received += buf.length;
+      if (received > limit) throw new Error('ukuran file melebihi batas');
+      if (head.length < 64) head = Buffer.concat([head, buf]).slice(0, 64);
+      bufs.push(buf);
+      buffered += buf.length;
+      while (buffered >= chunkSize) await pushPart(takeChunk());
+    }
+    while (buffered > 0) await pushPart(takeChunk());
+    if (!received || !validated) throw new Error('aliran file kosong');
+    await db.run(
+      'UPDATE db_files SET size = ?, total_chunks = ?, complete = 1 WHERE id = ?',
+      received, idx, id
+    );
+    return { url: `/api/storage/dbfiles/${id}`, size: received, name };
+  } catch (err) {
+    // gagal di tengah jalan: buang aset & baris yang sempat tercatat supaya
+    // tidak menumpuk sebagai sampah (sweeper juga menyapunya nanti)
+    console.error('streamToGh:', err.message);
+    for (const assetId of uploadedAssets) await ghstore.deleteAsset(assetId);
+    try { await db.run('DELETE FROM db_file_parts WHERE file_id = ?', id); } catch { /* lanjut */ }
+    try { await db.run('DELETE FROM db_files WHERE id = ?', id); } catch { /* lanjut */ }
+    return null;
+  }
+}
+
 async function storeRemoteFile(url, kind, opts) {
   const o = opts || {};
   const timeout = o.timeout || REMOTE_TIMEOUTS[kind] || 60000;
-  const limit = (fsWritable ? REMOTE_LIMITS : REMOTE_MEMORY_LIMITS)[kind]
-    || (fsWritable ? REMOTE_LIMITS.file : REMOTE_MEMORY_LIMITS.file);
+  // jalur streaming (disk lokal / GitHub) memori-terbatas sehingga boleh
+  // memakai batas besar; fallback memori utuh wajib memakai batas kecil
+  const canStream = canPersistDisk || ghstore.enabled();
+  const limit = (canStream ? REMOTE_LIMITS : REMOTE_MEMORY_LIMITS)[kind]
+    || (canStream ? REMOTE_LIMITS.file : REMOTE_MEMORY_LIMITS.file);
 
   let res;
   try {
@@ -806,12 +943,23 @@ async function storeRemoteFile(url, kind, opts) {
   if (len && len > limit) return null;
   const cdName = filenameFromDisposition(res.headers.get('content-disposition'));
   const name = cdName || o.name || '';
+  const streamable = res.body && typeof res.body[Symbol.asyncIterator] === 'function';
 
-  if (fsWritable && res.body && typeof res.body[Symbol.asyncIterator] === 'function') {
+  // 1) mesin sendiri: alirkan langsung ke disk (cepat, hemat RAM)
+  if (canPersistDisk && streamable) {
     return await streamToDisk(res, kind, name, limit);
   }
+  // 2) hosting: alirkan per-potongan ke GitHub — tahan lama, memori terbatas
+  if (ghstore.enabled() && streamable) {
+    const ext = safeExt(name, kind);
+    const ctype = String(res.headers.get('content-type') || '').split(';')[0].trim();
+    const mime = ctype && !/octet-stream/i.test(ctype)
+      ? ctype
+      : (EXT_MIME[ext] || 'application/octet-stream');
+    return await streamToGh(res, kind, name, limit, mime);
+  }
 
-  // fallback memori (mode blob / stream tidak tersedia)
+  // fallback memori (stream tidak tersedia / penyimpanan cadangan)
   try {
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length > limit) return null;
@@ -832,6 +980,9 @@ module.exports = { router, UPLOAD_DIR, MAX_FILE_SIZE, storageEnabled, useBlob, s
 async function storedFileStatus(url) {
   const s = String(url || '');
   if (s.startsWith('/uploads/')) {
+    // di hosting folder ini ikut reset tiap recycle dan tak pernah lagi
+    // ditulis (media dialirkan ke penyimpanan tahan lama) -> pasti hilang
+    if (hosted) return 'missing';
     if (!fsWritable) return 'unknown';
     const name = s.slice('/uploads/'.length);
     if (!/^[\w.\-]+$/.test(name)) return 'missing';
@@ -840,6 +991,8 @@ async function storedFileStatus(url) {
       return st.isFile() ? 'exists' : 'missing';
     } catch { return 'missing'; }
   }
+  // aset sistem (stiker SVG selalu tersedia di bundel) — jangan dianggap rusak
+  if (s.startsWith('/api/stickers/')) return 'exists';
   // file cadangan di database: cek keberadaan barisnya
   if (s.startsWith('/api/storage/dbfiles/')) {
     const id = s.slice('/api/storage/dbfiles/'.length);
@@ -857,6 +1010,9 @@ async function storedFileStatus(url) {
       return 'unknown'; // status lain (403/405/5xx) -> tak bisa dipastikan
     } catch { return 'unknown'; } // gagal jaringan/timeout -> tak bisa dipastikan
   }
+  // tautan pihak ketiga (hasil unduhan bot yang tersimpan remote): tak dicek
+  // otomatis agar pesan valid tak pernah terhapus hanya karena HEAD gagal
+  if (/^https?:\/\//i.test(s)) return 'unknown';
   return 'missing';
 }
 

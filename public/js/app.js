@@ -2788,7 +2788,9 @@ const HOSTED_MULTIPART_LIMIT = 4 * 1024 * 1024;
 
 async function uploadFile(file, onProgress = () => {}) {
   // di hosting file dikirim langsung ke Blob (lolos batas 4,5MB per request);
-  // bila endpoint tanda tangan tidak ada (mode lokal) -> upload lewat server
+  // bila endpoint tanda tangan tidak ada / store tak tersedia (mode lokal
+  // atau Blob mati) -> responsnya menyertakan multipartLimit, yaitu ukuran
+  // terbesar yang sanggup ditampung server dalam satu permintaan.
   let sign = null;
   let signErr = null;
   try {
@@ -2808,13 +2810,14 @@ async function uploadFile(file, onProgress = () => {}) {
     }
   }
 
-  // 501 = hosting tanpa Blob (mode lokal, unggah ke disk 2GB).
-  // Selain itu tanda tangan gagal (mis. store disuspend): jalur multipart
-  // dibatasi ~4MB sehingga file besar wajib lewat potongan.
-  const localNoBlob = !!signErr && signErr.status === 501;
-  if (!localNoBlob && file.size > HOSTED_MULTIPART_LIMIT) {
-    return uploadFileChunked(file, onProgress);
-  }
+  // jalur langsung tak tersedia: ikuti kapasitas multipart yang diberitahu
+  // server — file yang melebihi langsung lewat jalur potongan tanpa mencoba
+  // multipart dulu (tanpa pemborosan bandwidth / error 413 yang tak perlu).
+  // Respons lama 501 tanpa data = mode lokal lawas (disk 2GB); respons baru
+  // selalu menyertakan multipartLimit sehingga hosting tanpa Blob ikut akurat.
+  const limit = (signErr && signErr.data && Number(signErr.data.multipartLimit))
+    || (signErr && signErr.status === 501 ? 2 * 1024 ** 3 : HOSTED_MULTIPART_LIMIT);
+  if (file.size > limit) return uploadFileChunked(file, onProgress);
 
   try {
     return await uploadViaServer(file, onProgress);
