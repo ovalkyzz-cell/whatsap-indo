@@ -82,53 +82,168 @@ input, textarea { font: inherit; }
 /* ---------- auth ---------- */
 .auth-view {
   min-height: 100vh; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 28px; padding: 24px;
+  justify-content: center; gap: 32px; padding: 24px;
   background: linear-gradient(160deg, var(--wa-teal-dark) 0%, var(--wa-teal-deep) 100%);
+  position: relative; overflow: hidden;
 }
-.auth-hero { text-align: center; color: #fff; }
-.auth-logo { font-size: 64px; animation: heroPop 0.6s var(--ease-spring) both; }
-.auth-hero h1 { font-size: 34px; font-weight: 600; margin-top: 8px; letter-spacing: -0.4px; animation: fadeUp 0.5s var(--ease-out) 0.08s both; }
+/* latar animasi: gradient bergerak halus */
+.auth-view::before {
+  content: ""; position: absolute; inset: -50%;
+  background: radial-gradient(ellipse 600px 400px at 20% 30%, rgba(255,255,255,.07), transparent),
+              radial-gradient(ellipse 500px 350px at 80% 70%, rgba(255,255,255,.05), transparent);
+  animation: authBgDrift 18s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes authBgDrift {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  100% { transform: translate(40px, -30px) rotate(2deg); }
+}
+/* grid halus di latar */
+.auth-view::after {
+  content: ""; position: absolute; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 70%);
+  pointer-events: none;
+}
+.auth-hero { text-align: center; color: #fff; position: relative; z-index: 1; }
+.auth-logo {
+  font-size: 72px; animation: heroPop 0.7s var(--ease-spring) both;
+  filter: drop-shadow(0 8px 24px rgba(0,0,0,.3));
+}
+.auth-hero h1 {
+  font-size: 40px; font-weight: 700; margin-top: 10px;
+  letter-spacing: -1px; animation: fadeUp 0.55s var(--ease-out) 0.1s both;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,.85) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
 .auth-tag {
-  display: inline-block; margin-top: 6px; font-size: 12.5px; font-weight: 600;
-  letter-spacing: 2.5px; text-transform: uppercase; opacity: 0.9;
-  padding: 3px 12px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px;
-  animation: fadeUp 0.5s var(--ease-out) 0.16s both;
+  display: inline-block; margin-top: 10px; font-size: 11.5px; font-weight: 700;
+  letter-spacing: 3.5px; text-transform: uppercase; opacity: 0.9;
+  padding: 5px 16px; border: 1px solid rgba(255,255,255,.3); border-radius: 999px;
+  backdrop-filter: blur(8px); background: rgba(255,255,255,.08);
+  animation: fadeUp 0.55s var(--ease-out) 0.18s both;
 }
-.auth-hero p { opacity: .85; margin-top: 8px; animation: fadeUp 0.5s var(--ease-out) 0.22s both; }
-.auth-copy { font-size: 12.5px; letter-spacing: .3px; opacity: .7 !important; margin-top: 14px !important; }
-@keyframes heroPop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
-@keyframes cardIn { from { opacity: 0; transform: translateY(16px) scale(0.98); } to { opacity: 1; transform: none; } }
+.auth-hero > p:not(.auth-tag):not(.auth-copy) {
+  opacity: .8; margin-top: 10px; font-size: 14.5px; line-height: 1.6;
+  animation: fadeUp 0.55s var(--ease-out) 0.24s both; max-width: 380px; margin-left: auto; margin-right: auto;
+}
+.auth-copy { font-size: 12px; letter-spacing: .4px; opacity: .55 !important; margin-top: 18px !important; animation: fadeUp 0.55s var(--ease-out) 0.3s both; }
+@keyframes heroPop { from { opacity: 0; transform: scale(0.5) rotate(-10deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
+@keyframes cardIn { from { opacity: 0; transform: translateY(24px) scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* kartu auth: glassmorphism modern */
 .auth-card {
-  background: var(--wa-panel); border-radius: 16px; padding: 26px;
-  width: 100%; max-width: 400px; box-shadow: var(--shadow);
-  animation: cardIn 0.55s var(--ease-out) 0.18s both;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-radius: 20px; padding: 0;
+  width: 100%; max-width: 420px;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.18),
+    0 8px 32px rgba(0,0,0,.18),
+    0 2px 8px rgba(0,0,0,.08);
+  animation: cardIn 0.6s var(--ease-out) 0.2s both;
+  overflow: hidden;
+  position: relative; z-index: 1;
 }
-.auth-tabs { display: flex; border-bottom: 1px solid var(--wa-border); margin-bottom: 20px; }
+html[data-theme="dark"] .auth-card {
+  background: rgba(23, 33, 41, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.08),
+    0 8px 32px rgba(0,0,0,.4),
+    0 2px 8px rgba(0,0,0,.2);
+}
+/* garis gradient tipis di atas kartu */
+.auth-card::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--wa-teal-dark), var(--wa-teal), var(--wa-teal-dark));
+  background-size: 200% 100%;
+  animation: authCardShine 3s linear infinite;
+}
+@keyframes authCardShine { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+.auth-tabs {
+  display: flex; border-bottom: 1px solid var(--wa-border);
+  margin-bottom: 0; background: rgba(0,0,0,.02);
+  position: relative;
+}
+html[data-theme="dark"] .auth-tabs { background: rgba(255,255,255,.03); }
 .auth-tab {
-  flex: 1; padding: 10px; font-weight: 600; color: var(--wa-text-2);
-  border-bottom: 3px solid transparent; transition: .15s;
+  flex: 1; padding: 16px 12px; font-weight: 700; font-size: 14.5px;
+  color: var(--wa-text-2); border: none; background: none; cursor: pointer;
+  position: relative; transition: color .2s;
+  letter-spacing: .3px;
 }
-.auth-tab.active { color: var(--wa-accent-text); border-bottom-color: var(--wa-teal); }
-.auth-form { display: flex; flex-direction: column; gap: 16px; }
-.auth-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--wa-text-2); }
+.auth-tab::after {
+  content: ""; position: absolute; bottom: -1px; left: 15%; right: 15%; height: 3px;
+  background: var(--wa-teal-dark); border-radius: 3px 3px 0 0;
+  transform: scaleX(0); transition: transform .25s var(--ease-out);
+}
+.auth-tab.active { color: var(--wa-accent-text); }
+.auth-tab.active::after { transform: scaleX(1); }
+.auth-tab:hover:not(.active) { color: var(--wa-text); }
+
+.auth-form {
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 24px 26px 28px;
+}
+.auth-form label {
+  display: flex; flex-direction: column; gap: 7px;
+  font-size: 12.5px; font-weight: 700; color: var(--wa-text-2);
+  letter-spacing: .4px; text-transform: uppercase;
+  position: relative;
+}
 .auth-form input {
-  padding: 12px 14px; border: 1px solid var(--wa-border); border-radius: 8px;
-  outline: none; transition: border .15s; background: var(--wa-input-bg); color: var(--wa-text);
+  padding: 13px 15px; border: 2px solid var(--wa-border); border-radius: 12px;
+  outline: none; background: var(--wa-input-bg); color: var(--wa-text);
+  font-size: 15px; font-weight: 500; transition: border-color .2s, box-shadow .2s, background .2s;
+  width: 100%; box-sizing: border-box;
 }
-.auth-form input:focus { border-color: var(--wa-teal); }
-.btn-primary {
-  background: var(--wa-teal-dark); color: #fff; padding: 12px;
-  border-radius: 24px; font-weight: 600; transition: filter .15s;
+.auth-form input:focus {
+  border-color: var(--wa-teal-dark);
+  box-shadow: 0 0 0 4px rgba(var(--wa-accent-rgb), .12);
+  background: var(--wa-panel);
 }
-.btn-primary:hover { filter: brightness(1.1); }
-.auth-error { color: var(--wa-danger-text); font-size: 13px; margin-top: 12px; text-align: center; }
-.auth-error.anim { animation: authErrIn .32s var(--ease-out); }
-@keyframes authErrIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.auth-form input::placeholder { color: var(--wa-text-2); opacity: .5; font-weight: 400; }
+.auth-form input:hover:not(:focus) { border-color: var(--wa-border-strong); }
+
+/* tombol submit premium */
+.auth-form .btn-primary {
+  padding: 14px; border-radius: 12px; font-size: 15px; font-weight: 700;
+  letter-spacing: .5px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--wa-teal-dark) 0%, var(--wa-teal) 100%);
+  color: #fff; position: relative; overflow: hidden;
+  transition: transform .15s, box-shadow .2s, filter .15s;
+  box-shadow: 0 4px 14px rgba(var(--wa-accent-rgb), .3);
+  margin-top: 4px;
+}
+.auth-form .btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(var(--wa-accent-rgb), .4);
+  filter: brightness(1.05);
+}
+.auth-form .btn-primary:active { transform: translateY(1px) scale(.98); box-shadow: 0 2px 8px rgba(var(--wa-accent-rgb), .25); }
+/* efek kilau saat hover */
+.auth-form .btn-primary::after {
+  content: ""; position: absolute; top: 0; left: -80%; width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+  transform: skewX(-20deg); transition: left .45s ease;
+}
+.auth-form .btn-primary:hover::after { left: 130%; }
+
+.auth-error { color: var(--wa-danger-text); font-size: 13px; padding: 0 26px; text-align: center; }
+.auth-error.anim { animation: authErrIn .35s var(--ease-out); }
+@keyframes authErrIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
 
 /* ---------- kartu sapaan halaman daftar (teks disunting admin) ---------- */
 .reg-greet {
   display: flex; gap: 10px; align-items: flex-start;
-  margin: 0 0 18px; padding: 12px 14px;
+  margin: 18px 26px 0; padding: 12px 14px;
   border: 1px solid var(--wa-border); border-radius: 12px;
   background: linear-gradient(135deg, rgba(0, 168, 131, .12), rgba(0, 168, 131, .02));
   animation: regGreetIn .6s var(--ease-out) both;
@@ -531,6 +646,37 @@ input, textarea { font: inherit; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--wa-thumb); border-radius: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
+/* smooth scroll menyeluruh */
+*, *::before, *::after { scroll-behavior: smooth; }
+.messages, .chat-list, .drawer, .profile-body, .menu-list,
+.wallpaper-body, .contact-body, .status-body, .group-form,
+.group-info-body, .privacy-body, .about-body, .storage-body,
+.plan-body, .invite-body, .bc-body, .notif-center,
+.sticker-grid, .adm-body {
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* scrollbar tipis & elegan untuk semua container scroll */
+.messages::-webkit-scrollbar,
+.chat-list::-webkit-scrollbar,
+.drawer ::-webkit-scrollbar,
+.menu-list::-webkit-scrollbar {
+  width: 4px;
+}
+.messages::-webkit-scrollbar-thumb,
+.chat-list::-webkit-scrollbar-thumb,
+.drawer ::-webkit-scrollbar-thumb,
+.menu-list::-webkit-scrollbar-thumb {
+  background: var(--wa-thumb);
+  border-radius: 4px;
+  min-height: 40px;
+}
+.messages::-webkit-scrollbar-thumb:hover,
+.chat-list::-webkit-scrollbar-thumb:hover {
+  background: var(--wa-accent-text);
+  opacity: .6;
+}
 
 /* ---------- ikon & sprite ---------- */
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
@@ -1491,7 +1637,6 @@ html[data-theme="dark"] .wp-option.active { box-shadow: none; }
 .muted { color: var(--wa-text-2); }
 
 /* ---------- background beranda (foto / video) ---------- */
-.auth-view { position: relative; overflow: hidden; }
 .home-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .home-bg img, .home-bg video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .home-bg::after { content: ""; position: absolute; inset: 0; background: rgba(4, 22, 18, .55); }
