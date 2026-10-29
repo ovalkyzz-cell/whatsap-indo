@@ -3211,28 +3211,28 @@ function buildThemeGrid() {
 }
 
 function applyStyle(style) {
-  document.documentElement.setAttribute('data-style', style);
-  try { localStorage.setItem('wa_style', style); } catch (e) { /* storage diblokir */ }
+  const s = style || 'default';
+  document.documentElement.setAttribute('data-style', s);
+  try { localStorage.setItem('wa_style', s); } catch (e) { /* storage diblokir */ }
+  document.querySelectorAll('.style-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.style === s);
+  });
 }
 
 function openThemeDrawer() {
   buildThemeGrid();
   
-  // Tambahkan grid gaya website
-  const container = $('themeDrawer');
-  if (container && !$('styleGrid')) {
-    const styleGrid = document.createElement('div');
-    styleGrid.id = 'styleGrid';
-    styleGrid.className = 'theme-grid';
+  const styleGrid = $('styleGrid');
+  if (styleGrid) {
+    const currentStyle = document.documentElement.getAttribute('data-style') || 'default';
     styleGrid.innerHTML = `
-      <div class="style-item" data-style="default">Modern SaaS</div>
-      <div class="style-item" data-style="neobrutalism">Neobrutalism</div>
-      <div class="style-item" data-style="skeuomorphism">Skeuomorphism</div>
-      <div class="style-item" data-style="monochrome">Monochrome</div>
+      <div class="style-item${currentStyle === 'default' ? ' active' : ''}" data-style="default">Modern SaaS</div>
+      <div class="style-item${currentStyle === 'neobrutalism' ? ' active' : ''}" data-style="neobrutalism">Neobrutalism</div>
+      <div class="style-item${currentStyle === 'skeuomorphism' ? ' active' : ''}" data-style="skeuomorphism">Skeuomorphism</div>
+      <div class="style-item${currentStyle === 'monochrome' ? ' active' : ''}" data-style="monochrome">Monochrome</div>
     `;
-    container.appendChild(styleGrid);
     styleGrid.querySelectorAll('.style-item').forEach(el => {
-      el.addEventListener('click', () => applyStyle(el.dataset.style));
+      el.onclick = () => applyStyle(el.dataset.style);
     });
   }
   

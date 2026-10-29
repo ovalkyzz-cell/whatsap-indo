@@ -1,36 +1,66 @@
+/* UI for Style Switcher Grid */
+#styleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.style-item {
+  padding: 15px;
+  text-align: center;
+  background: var(--wa-panel, #f0f2f5);
+  border: 1px solid var(--wa-border, rgba(0,0,0,0.1));
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.style-item:hover {
+  background: var(--wa-item-hover);
+}
+
+.style-item.active {
+  border-color: var(--wa-accent);
+  color: var(--wa-accent);
+  background: var(--wa-accent-soft, rgba(0, 128, 105, 0.1));
+}
+
+/* Base Styles variables application */
 :root {
-  /* Default Theme (Modern SaaS) */
-  --bg-color: #ffffff;
-  --text-color: #1a1a1a;
-  --accent-color: #3b82f6;
-  --border-radius: 8px;
-  --box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  --wa-radius: 8px;
 }
 
-/* Neobrutalism */
 [data-style="neobrutalism"] {
-  --bg-color: #fdfdfd;
-  --text-color: #000000;
-  --accent-color: #ffcc00;
-  --border-radius: 0px;
-  --box-shadow: 4px 4px 0px #000000;
-  border: 2px solid #000000;
+  --wa-radius: 0px;
+  --wa-panel: #ffffff;
+  --wa-bg: #fff;
+  --wa-border: #000;
 }
 
-/* Skeuomorphism */
+[data-style="neobrutalism"] .chat-item, 
+[data-style="neobrutalism"] .msg-bubble,
+[data-style="neobrutalism"] .btn-primary,
+[data-style="neobrutalism"] .drawer {
+  border: 2px solid #000 !important;
+  box-shadow: 4px 4px 0px #000 !important;
+  border-radius: 0px !important;
+}
+
 [data-style="skeuomorphism"] {
-  --bg-color: #e0e0e0;
-  --text-color: #333333;
-  --accent-color: #555555;
-  --border-radius: 12px;
-  --box-shadow: inset 2px 2px 5px #bebebe, inset -2px -2px 5px #ffffff;
+  --wa-radius: 12px;
 }
 
-/* Monochrome */
+[data-style="skeuomorphism"] .msg-bubble {
+  box-shadow: inset 2px 2px 5px rgba(255,255,255,0.5), 5px 5px 15px rgba(0,0,0,0.1) !important;
+  border-radius: 15px !important;
+}
+
 [data-style="monochrome"] {
-  --bg-color: #000000;
-  --text-color: #ffffff;
-  --accent-color: #ffffff;
-  --border-radius: 0px;
-  --box-shadow: 0 0 0 1px #ffffff;
+  filter: grayscale(100%);
 }
