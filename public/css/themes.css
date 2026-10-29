@@ -1,66 +1,499 @@
-/* UI for Style Switcher Grid */
+/* ============================================================
+   RTC-Core — Website Style Themes
+   4 gaya desain: Modern SaaS (default), Neobrutalism,
+   Skeuomorphism, Monochrome
+   Diakses via atribut data-style pada <html>
+   ============================================================ */
+
+/* ---- rare lock icon ---- */
+.lock-icon {
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 3px rgba(251, 191, 36, .55));
+  animation: lockRarePulse 2.4s ease-in-out infinite;
+}
+@keyframes lockRarePulse {
+  0%, 100% { filter: drop-shadow(0 0 3px rgba(251, 191, 36, .55)); transform: scale(1); }
+  50%      { filter: drop-shadow(0 0 7px rgba(251, 191, 36, .85)); transform: scale(1.08); }
+}
+
+/* ============================================================
+   STYLE GRID — UI pemilih gaya
+   ============================================================ */
 #styleGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
-  padding: 10px 0;
+  margin-top: 6px;
 }
-
 .style-item {
-  padding: 15px;
-  text-align: center;
-  background: var(--wa-panel, #f0f2f5);
-  border: 1px solid var(--wa-border, rgba(0,0,0,0.1));
-  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px 12px;
+  background: var(--wa-panel, #fff);
+  border: 2px solid var(--wa-border, #e9edef);
+  border-radius: 12px;
   cursor: pointer;
-  font-weight: 600;
-  font-size: 13px;
-  transition: all 0.2s;
+  text-align: center;
+  transition: border-color .18s, box-shadow .18s, transform .18s;
+  position: relative;
+  overflow: hidden;
+}
+.style-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.1);
+}
+.style-item.active {
+  border-color: var(--wa-accent-text, #008069);
+  box-shadow: 0 0 0 3px rgba(var(--wa-accent-rgb, 0,168,132), .18);
+}
+.style-item.active::after {
+  content: '✓';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--wa-accent-text, #008069);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-
-.style-item:hover {
-  background: var(--wa-item-hover);
+.style-item .si-preview {
+  width: 100%;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+.style-item .si-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wa-text, #111b21);
+}
+.style-item .si-desc {
+  font-size: 10.5px;
+  color: var(--wa-text-2, #667781);
+  line-height: 1.3;
 }
 
-.style-item.active {
-  border-color: var(--wa-accent);
-  color: var(--wa-accent);
-  background: var(--wa-accent-soft, rgba(0, 128, 105, 0.1));
+/* Preview mini untuk tiap gaya */
+.si-preview-preview-modern {
+  background: linear-gradient(135deg, #f0f2f5, #e2e8f0);
+}
+.si-preview-modern .sp-card {
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.08);
+  width: 70%;
+  height: 60%;
+}
+.si-preview-neobrutalism {
+  background: #fef9c3 !important;
+}
+.si-preview-neobrutalism .sp-card {
+  background: #fff;
+  border: 2.5px solid #000;
+  border-radius: 0;
+  box-shadow: 3px 3px 0 #000;
+  width: 70%;
+  height: 60%;
+}
+.si-preview-skeuomorphism {
+  background: linear-gradient(180deg, #e8e8e8, #d0d0d0) !important;
+}
+.si-preview-skeuomorphism .sp-card {
+  background: linear-gradient(180deg, #f5f5f5, #ddd);
+  border-radius: 8px;
+  box-shadow: inset 1px 1px 3px rgba(255,255,255,.8), inset -1px -1px 3px rgba(0,0,0,.15), 0 2px 4px rgba(0,0,0,.2);
+  width: 70%;
+  height: 60%;
+}
+.si-preview-monochrome {
+  background: #1a1a1a !important;
+}
+.si-preview-monochrome .sp-card {
+  background: #333;
+  border: 1.5px solid #888;
+  border-radius: 4px;
+  width: 70%;
+  height: 60%;
 }
 
-/* Base Styles variables application */
-:root {
-  --wa-radius: 8px;
+/* ============================================================
+   1. MODERN SaaS (default) — bersih, halus, profesional
+   ============================================================ */
+[data-style="default"] {
+  border-radius: 10px;
 }
 
+/* ============================================================
+   2. NEOBRUTALISM — tebal, kontras tinggi, bayangan keras
+   ============================================================ */
 [data-style="neobrutalism"] {
-  --wa-radius: 0px;
+  --wa-bg: #fef9c3;
   --wa-panel: #ffffff;
-  --wa-bg: #fff;
-  --wa-border: #000;
+  --wa-chat-bg: #fef3c7;
+  --wa-bubble-out: #fef08a;
+  --wa-bubble-in: #ffffff;
+  --wa-text: #000000;
+  --wa-text-2: #374151;
+  --wa-border: #000000;
+  --wa-hover: #fef08a;
+  --wa-header: #fde68a;
+  --wa-input-bg: #ffffff;
+  --wa-chip: #fef08a;
+  --wa-active: #fde68a;
+  --wa-avatar-bg: #facc15;
+  --wa-accent-text: #000000;
+  --wa-border-strong: #000000;
+  --wa-toast: #000000;
+  --shadow: 4px 4px 0px #000000;
+  --wa-danger-text: #dc2626;
+  --wa-blue-text: #1d4ed8;
+  --wa-blue-link: #1d4ed8;
 }
-
-[data-style="neobrutalism"] .chat-item, 
-[data-style="neobrutalism"] .msg-bubble,
-[data-style="neobrutalism"] .btn-primary,
-[data-style="neobrutalism"] .drawer {
+[data-style="neobrutalism"] body,
+[data-style="neobrutalism"] .auth-view,
+[data-style="neobrutalism"] .app {
+  font-weight: 500;
+}
+[data-style="neobrutalism"] .sidebar,
+[data-style="neobrutalism"] .chat-pane,
+[data-style="neobrutalism"] .drawer,
+[data-style="neobrutalism"] .auth-card,
+[data-style="neobrutalism"] .chat-header,
+[data-style="neobrutalism"] .sidebar-header {
+  border: 2.5px solid #000 !important;
+  border-radius: 0 !important;
+}
+[data-style="neobrutalism"] .chat-item,
+[data-style="neobrutalism"] .menu-item,
+[data-style="neobrutalism"] .style-item,
+[data-style="neobrutalism"] .wp-option,
+[data-style="neobrutalism"] .plan-card {
   border: 2px solid #000 !important;
-  box-shadow: 4px 4px 0px #000 !important;
-  border-radius: 0px !important;
+  border-radius: 0 !important;
+  box-shadow: 3px 3px 0 #000 !important;
+  background: #fff !important;
+}
+[data-style="neobrutalism"] .msg-bubble {
+  border: 2px solid #000 !important;
+  border-radius: 0 !important;
+  box-shadow: 3px 3px 0 #000 !important;
+}
+[data-style="neobrutalism"] .msg-bubble.out {
+  background: #fef08a !important;
+  color: #000 !important;
+}
+[data-style="neobrutalism"] .msg-bubble.in {
+  background: #fff !important;
+  color: #000 !important;
+}
+[data-style="neobrutalism"] .btn-primary {
+  background: #facc15 !important;
+  color: #000 !important;
+  border: 2.5px solid #000 !important;
+  border-radius: 0 !important;
+  box-shadow: 4px 4px 0 #000 !important;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+[data-style="neobrutalism"] .btn-primary:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 #000 !important;
+}
+[data-style="neobrutalism"] .btn-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #000 !important;
+}
+[data-style="neobrutalism"] .icon-btn {
+  border: 2px solid #000;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 2px 2px 0 #000;
+}
+[data-style="neobrutalism"] .icon-btn:hover {
+  background: #fef08a;
+}
+[data-style="neobrutalism"] .search-wrap input,
+[data-style="neobrutalism"] #messageInput,
+[data-style="neobrutalism"] .auth-form input {
+  border: 2.5px solid #000 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  box-shadow: 3px 3px 0 #000;
+  font-weight: 600;
+}
+[data-style="neobrutalism"] .composer {
+  border-top: 2.5px solid #000 !important;
+  background: #fde68a !important;
+}
+[data-style="neobrutalism"] .theme-swatch {
+  border: 2.5px solid #000;
+  border-radius: 0;
+  box-shadow: 3px 3px 0 #000;
+}
+[data-style="neobrutalism"] .theme-swatch.active {
+  border-color: #000;
+  box-shadow: 3px 3px 0 #facc15;
+}
+[data-style="neobrutalism"] h1, [data-style="neobrutalism"] h2,
+[data-style="neobrutalism"] strong, [data-style="neobrutalism"] .mi-text strong {
+  font-weight: 800;
+  letter-spacing: -.3px;
+}
+[data-style="neobrutalism"] .auth-hero h1 {
+  text-transform: uppercase;
+  letter-spacing: 2px;
 }
 
+/* ============================================================
+   3. SKEUOMORPHISM — realistis, tekstur, inner shadow, glossy
+   ============================================================ */
 [data-style="skeuomorphism"] {
-  --wa-radius: 12px;
+  --wa-bg: #c8cdd2;
+  --wa-panel: #e8eaed;
+  --wa-chat-bg: #b8bec4;
+  --wa-bubble-out: #d4edda;
+  --wa-bubble-in: #f5f6f7;
+  --wa-text: #2c2c2c;
+  --wa-text-2: #6b6b6b;
+  --wa-border: #a0a5aa;
+  --wa-hover: #d5d8db;
+  --wa-header: #dfe1e4;
+  --wa-input-bg: #f5f6f7;
+  --wa-chip: #e8eaed;
+  --wa-active: #d0d3d6;
+  --wa-avatar-bg: #b0b5ba;
+  --wa-accent-text: #2e7d5b;
+  --wa-border-strong: #8a8f94;
+  --shadow: 0 2px 8px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.6);
+  --wa-toast: #3a3a3a;
 }
-
+[data-style="skeuomorphism"] .sidebar,
+[data-style="skeuomorphism"] .chat-pane,
+[data-style="skeuomorphism"] .drawer,
+[data-style="skeuomorphism"] .auth-card {
+  background: linear-gradient(180deg, #f0f1f3 0%, #e2e4e7 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 2px 12px rgba(0,0,0,.18) !important;
+  border: 1px solid #9a9fa4 !important;
+  border-radius: 12px !important;
+}
+[data-style="skeuomorphism"] .sidebar-header,
+[data-style="skeuomorphism"] .chat-header {
+  background: linear-gradient(180deg, #e8eaed 0%, #d4d7da 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 1px 3px rgba(0,0,0,.12) !important;
+  border-bottom: 1px solid #9a9fa4 !important;
+}
+[data-style="skeuomorphism"] .chat-item,
+[data-style="skeuomorphism"] .menu-item {
+  background: linear-gradient(180deg, #f2f3f5, #e4e6e9) !important;
+  border: 1px solid #b0b5ba !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 1px 2px rgba(0,0,0,.1) !important;
+}
+[data-style="skeuomorphism"] .chat-item:hover,
+[data-style="skeuomorphism"] .menu-item:hover {
+  background: linear-gradient(180deg, #f8f9fa, #eceeef) !important;
+}
+[data-style="skeuomorphism"] .chat-item.active,
+[data-style="skeuomorphism"] .menu-item:active {
+  background: linear-gradient(180deg, #d8dbde, #c8cbce) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.18) !important;
+}
 [data-style="skeuomorphism"] .msg-bubble {
-  box-shadow: inset 2px 2px 5px rgba(255,255,255,0.5), 5px 5px 15px rgba(0,0,0,0.1) !important;
-  border-radius: 15px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 2px 5px rgba(0,0,0,.16) !important;
+  border: 1px solid rgba(0,0,0,.12) !important;
+  border-radius: 14px !important;
+}
+[data-style="skeuomorphism"] .msg-bubble.out {
+  background: linear-gradient(180deg, #dcf8e2, #c3eed0) !important;
+}
+[data-style="skeuomorphism"] .msg-bubble.in {
+  background: linear-gradient(180deg, #ffffff, #eceef0) !important;
+}
+[data-style="skeuomorphism"] .btn-primary {
+  background: linear-gradient(180deg, #5bb98c, #2e8b62) !important;
+  border: 1px solid #1f6b48 !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 4px rgba(0,0,0,.2) !important;
+  text-shadow: 0 1px 1px rgba(0,0,0,.25);
+  color: #fff !important;
+}
+[data-style="skeuomorphism"] .btn-primary:active {
+  background: linear-gradient(180deg, #2e8b62, #1f6b48) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.3) !important;
+}
+[data-style="skeuomorphism"] .btn-ghost {
+  background: linear-gradient(180deg, #f0f1f3, #dfe1e4) !important;
+  border: 1px solid #a0a5aa !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 1px 2px rgba(0,0,0,.1) !important;
+}
+[data-style="skeuomorphism"] .icon-btn {
+  background: linear-gradient(180deg, #f0f1f3, #dfe1e4) !important;
+  border: 1px solid #a0a5aa !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 1px 2px rgba(0,0,0,.1) !important;
+}
+[data-style="skeuomorphism"] .icon-btn:active {
+  background: linear-gradient(180deg, #c8cbce, #b8bcc0) !important;
+  box-shadow: inset 0 2px 3px rgba(0,0,0,.2) !important;
+}
+[data-style="skeuomorphism"] .search-wrap input,
+[data-style="skeuomorphism"] #messageInput,
+[data-style="skeuomorphism"] .auth-form input {
+  background: linear-gradient(180deg, #fafbfc, #eceef0) !important;
+  border: 1px solid #9a9fa4 !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.1) !important;
+}
+[data-style="skeuomorphism"] .composer {
+  background: linear-gradient(180deg, #e8eaed, #d4d7da) !important;
+  border-top: 1px solid #9a9fa4 !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5) !important;
+}
+[data-style="skeuomorphism"] .avatar {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 2px 4px rgba(0,0,0,.2) !important;
+  border: 1px solid rgba(0,0,0,.15) !important;
+}
+[data-style="skeuomorphism"] .theme-swatch {
+  border: 2px solid #8a8f94;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 2px 4px rgba(0,0,0,.15);
+}
+[data-style="skeuomorphism"] .switch .slider {
+  background: linear-gradient(180deg, #b0b5ba, #909599) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.2) !important;
+}
+[data-style="skeuomorphism"] .switch input:checked + .slider {
+  background: linear-gradient(180deg, #5bb98c, #2e8b62) !important;
+}
+[data-style="skeuomorphism"] .auth-view {
+  background: linear-gradient(160deg, #b8bec4, #8a9096) !important;
+}
+[data-style="skeuomorphism"] .auth-hero h1 {
+  text-shadow: 0 2px 3px rgba(0,0,0,.3);
 }
 
+/* ============================================================
+   4. MONOCHROME — hitam putih murni
+   ============================================================ */
 [data-style="monochrome"] {
-  filter: grayscale(100%);
+  --wa-bg: #0a0a0a;
+  --wa-panel: #141414;
+  --wa-chat-bg: #0f0f0f;
+  --wa-bubble-out: #2a2a2a;
+  --wa-bubble-in: #1c1c1c;
+  --wa-text: #e0e0e0;
+  --wa-text-2: #808080;
+  --wa-border: #2a2a2a;
+  --wa-hover: #1e1e1e;
+  --wa-header: #111111;
+  --wa-tick-read: #ffffff;
+  --wa-tick: #707070;
+  --wa-panel-dark: #0a0a0a;
+  --wa-accent-text: #ffffff;
+  --wa-accent-rgb: 255, 255, 255;
+  --wa-input-bg: #1a1a1a;
+  --wa-chip: #222222;
+  --wa-active: #282828;
+  --wa-avatar-bg: #333333;
+  --wa-glass: rgba(10, 10, 10, .92);
+  --wa-hover-soft: rgba(255, 255, 255, .07);
+  --wa-overlay: rgba(255, 255, 255, .04);
+  --wa-border-strong: #3a3a3a;
+  --wa-dash: rgba(255, 255, 255, .2);
+  --wa-thumb: rgba(255, 255, 255, .3);
+  --wa-toast: #222222;
+  --wa-danger-text: #e0e0e0;
+  --wa-blue-text: #c0c0c0;
+  --wa-blue-link: #c0c0c0;
+  --shadow: 0 4px 20px rgba(0,0,0,.7);
+}
+[data-style="monochrome"] body,
+[data-style="monochrome"] * {
+  filter: grayscale(1) contrast(1.05);
+}
+[data-style="monochrome"] .msg-bubble.out {
+  background: #333 !important;
+  color: #e0e0e0 !important;
+}
+[data-style="monochrome"] .msg-bubble.in {
+  background: #1e1e1e !important;
+  color: #d0d0d0 !important;
+}
+[data-style="monochrome"] .btn-primary {
+  background: #e0e0e0 !important;
+  color: #0a0a0a !important;
+  border: 1px solid #e0e0e0;
+}
+[data-style="monochrome"] .btn-primary:hover {
+  background: #fff !important;
+}
+[data-style="monochrome"] .btn-ghost {
+  border: 1px solid #3a3a3a !important;
+  color: #c0c0c0 !important;
+}
+[data-style="monochrome"] .icon-btn {
+  border: 1px solid #2a2a2a;
+  background: #1a1a1a;
+}
+[data-style="monochrome"] .icon-btn:hover {
+  background: #282828;
+}
+[data-style="monochrome"] .theme-swatch {
+  border: 1.5px solid #444;
+}
+[data-style="monochrome"] .theme-swatch.active {
+  border-color: #fff;
+}
+[data-style="monochrome"] .style-item {
+  background: #161616;
+  border-color: #2a2a2a;
+}
+[data-style="monochrome"] .style-item.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.15);
+}
+[data-style="monochrome"] .verified-badge svg,
+[data-style="monochrome"] .chip-verified svg {
+  filter: grayscale(1);
+}
+[data-style="monochrome"] .auth-view {
+  background: #0a0a0a !important;
+}
+[data-style="monochrome"] .online-dot {
+  background: #fff !important;
+  box-shadow: 0 0 6px rgba(255,255,255,.6) !important;
+}
+[data-style="monochrome"] .bell-badge {
+  background: #e0e0e0 !important;
+  color: #0a0a0a !important;
+}
+[data-style="monochrome"] .lock-icon {
+  filter: grayscale(1) drop-shadow(0 0 3px rgba(255,255,255,.4));
+}
+
+/* ============================================================
+   Responsive adjustments
+   ============================================================ */
+@media (max-width: 420px) {
+  #styleGrid { gap: 8px; }
+  .style-item { padding: 10px 6px 9px; }
+  .style-item .si-name { font-size: 11.5px; }
+  .style-item .si-desc { font-size: 9.5px; }
 }

@@ -416,7 +416,7 @@ function renderMe() {
   if (themeItem) {
     themeItem.dataset.premium = String(isPremium || isAdmin);
     if (themeItem.dataset.premium !== 'true' && !themeItem.querySelector('.lock-icon')) {
-      themeItem.insertAdjacentHTML('beforeend', '<svg class="lock-icon" viewBox="0 0 24 24" style="width:16px;height:16px;margin-left:auto;"><use href="#ic-lock"/></svg>');
+      themeItem.insertAdjacentHTML('beforeend', '<svg class="lock-icon" viewBox="0 0 24 24"><use href="#ic-lock-rare"/></svg>');
     } else if (themeItem.dataset.premium === 'true' && themeItem.querySelector('.lock-icon')) {
       themeItem.querySelector('.lock-icon').remove();
     }
@@ -3227,13 +3227,19 @@ function openThemeDrawer() {
   
   const styleGrid = $('styleGrid');
   if (styleGrid) {
-    const currentStyle = document.documentElement.getAttribute('data-style') || 'default';
-    styleGrid.innerHTML = `
-      <div class="style-item${currentStyle === 'default' ? ' active' : ''}" data-style="default">Modern SaaS</div>
-      <div class="style-item${currentStyle === 'neobrutalism' ? ' active' : ''}" data-style="neobrutalism">Neobrutalism</div>
-      <div class="style-item${currentStyle === 'skeuomorphism' ? ' active' : ''}" data-style="skeuomorphism">Skeuomorphism</div>
-      <div class="style-item${currentStyle === 'monochrome' ? ' active' : ''}" data-style="monochrome">Monochrome</div>
-    `;
+    const cur = document.documentElement.getAttribute('data-style') || 'default';
+    const styles = [
+      { id: 'default',       name: 'Modern SaaS',    desc: 'Bersih & profesional' },
+      { id: 'neobrutalism',  name: 'Neobrutalism',   desc: 'Tebal & kontras tinggi' },
+      { id: 'skeuomorphism', name: 'Skeuomorphism',  desc: 'Realistis & ber tekstur' },
+      { id: 'monochrome',    name: 'Monochrome',     desc: 'Hitam putih murni' },
+    ];
+    styleGrid.innerHTML = styles.map(s => `
+      <div class="style-item${cur === s.id ? ' active' : ''}" data-style="${s.id}">
+        <div class="si-preview si-preview-${s.id}"><div class="sp-card"></div></div>
+        <span class="si-name">${s.name}</span>
+        <span class="si-desc">${s.desc}</span>
+      </div>`).join('');
     styleGrid.querySelectorAll('.style-item').forEach(el => {
       el.onclick = () => applyStyle(el.dataset.style);
     });
