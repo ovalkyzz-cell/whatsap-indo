@@ -5,9 +5,9 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 
-const DIALECT = process.env.DATABASE_URL ? 'pg' : 'sqlite';
+const DIALECT = process.env.VERCEL ? 'sqlite' : (process.env.DATABASE_URL ? 'pg' : 'sqlite');
 const INSTANCE_ID = crypto.randomUUID();
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..', 'data');
 const txStore = new AsyncLocalStorage();
 
 let bootPromise = null;

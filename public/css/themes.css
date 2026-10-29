@@ -1,0 +1,36 @@
+:root {
+  /* Default Theme (Modern SaaS) */
+  --bg-color: #ffffff;
+  --text-color: #1a1a1a;
+  --accent-color: #3b82f6;
+  --border-radius: 8px;
+  --box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Neobrutalism */
+[data-style="neobrutalism"] {
+  --bg-color: #fdfdfd;
+  --text-color: #000000;
+  --accent-color: #ffcc00;
+  --border-radius: 0px;
+  --box-shadow: 4px 4px 0px #000000;
+  border: 2px solid #000000;
+}
+
+/* Skeuomorphism */
+[data-style="skeuomorphism"] {
+  --bg-color: #e0e0e0;
+  --text-color: #333333;
+  --accent-color: #555555;
+  --border-radius: 12px;
+  --box-shadow: inset 2px 2px 5px #bebebe, inset -2px -2px 5px #ffffff;
+}
+
+/* Monochrome */
+[data-style="monochrome"] {
+  --bg-color: #000000;
+  --text-color: #ffffff;
+  --accent-color: #ffffff;
+  --border-radius: 0px;
+  --box-shadow: 0 0 0 1px #ffffff;
+}

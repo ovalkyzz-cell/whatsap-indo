@@ -406,9 +406,21 @@ function renderMe() {
   $('menuName').innerHTML = esc(S.me.name) + badge(S.me.verified);
   $('menuBio').textContent = S.me.about || 'Belum ada bio. Ketuk Profil & Info untuk menambahkan.';
   $('menuVerified').classList.toggle('hidden', !S.me.verified);
-  const isAdmin = S.me.role === 'admin';
+  const isPremium = S.me.premium?.active;
+  
+  // Update menu theme untuk premium
+  const themeItem = $('menuTheme');
+  if (themeItem) {
+    themeItem.dataset.premium = isPremium || isAdmin;
+    if (!themeItem.dataset.premium && !themeItem.querySelector('.lock-icon')) {
+      themeItem.insertAdjacentHTML('beforeend', '<svg class="lock-icon" viewBox="0 0 24 24" style="width:16px;height:16px;margin-left:auto;"><use href="#ic-lock"/></svg>');
+    } else if (themeItem.dataset.premium && themeItem.querySelector('.lock-icon')) {
+      themeItem.querySelector('.lock-icon').remove();
+    }
+  }
+  
   $('menuAdmin').classList.toggle('hidden', !isAdmin);
-  $('btnOpenAdminPanel').classList.toggle('hidden', !isAdmin);
+  $('btnOpenAdminPanel')?.classList.toggle('hidden', !isAdmin);
   loadTermAccess(); // tampilkan menu Terminal bila berhak (admin/permanen/bisnis)
 }
 
@@ -3198,8 +3210,32 @@ function buildThemeGrid() {
   });
 }
 
+function applyStyle(style) {
+  document.documentElement.setAttribute('data-style', style);
+  try { localStorage.setItem('wa_style', style); } catch (e) { /* storage diblokir */ }
+}
+
 function openThemeDrawer() {
   buildThemeGrid();
+  
+  // Tambahkan grid gaya website
+  const container = $('themeDrawer');
+  if (container && !$('styleGrid')) {
+    const styleGrid = document.createElement('div');
+    styleGrid.id = 'styleGrid';
+    styleGrid.className = 'theme-grid';
+    styleGrid.innerHTML = `
+      <div class="style-item" data-style="default">Modern SaaS</div>
+      <div class="style-item" data-style="neobrutalism">Neobrutalism</div>
+      <div class="style-item" data-style="skeuomorphism">Skeuomorphism</div>
+      <div class="style-item" data-style="monochrome">Monochrome</div>
+    `;
+    container.appendChild(styleGrid);
+    styleGrid.querySelectorAll('.style-item').forEach(el => {
+      el.addEventListener('click', () => applyStyle(el.dataset.style));
+    });
+  }
+  
   applyAccent(accentNow());
   renderTheme();
   openDrawer('themeDrawer');
@@ -3209,12 +3245,15 @@ function openThemeDrawer() {
 (function initTheme() {
   let savedTheme = 'dark';
   let savedAccent = 'mawar';
+  let savedStyle = 'default';
   try {
     savedTheme = localStorage.getItem('wa_theme') || 'dark';
     savedAccent = localStorage.getItem('wa_accent') || 'mawar';
+    savedStyle = localStorage.getItem('wa_style') || 'default';
   } catch (e) { /* storage diblokir */ }
   applyTheme(savedTheme);
   applyAccent(savedAccent);
+  applyStyle(savedStyle);
 })();
 
 const themeModeEl = $('themeModeToggle');
@@ -3435,7 +3474,10 @@ document.querySelectorAll('.menu-item').forEach((btn) => {
     else if (action === 'invite') openInviteDrawer();
     else if (action === 'wallpaper') openWallpaper();
     else if (action === 'homebg') openHomeBg();
-    else if (action === 'theme') openThemeDrawer();
+    else if (action === 'theme') {
+      if (btn.dataset.premium === 'true') openThemeDrawer();
+      else toast('Fitur ini khusus pengguna Premium/Admin.');
+    }
     else if (action === 'contacts') openContacts();
     else if (action === 'terminal') openTerminal();
     else if (action === 'privacy') openPrivacy();
