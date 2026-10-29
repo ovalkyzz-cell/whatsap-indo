@@ -344,19 +344,6 @@ app.post('/api/auth/register', authLimiter, ah(async (req, res) => {
   }
 }));
 
-// TEMPORARY: one-time admin password reset
-app.post('/api/auth/_reset-admin', authLimiter, ah(async (req, res) => {
-  const { email, password, key } = req.body || {};
-  if (key !== 'rtc-reset-2026') return res.status(403).json({ error: 'forbidden' });
-  if (!email || !password) return res.status(400).json({ error: 'email & password wajib' });
-  const bcrypt = require('bcryptjs');
-  const row = await db.get('SELECT id FROM users WHERE email = ?', String(email).trim().toLowerCase());
-  if (!row) return res.status(404).json({ error: 'user tidak ditemukan' });
-  const hash = await bcrypt.hash(String(password), 12);
-  await db.run("UPDATE users SET password_hash = ?, account_status = 'active', banned = 0, session_id = NULL WHERE id = ?", hash, row.id);
-  res.json({ ok: true, id: row.id });
-}));
-
 app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
   const meta = reqMeta(req);
   const email = String(req.body?.email || '').trim().toLowerCase();
