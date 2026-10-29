@@ -295,8 +295,10 @@ document.querySelectorAll('.auth-tab').forEach((tab) => {
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
+  const email = f.get('email').trim();
+  const password = f.get('password');
   try {
-    const data = await api('/api/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } });
+    const data = await api('/api/auth/login', { method: 'POST', body: { email, password } });
     await bootSession(data);
   } catch (err) { showAuth(err.message); }
 });
