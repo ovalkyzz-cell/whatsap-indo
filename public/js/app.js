@@ -522,7 +522,9 @@ function renderChatList() {
 
 function renderChatListNow() {
   const q = $('searchInput').value.trim().toLowerCase();
-  const scope = S.chats.filter((c) => (sideTab === 'groups' ? c.type === 'group' : true));
+  // chat yang dihapus (hidden) tidak ikut tampil — tetap disimpan di S.chats
+  // supaya bisa dibuka lewat kontak & "hidup" lagi saat pesan baru masuk
+  const scope = S.chats.filter((c) => !c.hidden && (sideTab === 'groups' ? c.type === 'group' : true));
   const matches = scope.filter((c) => {
     if (!q) return true;
     return chatTitle(c).toLowerCase().includes(q) || (c.peer?.email || '').toLowerCase().includes(q);
@@ -552,21 +554,29 @@ function renderChatListNow() {
           ${c.unread ? `<span class="unread-badge">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
         </div>
       </div>
-      <button class="chat-item-arch" type="button" data-arch="${esc(c.id)}" title="${c.archived ? 'Keluarkan dari arsip' : 'Arsipkan chat'}">
-        <svg viewBox="0 0 24 24" class="ico"><use href="#ic-archive" /></svg>
-      </button>
+      <div class="chat-item-actions">
+        <button class="chat-item-arch" type="button" data-arch="${esc(c.id)}" title="${c.archived ? 'Keluarkan dari arsip' : 'Arsipkan chat'}">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-archive" /></svg>
+        </button>
+        <button class="chat-item-arch danger" type="button" data-del="${esc(c.id)}" title="Hapus percakapan">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-trash" /></svg>
+        </button>
+      </div>
     </div>`;
   };
 
   const wire = (container) => {
     container.querySelectorAll('.chat-item').forEach((item) => {
       item.addEventListener('click', (e) => {
-        if (e.target.closest('[data-arch]')) return;
+        if (e.target.closest('[data-arch], [data-del]')) return;
         openChat(item.dataset.chat);
       });
     });
     container.querySelectorAll('[data-arch]').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); toggleArchive(btn.dataset.arch); });
+    });
+    container.querySelectorAll('[data-del]').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); confirmDeleteChat(btn.dataset.del); });
     });
     container.querySelectorAll('.chat-item').forEach((item) => {
       const c = S.chats.find((x) => x.id === item.dataset.chat);
@@ -627,6 +637,53 @@ async function toggleArchive(chatId) {
   } catch (err) {
     toast(err.message || 'Gagal mengubah arsip');
   }
+}
+
+/* ================= hapus percakapan (per pengguna) =================
+   Riwayat hanya hilang dari tampilan KITA; anggota lain tetap utuh.
+   Chat muncul kembali otomatis saat ada pesan baru sesudah waktu hapus. */
+function closeChatPanelLocal() {
+  S.activeChatId = null;
+  clearReply();
+  $('appView').classList.remove('chat-open');
+  $('chatActive').classList.add('hidden');
+  $('chatEmpty').classList.remove('hidden');
+  updateComposerLock();
+}
+
+async function deleteConversation(chatId, skipConfirm) {
+  const c = S.chats.find((x) => x.id === chatId);
+  if (!c) return false;
+  if (!skipConfirm) {
+    const name = chatTitle(c);
+    const msg = `Hapus percakapan "${name}"?\n\n` +
+      'Riwayat hanya dihapus dari tampilan Anda — anggota lain tidak terpengaruh. ' +
+      'Chat muncul kembali saat ada pesan baru.';
+    if (!confirm(msg)) return false;
+  }
+  try {
+    await api(`/api/chats/${chatId}`, { method: 'DELETE' });
+    c.hidden = true;
+    c.clearedAt = Date.now();
+    c.unread = 0;
+    c.lastMessage = null;
+    c.archived = false;
+    delete S.messages[chatId];
+    delete S.loaded[chatId];
+    delete S.more[chatId];
+    delete S.typing[chatId];
+    if (S.activeChatId === chatId) closeChatPanelLocal();
+    renderChatList();
+    toast('Percakapan dihapus');
+    return true;
+  } catch (err) {
+    toast(err.message || 'Gagal menghapus percakapan');
+    return false;
+  }
+}
+
+async function confirmDeleteChat(chatId) {
+  await deleteConversation(chatId);
 }
 
 function tickHtml(status) {
@@ -712,7 +769,16 @@ function updateChatStatus() {
   } else {
     $('chatStatus').textContent = 'grup';
   }
+  // chat terkunci blokir: panggilan disembunyikan, composer dikunci + banner
+  if (chat.type !== 'group' && peer && (peer.blockedByMe || peer.blockedMe)) {
+    for (const id of ['btnCallVoice', 'btnCallVideo']) {
+      const el = $(id);
+      if (el) el.style.display = 'none';
+    }
+    if (peer.blockedMe) $('chatStatus').textContent = 'Anda diblokir oleh kontak ini';
+  }
   syncBotMentionButton(chat);
+  updateComposerLock();
 }
 
 /* pintu @mention: tampil hanya di grup yang punya bot & pengguna boleh memakai bot */
@@ -1603,6 +1669,7 @@ function connectSocket() {
     if (chat) {
       chat.lastMessage = m;
       chat.archived = false; // server mengeluarkan chat dari arsip saat ada pesan baru
+      chat.hidden = false; // percakapan yang pernah dihapus hidup lagi saat pesan baru
       if (m.senderId !== S.me.id && S.activeChatId !== m.chatId) chat.unread = (chat.unread || 0) + 1;
       S.chats.sort((a, b) => (b.lastMessage?.createdAt || b.createdAt) - (a.lastMessage?.createdAt || a.createdAt));
     }
@@ -1761,8 +1828,11 @@ function connectSocket() {
     api('/api/chats').then((d) => {
       const prevActive = S.activeChatId;
       S.chats = d.chats;
+      // percakapan aktif dihapus (mis. dari perangkat lain) -> tutup panel
+      const active = prevActive ? d.chats.find((c) => c.id === prevActive) : null;
+      if (prevActive && (!active || active.hidden)) closeChatPanelLocal();
       renderChatList();
-      if (prevActive) updateChatStatus();
+      if (S.activeChatId) updateChatStatus();
     }).catch(() => {});
   });
 
@@ -2593,7 +2663,7 @@ $('messageInput').addEventListener('input', () => {
   ta.style.height = 'auto';
   ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
   updateComposerButtons();
-  if (S.socket && S.activeChatId) {
+  if (S.socket && S.activeChatId && composerBlockedState() == null) {
     S.socket.emit('typing', { chatId: S.activeChatId, typing: true });
     clearTimeout(typingTimer);
     typingTimer = setTimeout(() => S.socket.emit('typing', { chatId: S.activeChatId, typing: false }), 1500);
@@ -2652,15 +2722,87 @@ function sendContact(contact) {
   sendViaSocket({ chatId, type: 'contact', body: JSON.stringify(payload) });
 }
 
+/* Kunci composer saat chat pribadi terkunci blokir (satu pihak memblokir
+   yang lain): input dimatikan + banner penjelas dengan tombol buka blokir. */
+function composerBlockedState() {
+  const chat = currentChat();
+  if (!chat || chat.type === 'group' || !chat.peer) return null;
+  if (chat.peer.blockedByMe) return 'self';
+  if (chat.peer.blockedMe) return 'peer';
+  return null;
+}
+
+function updateComposerLock() {
+  const state = composerBlockedState();
+  const ta = $('messageInput');
+  const footer = document.querySelector('.composer');
+  if (!ta || !footer) return;
+  let banner = $('blockBanner');
+  if (state) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'blockBanner';
+      banner.className = 'block-banner';
+      footer.insertBefore(banner, footer.firstChild);
+    }
+    banner.classList.remove('hidden');
+    const text = state === 'self'
+      ? 'Anda memblokir kontak ini. Pesan & panggilan berhenti sampai blokir dibuka.'
+      : 'Kontak ini memblokir Anda — pesan tidak dapat dikirim.';
+    banner.innerHTML =
+      `<svg viewBox="0 0 24 24" class="ico"><use href="#ic-ban" /></svg><span>${esc(text)}</span>` +
+      (state === 'self'
+        ? '<button type="button" id="bannerUnblock">Buka blokir</button>'
+        : '');
+    const bu = $('bannerUnblock');
+    if (bu) {
+      bu.addEventListener('click', async () => {
+        const chat = currentChat();
+        if (!chat || !chat.peer) return;
+        try {
+          await api(`/api/blocks/${chat.peer.id}`, { method: 'DELETE' });
+          chat.peer.blockedByMe = false;
+          toast('Blokir dibuka');
+          updateComposerLock();
+          updateChatStatus();
+        } catch (err) { toast(err.message); }
+      });
+    }
+    ta.disabled = true;
+    if (S.pendingFile) { S.pendingFile = null; clearAttachPreview(); }
+    $('attachMenu').classList.add('hidden');
+    $('stickerPanel').classList.add('hidden');
+  } else {
+    if (banner) banner.classList.add('hidden');
+    ta.disabled = false;
+  }
+  updateComposerButtons();
+}
+
 function updateComposerButtons() {
   if (rec) return;
+  const locked = composerBlockedState() != null;
   const hasText = !!$('messageInput').value.trim();
-  const showSend = hasText || !!S.pendingFile;
+  const showSend = !locked && (hasText || !!S.pendingFile);
   $('btnSend').classList.toggle('hidden', !showSend);
-  $('btnMic').classList.toggle('hidden', showSend || !$('btnMic'));
+  $('btnMic').classList.toggle('hidden', locked || showSend || !$('btnMic'));
+  const attach = $('btnAttach');
+  if (attach) attach.disabled = locked;
+  const mic = $('btnMic');
+  if (mic) mic.disabled = locked;
 }
 
 function sendViaSocket(payload, localId) {
+  // chat pribadi terkunci blokir: jangan buat bubble optimis, server menolak
+  const guardChat = S.chats.find((c) => c.id === payload.chatId);
+  if (guardChat && guardChat.type !== 'group' && guardChat.peer &&
+      (guardChat.peer.blockedByMe || guardChat.peer.blockedMe)) {
+    toast(guardChat.peer.blockedByMe
+      ? 'Buka blokir kontak untuk mengirim pesan'
+      : 'Pesan tidak dapat dikirim ke kontak ini');
+    if (localId && S.messages[payload.chatId]) removeLocalMessage(payload.chatId, localId);
+    return;
+  }
   beep('out');
   // bubble optimis supaya pesan langsung terlihat — penting saat koneksi
   // sedang pulih, socket.io menahan emit sampai tersambung lagi
@@ -5454,13 +5596,51 @@ async function openContactInfo() {
         ${u.isBot ? '' : `
         <button class="btn-ghost" id="ciVoice"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-phone" /></svg> Suara</button>
         <button class="btn-ghost" id="ciVideo"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-video" /></svg> Video</button>`}
-      </div>`;
+      </div>
+      ${u.isBot ? '' : `
+      <div class="contact-actions contact-danger">
+        ${u.blockedByMe
+          ? `<button class="btn-ghost" id="ciUnblock"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-shield" /></svg> Buka blokir</button>`
+          : `<button class="btn-ghost danger" id="ciBlock"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-ban" /></svg> Blokir kontak</button>`}
+        <button class="btn-ghost danger" id="ciClear"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-trash" /></svg> Hapus percakapan</button>
+      </div>
+      ${u.blockedByMe ? '<p class="wp-hint">Anda memblokir kontak ini — pesan &amp; panggilan berhenti dua arah sampai blokir dibuka.</p>' : ''}
+      ${u.blockedMe ? '<p class="wp-hint">Kontak ini memblokir Anda — Anda tidak dapat mengirim pesan atau menelepon.</p>' : ''}
+      `}`;
     setAvatar($('contactAvatar'), peer);
     bindMuteRow(chat.id, 'ciMuteToggle');
     $('ciChat').addEventListener('click', () => { closeDrawers(); $('messageInput').focus(); });
     if (!u.isBot) {
       $('ciVoice').addEventListener('click', () => { closeDrawers(); startCall('audio'); });
       $('ciVideo').addEventListener('click', () => { closeDrawers(); startCall('video'); });
+      const btnClear = $('ciClear');
+      if (btnClear) btnClear.addEventListener('click', async () => {
+        closeDrawers();
+        await deleteConversation(chat.id);
+      });
+      const btnBlock = $('ciBlock');
+      if (btnBlock) btnBlock.addEventListener('click', async () => {
+        if (!confirm(`Blokir ${u.name}?\n\nPesan, indikator mengetik, dan panggilan berhenti dua arah sampai Anda membuka blokir.`)) return;
+        try {
+          await api(`/api/blocks/${u.id}`, { method: 'POST' });
+          const c = currentChat();
+          if (c && c.peer) c.peer.blockedByMe = true;
+          toast('Kontak diblokir');
+          updateChatStatus();
+          openContactInfo(); // muat ulang drawer dengan status blokir terbaru
+        } catch (err) { toast(err.message); }
+      });
+      const btnUnblock = $('ciUnblock');
+      if (btnUnblock) btnUnblock.addEventListener('click', async () => {
+        try {
+          await api(`/api/blocks/${u.id}`, { method: 'DELETE' });
+          const c = currentChat();
+          if (c && c.peer) c.peer.blockedByMe = false;
+          toast('Blokir dibuka');
+          updateChatStatus();
+          openContactInfo();
+        } catch (err) { toast(err.message); }
+      });
     }
     if (canEditBot) bindBotProfileEdit(u, peer);
   } catch (err) {
@@ -6173,6 +6353,8 @@ function startCall(kind) {
   if (chat && chat.type === 'group') { toast('Panggilan hanya tersedia di chat pribadi'); return; }
   if (!chat || !chat.peer) { toast('Pilih chat terlebih dahulu'); return; }
   if (chat.peer.isBot) { toast('Bot tidak bisa dipanggil'); return; }
+  if (chat.peer.blockedByMe) { toast('Buka blokir kontak untuk menelepon'); return; }
+  if (chat.peer.blockedMe) { toast('Tidak dapat menghubungi pengguna ini'); return; }
   if (S.call) { toast('Sedang dalam panggilan lain'); return; }
   if (!S.socket || !S.socket.connected) { toast('Tidak terhubung ke server'); return; }
 
@@ -7668,6 +7850,7 @@ async function openGroupInfo() {
       ${muteRowHtml(chat, 'giMuteToggle')}
       <div class="ps-label" style="padding:0 4px 8px">Anggota</div>
       <div class="member-list" id="giMembers"></div>
+      <button class="btn-ghost" id="giClear" type="button"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-trash" /></svg> Hapus percakapan</button>
       <button class="btn-ghost danger" id="giLeave"><svg viewBox="0 0 24 24" class="btn-ico"><use href="#ic-exit" /></svg> Keluar dari grup</button>`;
 
     setAvatar($('giAvatar'), { name: chat.name, avatar: chat.avatar });
@@ -7887,6 +8070,12 @@ async function openGroupInfo() {
         await loadChats();
         toast('Anda keluar dari grup');
       } catch (err) { toast(err.message); }
+    });
+
+    // hapus percakapan grup: riwayat hanya hilang dari tampilan saya
+    body.querySelector('#giClear').addEventListener('click', async () => {
+      closeDrawers();
+      await deleteConversation(chat.id);
     });
   } catch (err) {
     body.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;

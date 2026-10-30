@@ -827,10 +827,31 @@ app.get('/api/contacts', auth.requireAuth, ah(async (req, res) => {
   const excluded = canSeeBots ? await excludedBots(req.user) : new Set();
   const visible = page.filter((r) => !(bots.isBot(r) && (!canSeeBots || excluded.has(r.id))));
   const online = await presence.onlineSet(visible.map((r) => r.id));
+  // status blokir per halaman: sekali query untuk semua id yang tampil
+  const visIds = visible.map((r) => r.id);
+  const blockedByMe = new Set();
+  const blockedMe = new Set();
+  if (visIds.length) {
+    const blockRows = await db.all(
+      `SELECT blocker_id, blocked_id FROM user_blocks
+       WHERE (blocker_id = ? AND blocked_id IN (${visIds.map(() => '?').join(',')}))
+          OR (blocked_id = ? AND blocker_id IN (${visIds.map(() => '?').join(',')}))`,
+      req.user.id,
+      ...visIds,
+      req.user.id,
+      ...visIds
+    );
+    for (const r of blockRows) {
+      if (String(r.blocker_id) === String(req.user.id)) blockedByMe.add(r.blocked_id);
+      else blockedMe.add(r.blocker_id);
+    }
+  }
   res.json({
-    users: visible.map((r) =>
-      helpers.serializeUser(r, req.user.id, { online: online.has(r.id), premium: false })
-    ),
+    users: visible.map((r) => ({
+      ...helpers.serializeUser(r, req.user.id, { online: online.has(r.id), premium: false }),
+      blockedByMe: blockedByMe.has(r.id),
+      blockedMe: blockedMe.has(r.id),
+    })),
     hasMore,
   });
 }));
@@ -871,12 +892,72 @@ app.get('/api/users/:id', auth.requireAuth, ah(async (req, res) => {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
   }
+  const blk = await blockedBetween(req.user.id, row.id);
   res.json({
-    user: helpers.serializeUser(row, req.user.id, {
-      online: await presence.isOnline(row.id),
-      premium: true,
-    }),
+    user: {
+      ...helpers.serializeUser(row, req.user.id, {
+        online: await presence.isOnline(row.id),
+        premium: true,
+      }),
+      // status blokir untuk UI info kontak: siapa yang memblokir siapa
+      blockedByMe: !!(blk && String(blk.blocker_id) === String(req.user.id)),
+      blockedMe: !!(blk && String(blk.blocker_id) !== String(req.user.id)),
+    },
   });
+}));
+
+/* ================= blokir kontak =================
+   Satu tabel dua arah: A blokir B -> chat pribadi dibekukan untuk keduanya
+   (pesan, indikator mengetik, panggilan). Grup tidak terpengaruh. */
+app.get('/api/blocks', auth.requireAuth, ah(async (req, res) => {
+  const rows = await db.all(
+    `SELECT u.* FROM user_blocks b JOIN users u ON u.id = b.blocked_id
+     WHERE b.blocker_id = ? ORDER BY b.created_at DESC`,
+    req.user.id
+  );
+  res.json({
+    users: rows.map((r) => helpers.serializeUser(r, req.user.id, { premium: false })),
+  });
+}));
+
+app.post('/api/blocks/:userId', auth.requireAuth, ah(async (req, res) => {
+  const targetId = String(req.params.userId || '');
+  if (!targetId || targetId === req.user.id) {
+    return res.status(400).json({ error: 'Tidak dapat memblokir diri sendiri' });
+  }
+  const target = await db.get('SELECT id, role, is_bot FROM users WHERE id = ?', targetId);
+  if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+  if (auth.isAdmin(target)) {
+    return res.status(400).json({ error: 'Tidak dapat memblokir akun admin/CS' });
+  }
+  if (Number(target.is_bot) === 1) {
+    return res.status(400).json({ error: 'Tidak dapat memblokir bot' });
+  }
+  if (!floodGuard(`block:${req.user.id}`, 60, 60_000)) {
+    return res.status(429).json({ error: 'Terlalu sering memblokir. Coba lagi sebentar.' });
+  }
+  await db.run(
+    `INSERT INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)
+     ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+    req.user.id,
+    targetId,
+    Date.now()
+  );
+  // kedua pihak ikut menyinkronkan status blokir (composer terkunci/buka kunci)
+  await emitToUsers([req.user.id, targetId], 'chat:updated', { chatId: null });
+  res.json({ ok: true, userId: targetId, blocked: true });
+}));
+
+app.delete('/api/blocks/:userId', auth.requireAuth, ah(async (req, res) => {
+  const targetId = String(req.params.userId || '');
+  if (!targetId) return res.status(400).json({ error: 'Pengguna tidak valid' });
+  await db.run(
+    'DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?',
+    req.user.id,
+    targetId
+  );
+  await emitToUsers([req.user.id, targetId], 'chat:updated', { chatId: null });
+  res.json({ ok: true, userId: targetId, blocked: false });
 }));
 
 const PRIVACY_COLUMNS = {
@@ -1315,9 +1396,16 @@ app.post('/api/chats/join/:code', auth.requireAuth, ah(async (req, res) => {
 }));
 
 app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
-  if (!(await helpers.isMember(req.params.id, req.user.id))) {
+  const member = await db.get(
+    'SELECT cleared_at FROM chat_members WHERE chat_id = ? AND user_id = ?',
+    req.params.id,
+    req.user.id
+  );
+  if (!member) {
     return res.status(403).json({ error: 'Bukan anggota chat ini' });
   }
+  // riwayat sesudah "hapus percakapan": pesan lama disembunyikan dari viewer ini
+  const since = Number(member.cleared_at) || 0;
   const before = req.query.before ? Number(req.query.before) : Date.now();
   const beforeId = String(req.query.beforeId || '');
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
@@ -1325,18 +1413,21 @@ app.get('/api/chats/:id/messages', auth.requireAuth, ah(async (req, res) => {
   // dengan batas halaman tidak lagi terlewat saat menggulir ke atas
   const rows = beforeId
     ? await db.all(
-      `SELECT * FROM messages WHERE chat_id = ? AND (created_at < ? OR (created_at = ? AND id < ?))
+      `SELECT * FROM messages WHERE chat_id = ? AND created_at > ?
+         AND (created_at < ? OR (created_at = ? AND id < ?))
        ORDER BY created_at DESC, id DESC LIMIT ?`,
       req.params.id,
+      since,
       before,
       before,
       beforeId,
       limit
     )
     : await db.all(
-      `SELECT * FROM messages WHERE chat_id = ? AND created_at < ?
+      `SELECT * FROM messages WHERE chat_id = ? AND created_at > ? AND created_at < ?
        ORDER BY created_at DESC, id DESC LIMIT ?`,
       req.params.id,
+      since,
       before,
       limit
     );
@@ -1367,6 +1458,30 @@ app.post('/api/chats/:id/archive', auth.requireAuth, ah(async (req, res) => {
     req.user.id
   );
   res.json({ ok: true, chatId: req.params.id, archived });
+}));
+
+// hapus percakapan: PER PENGGUNA — riwayat & chat disembunyikan dari daftar
+// milik saya saja; anggota lain tetap utuh. Chat muncul kembali otomatis saat
+// ada pesan baru sesudah waktu hapus (pesanan lama tetap tersembunyi).
+app.delete('/api/chats/:id', auth.requireAuth, ah(async (req, res) => {
+  const member = await db.get(
+    'SELECT cleared_at FROM chat_members WHERE chat_id = ? AND user_id = ?',
+    req.params.id,
+    req.user.id
+  );
+  if (!member) {
+    return res.status(403).json({ error: 'Bukan anggota chat ini' });
+  }
+  const now = Date.now();
+  await db.run(
+    'UPDATE chat_members SET cleared_at = ?, archived = 0 WHERE chat_id = ? AND user_id = ?',
+    now,
+    req.params.id,
+    req.user.id
+  );
+  // perangkat lain milik saya yang sedang daring ikut menyinkronkan daftar
+  await emitToUsers([req.user.id], 'chat:updated', { chatId: req.params.id });
+  res.json({ ok: true, chatId: req.params.id, clearedAt: now });
 }));
 
 // notifikasi per chat: bisukan percakapan ini untuk satu pengguna.
@@ -2927,8 +3042,18 @@ io.on('connection', (socket) => {
     if (!floodGuard(`typing:${user.id}`, 120, 60_000)) return;
     helpers
       .isMember(chatId, user.id)
-      .then((member) => {
+      .then(async (member) => {
         if (!member) return null;
+        // chat pribadi yang terkunci blokir: indikator mengetik tidak diteruskan
+        const meta = await db.get('SELECT type FROM chats WHERE id = ?', chatId);
+        if (meta && meta.type !== 'group') {
+          const peerMem = await db.get(
+            'SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id <> ? LIMIT 1',
+            chatId,
+            user.id
+          );
+          if (peerMem && (await blockedBetween(peerMem.user_id, user.id))) return null;
+        }
         return helpers.getChatMemberIds(chatId);
       })
       .then((members) => {
@@ -3056,6 +3181,17 @@ io.on('connection', (socket) => {
         const target = await db.get('SELECT id, is_bot FROM users WHERE id = ?', targetId);
         if (!target) return reply({ ok: false, error: 'Pengguna tidak ditemukan' });
         if (bots.isBot(target)) return reply({ ok: false, error: 'Bot tidak dapat dipanggil' });
+
+        // blokir kontak: panggilan ditolak dua arah selama blokir masih aktif
+        const blk = await blockedBetween(targetId, user.id);
+        if (blk) {
+          return reply({
+            ok: false,
+            error: String(blk.blocker_id) === String(user.id)
+              ? 'Anda memblokir pengguna ini. Buka blokir untuk menelepon.'
+              : 'Tidak dapat menghubungi pengguna ini',
+          });
+        }
 
         // satu pemanggil satu panggilan (baris macet dibersihkan sapu bersih berkala)
         const busy = await db.get(
@@ -3374,6 +3510,20 @@ async function respondToBot({ bot, chatId, members, sender, userMessageId, text,
   }
 }
 
+// Blokir kontak: kembalikan baris blokir bila A memblokir B ATAU B memblokir A.
+// Dua arah -> chat pribadi dibekukan untuk kedua pihak sampai blokir dibuka.
+async function blockedBetween(a, b) {
+  if (!a || !b || String(a) === String(b)) return null;
+  return db.get(
+    `SELECT blocker_id FROM user_blocks
+     WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+    a,
+    b,
+    b,
+    a
+  );
+}
+
 // pesan penolakan ketika kuota storage paket sudah habis
 function storageFullMessage(usage, incoming) {
   const n = (b) => {
@@ -3399,6 +3549,29 @@ async function handleSend(user, payload) {
   const botPeer = await bots.peerInChat(chatId);
   const chatMeta = await db.get('SELECT type, name FROM chats WHERE id = ?', chatId);
   const isGroupChat = !!(chatMeta && chatMeta.type === 'group');
+
+  // blokir kontak: chat pribadi dibekukan dua arah selama salah satu pihak
+  // memblokir yang lain — pengiriman pesan ditolak sampai blokir dibuka.
+  // Grup tidak terpengaruh blokir (semua anggota tetap bisa berinteraksi).
+  if (!isGroupChat) {
+    const peerMem = await db.get(
+      'SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id <> ? LIMIT 1',
+      chatId,
+      user.id
+    );
+    const blk = peerMem ? await blockedBetween(peerMem.user_id, user.id) : null;
+    if (blk) {
+      const iBlocked = String(blk.blocker_id) === String(user.id);
+      throw auth.httpError(
+        403,
+        iBlocked
+          ? 'Anda memblokir kontak ini. Buka blokir untuk melanjutkan percakapan.'
+          : 'Pesan tidak dapat dikirim ke pengguna ini.',
+        'blokir'
+      );
+    }
+  }
+
   let botWillReply = false;
   if (botPeer) {
     const excluded = await excludedBots(user);

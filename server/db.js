@@ -134,6 +134,14 @@ CREATE TABLE IF NOT EXISTS chat_notifs (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_notifs_user ON chat_notifs (user_id);
 
+CREATE TABLE IF NOT EXISTS user_blocks (
+  blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks (blocked_id);
+
 CREATE TABLE IF NOT EXISTS messages (
   id         TEXT PRIMARY KEY,
   chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -454,6 +462,14 @@ CREATE TABLE IF NOT EXISTS chat_notifs (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_notifs_user ON chat_notifs (user_id);
 
+CREATE TABLE IF NOT EXISTS user_blocks (
+  blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks (blocked_id);
+
 CREATE TABLE IF NOT EXISTS messages (
   id         TEXT PRIMARY KEY,
   chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -703,6 +719,8 @@ const TABLE_MIGRATIONS = {
   ],
   chat_members: [
     ['archived', 'SMALLINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+    // hapus percakapan per-pengguna: riwayat sebelum waktu ini disembunyikan
+    ['cleared_at', 'BIGINT NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   calls: [
     ['answered_at', 'BIGINT', 'INTEGER'],
@@ -832,6 +850,7 @@ async function ensurePgIndexes() {
     'CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members (user_id)',
     'CREATE INDEX IF NOT EXISTS idx_chat_notifs_user ON chat_notifs (user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks (blocked_id)',
   ];
   for (const sql of idx) {
     try { await pool.query(sql); } catch (err) {

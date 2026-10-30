@@ -375,7 +375,10 @@ html[data-theme="dark"] .auth-tabs { background: rgba(255,255,255,.03); }
   display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* ---------- arsip chat ---------- */
+/* ---------- arsip & hapus chat ---------- */
+.chat-item-actions {
+  display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+}
 .chat-item-arch {
   flex-shrink: 0; width: 34px; height: 34px; border: 0; border-radius: 50%;
   background: transparent; color: var(--wa-text-2); cursor: pointer;
@@ -384,6 +387,7 @@ html[data-theme="dark"] .auth-tabs { background: rgba(255,255,255,.03); }
 .chat-item-arch .ico { width: 18px; height: 18px; }
 .chat-item:hover .chat-item-arch { opacity: 1; }
 .chat-item-arch:hover { background: var(--wa-hover); color: var(--wa-teal); opacity: 1; }
+.chat-item-arch.danger:hover { background: var(--wa-danger-soft); color: var(--wa-danger-text); }
 .arch-bar {
   width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px;
   border: 0; border-bottom: 1px solid var(--wa-border); background: transparent;
@@ -885,6 +889,23 @@ html[data-theme="dark"] .contact-body .contact-card { box-shadow: 0 2px 8px rgba
 }
 .contact-actions { display: flex; gap: 10px; }
 .contact-actions .btn-ghost { flex: 1; }
+.contact-actions.contact-danger { margin-top: 10px; flex-wrap: wrap; }
+
+/* banner blokir kontak di atas composer */
+.block-banner {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  background: var(--wa-danger-soft, rgba(213, 80, 79, .12));
+  color: var(--wa-danger-text, #bb1f25); font-size: 12.5px; line-height: 1.4;
+  border-bottom: 1px solid rgba(213, 80, 79, .25);
+}
+.block-banner .ico { width: 16px; height: 16px; flex-shrink: 0; }
+.block-banner span { flex: 1; min-width: 0; }
+.block-banner button {
+  border: 1px solid rgba(213, 80, 79, .4); background: transparent;
+  color: inherit; font-size: 12px; font-weight: 600; border-radius: 14px;
+  padding: 4px 10px; cursor: pointer; flex-shrink: 0;
+}
+.block-banner button:hover { background: rgba(213, 80, 79, .18); }
 
 /* profil */
 .profile-body .avatar-upload { position: relative; display: block; }

@@ -218,7 +218,8 @@ async function loadChatBundle(rows, viewerId) {
   const bundle = {
     peers: new Map(), last: new Map(), unread: new Map(), statuses: new Map(),
     counts: new Map(), roles: new Map(), archived: new Map(), bots: new Map(),
-    mutes: new Map(), viewerId,
+    mutes: new Map(), cleared: new Map(), blockedByMe: new Set(), blockedMe: new Set(),
+    viewerId,
   };
   const chatIds = rows.map((r) => r.id);
   if (!chatIds.length) return bundle;
@@ -238,6 +239,24 @@ async function loadChatBundle(rows, viewerId) {
     if (Number(row.is_bot) === 1) bundle.bots.set(row.chat_id, row);
   }
 
+  // status blokir dua arah terhadap peer tiap chat (hanya relevan di chat pribadi)
+  const peerIds = [...bundle.peers.values()].map((p) => p.id).filter(Boolean);
+  if (peerIds.length) {
+    const blockRows = await db.all(
+      `SELECT blocker_id, blocked_id FROM user_blocks
+       WHERE (blocker_id = ? AND blocked_id IN (${ph(peerIds.length)}))
+          OR (blocked_id = ? AND blocker_id IN (${ph(peerIds.length)}))`,
+      viewerId,
+      ...peerIds,
+      viewerId,
+      ...peerIds
+    );
+    for (const r of blockRows) {
+      if (String(r.blocker_id) === String(viewerId)) bundle.blockedByMe.add(r.blocked_id);
+      else if (String(r.blocked_id) === String(viewerId)) bundle.blockedMe.add(r.blocker_id);
+    }
+  }
+
   const countRows = await db.all(
     `SELECT chat_id, COUNT(*) AS n FROM chat_members WHERE chat_id IN (${ids}) GROUP BY chat_id`,
     ...chatIds
@@ -245,20 +264,26 @@ async function loadChatBundle(rows, viewerId) {
   for (const row of countRows) bundle.counts.set(row.chat_id, Number(row.n));
 
   const roleRows = await db.all(
-    `SELECT chat_id, role, archived FROM chat_members WHERE chat_id IN (${ids}) AND user_id = ?`,
+    `SELECT chat_id, role, archived, cleared_at FROM chat_members WHERE chat_id IN (${ids}) AND user_id = ?`,
     ...chatIds,
     viewerId
   );
   for (const row of roleRows) {
     bundle.roles.set(row.chat_id, row.role);
     bundle.archived.set(row.chat_id, !!row.archived);
+    bundle.cleared.set(row.chat_id, Number(row.cleared_at) || 0);
   }
 
+  // pesan terakhir per chat — hanya yang sesudah "hapus percakapan" milik viewer
+  // (chat yang dihapus menampilkan last=null sampai ada pesan baru masuk)
   const lastRows = await db.all(
     `SELECT m.* FROM messages m
      JOIN (SELECT chat_id, MAX(created_at) AS mx FROM messages WHERE chat_id IN (${ids}) GROUP BY chat_id) t
-       ON t.chat_id = m.chat_id AND m.created_at = t.mx`,
-    ...chatIds
+       ON t.chat_id = m.chat_id AND m.created_at = t.mx
+     WHERE m.created_at > COALESCE(
+       (SELECT cm.cleared_at FROM chat_members cm WHERE cm.chat_id = m.chat_id AND cm.user_id = ?), 0)`,
+    ...chatIds,
+    viewerId
   );
   for (const row of lastRows) {
     const prev = bundle.last.get(row.chat_id);
@@ -267,10 +292,13 @@ async function loadChatBundle(rows, viewerId) {
 
   const unreadRows = await db.all(
     `SELECT m.chat_id, COUNT(*) AS n FROM messages m
+     JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = ?
      WHERE m.chat_id IN (${ids}) AND m.sender_id <> ? AND m.deleted_at IS NULL
+       AND m.created_at > COALESCE(cm.cleared_at, 0)
        AND NOT EXISTS (SELECT 1 FROM message_status s
                        WHERE s.message_id = m.id AND s.user_id = ? AND s.status = 'read')
      GROUP BY m.chat_id`,
+    viewerId,
     ...chatIds,
     viewerId,
     viewerId
@@ -295,6 +323,7 @@ function buildChat(row, bundle, online) {
   const last = bundle.last.get(row.id) || null;
   const isGroup = row.type === 'group';
   const botRow = isGroup ? bundle.bots.get(row.id) || null : null;
+  const clearedAt = Number(bundle.cleared.get(row.id)) || 0;
   return {
     id: row.id,
     type: row.type,
@@ -311,12 +340,20 @@ function buildChat(row, bundle, online) {
     peer: peer
       ? {
           ...serializeUser(peer, bundle.viewerId, { online: !!(online && online.has(peer.id)), premium: false }),
+          // blokir kontak: pengirim & penerima tidak boleh saling mengirim
+          // di chat pribadi sampai blokir dibuka
+          blockedByMe: bundle.blockedByMe.has(peer.id),
+          blockedMe: bundle.blockedMe.has(peer.id),
         }
       : null,
     lastMessage: last ? serializeMessage(last, bundle.statuses.get(last.id) || 'sent') : null,
     unread: bundle.unread.get(row.id) || 0,
     archived: !!bundle.archived.get(row.id),
     muted: !!bundle.mutes.get(row.id),
+    // hapus percakapan per-pengguna: hidden=true -> disembunyikan dari daftar
+    // sampai ada pesan baru sesudah waktu hapus
+    clearedAt,
+    hidden: clearedAt > 0 && !last,
     createdAt: row.created_at,
   };
 }
