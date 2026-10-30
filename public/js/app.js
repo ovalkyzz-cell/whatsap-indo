@@ -6284,9 +6284,17 @@ async function loadHomeBg() {
 }
 
 /* ================= WebRTC calls ================= */
-const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
+/* Beberapa STUN publik andal — menembus NAT umum tanpa menunggu TURN
+   yang bisa menunda gathering bila tidak dapat dijangkau. */
+const ICE = {
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+    { urls: ['stun:stun.cloudflare.com:3478', 'stun:global.stun.twilio.com:3478'] },
+    { urls: 'stun:stun.nextcloud.com:3478' },
+  ],
+};
 const RING_TIMEOUT_MS = 60000;    // maksimal menunggu jawaban
-const CONNECT_TIMEOUT_MS = 20000; // maksimal menunggu koneksi WebRTC terbentuk
+const CONNECT_TIMEOUT_MS = 25000; // maksimal menunggu koneksi WebRTC terbentuk
 const DROP_GRACE_MS = 8000;       // toleransi 'disconnected' sebelum menutup panggilan
 
 function newCallId() { return 'call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
@@ -6341,6 +6349,7 @@ function blankCall(fields) {
   return {
     startedAt: null, timer: null, ringTimer: null, connectTimer: null, dropTimer: null,
     pendingSignals: [], pc: null, localStream: null, peerReady: null, speaker: true,
+    iceRestarted: false,
     ...fields,
   };
 }
@@ -6575,8 +6584,10 @@ async function createPeer(call) {
 
   call.localStream = stream;
   stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-  $('localVideo').srcObject = stream;
-  $('localVideo').style.display = call.kind === 'video' ? 'block' : 'none';
+  const lv = $('localVideo');
+  lv.srcObject = stream;
+  lv.style.display = call.kind === 'video' ? 'block' : 'none';
+  try { const p = lv.play(); if (p && p.catch) p.catch(() => {}); } catch { /* noop */ }
   $('btnToggleMic').disabled = false;
   $('btnToggleCam').disabled = call.kind !== 'video';
 
@@ -6584,10 +6595,15 @@ async function createPeer(call) {
     if (S.call !== call || !e.streams || !e.streams[0]) return;
     clearTimeout(call.ringTimer); // jalur media terbentuk: dering tak boleh mematikan panggilan
     stopRingTone();
-    if (!$('remoteVideo').srcObject) $('remoteVideo').srcObject = e.streams[0];
-    $('remoteVideo').style.display = 'block';
+    const remote = $('remoteVideo');
+    if (!remote.srcObject) remote.srcObject = e.streams[0];
+    // autoplay kadang ditolak browser walau atribut ada — paksa play diam-diam
+    try { const p = remote.play(); if (p && p.catch) p.catch(() => {}); } catch { /* noop */ }
+    const hasVideo = e.streams[0].getVideoTracks().length > 0;
+    remote.style.display = hasVideo ? 'block' : 'none';
     // panggilan suara: avatar tetap tampil; video: avatar hilang saat video tiba
-    if (e.track && e.track.kind === 'video') $('callAvatarFallback').style.display = 'none';
+    if (hasVideo) $('callAvatarFallback').style.display = 'none';
+    else $('callAvatarFallback').style.display = 'flex';
     setCallState('Tersambung');
     if (!call.startedAt) startCallTimer();
   };
@@ -6610,6 +6626,12 @@ async function createPeer(call) {
       setCallState('Tersambung');
       if (!call.startedAt) startCallTimer();
     } else if (st === 'failed') {
+      // bangkitkan ICE sekali; kalau tetap gagal baru tutup
+      if (!call.iceRestarted && tryIceRestart(call, pc)) {
+        setCallState('Menyambungkan ulang...');
+        armConnectTimeout(call);
+        return;
+      }
       setCallState('Koneksi gagal');
       finishCall(call, 'Koneksi panggilan gagal');
     } else if (st === 'disconnected') {
@@ -6622,6 +6644,29 @@ async function createPeer(call) {
   };
 
   return pc;
+}
+
+/* Coba bangkitkan kembali ICE sekali saat koneksi gagal.
+   Hanya pemanggil yang memulai (hindari glare); penerima menjawab offer baru. */
+function tryIceRestart(call, pc) {
+  if (!call || !pc || call.iceRestarted) return false;
+  if (call.incoming) return false;
+  call.iceRestarted = true;
+  try { if (typeof pc.restartIce === 'function') pc.restartIce(); } catch { /* noop */ }
+  void (async () => {
+    try {
+      if (S.call !== call) return;
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      S.socket?.emit('call:signal', {
+        to: call.peer.id, callId: call.callId,
+        signal: { type: 'offer', offer: pc.localDescription },
+      });
+    } catch (err) {
+      console.warn('ice restart', err);
+    }
+  })();
+  return true;
 }
 
 function abortCall(call, message) {
@@ -6643,6 +6688,7 @@ async function handleSignal(signal) {
   if (!call || !call.pc) return;
   try {
     if (signal.type === 'offer') {
+      // offer baru = renegotiation / ICE restart — setRemote boleh diulang
       await call.pc.setRemoteDescription(new RTCSessionDescription(signal.offer));
       await flushCandidates(call);
       const answer = await call.pc.createAnswer();
@@ -6651,15 +6697,19 @@ async function handleSignal(signal) {
         to: call.peer.id, callId: call.callId,
         signal: { type: 'answer', answer: call.pc.localDescription },
       });
-      setCallState('Menunggu koneksi...');
-      armConnectTimeout(call);
+      if (!call.startedAt) {
+        setCallState('Menunggu koneksi...');
+        armConnectTimeout(call);
+      }
     } else if (signal.type === 'answer') {
       clearTimeout(call.ringTimer); // penerima sudah menjawab: masa dering selesai
       stopRingTone();
       await call.pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
       await flushCandidates(call);
-      setCallState('Menunggu koneksi...');
-      armConnectTimeout(call);
+      if (!call.startedAt) {
+        setCallState('Menunggu koneksi...');
+        armConnectTimeout(call);
+      }
     } else if (signal.type === 'candidate') {
       if (!call.pc.remoteDescription) {
         (call.bufferedCandidates = call.bufferedCandidates || []).push(signal.candidate);
@@ -6793,6 +6843,12 @@ function openCallUI(call) {
 async function applySpeaker(on) {
   const v = $('remoteVideo');
   if (!v) return;
+  const kick = () => {
+    try {
+      const p = v.play && v.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch { /* autoplay ditolak: biarkan atribut autoplay */ }
+  };
   try {
     if (!on && typeof v.setSinkId === 'function' && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -6800,12 +6856,17 @@ async function applySpeaker(on) {
       if (ear && ear.deviceId) {
         await v.setSinkId(ear.deviceId);
         v.muted = false;
+        kick();
         return;
       }
     }
     if (typeof v.setSinkId === 'function' && v.sinkId && v.sinkId !== 'default') await v.setSinkId('default');
     v.muted = !on;
-  } catch { v.muted = !on; }
+    kick();
+  } catch {
+    v.muted = !on;
+    kick();
+  }
 }
 
 function setCallState(text) {
@@ -8160,10 +8221,13 @@ $('btnRecSend').addEventListener('click', () => stopRecording(true));
    Setelah animasi selesai (~6.2s), splash fade-out lalu alur boot lanjut. */
 function waitForSplash() {
   const splash = $('splashView');
-  if (!splash) return Promise.resolve();
+  // DOM tiruan / headless tanpa layout nyata -> langsung lanjut boot
+  if (!splash || typeof splash.getBoundingClientRect !== 'function') return Promise.resolve();
+  const rect = splash.getBoundingClientRect();
+  if (!rect || (rect.width === 0 && rect.height === 0)) return Promise.resolve();
   document.documentElement.classList.add('splash-active');
   return new Promise((resolve) => {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -8171,7 +8235,6 @@ function waitForSplash() {
       splash.classList.add('splash-done');
       document.documentElement.classList.remove('splash-active');
       const remove = () => { try { splash.remove(); } catch { /* noop */ } resolve(); };
-      // tunggu transisi opacity selesai, dengan fallback timer
       let removed = false;
       const done = () => {
         if (removed) return;
@@ -8181,7 +8244,6 @@ function waitForSplash() {
       splash.addEventListener('transitionend', done, { once: true });
       setTimeout(done, reduce ? 40 : 900);
     };
-    // durasi animasi desain: cinematicZoom 6s + subtext berakhir di ~6s
     setTimeout(finish, reduce ? 60 : 6200);
   });
 }
