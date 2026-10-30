@@ -303,6 +303,13 @@ const FIELD_LABELS = [
   ['name', 'Nama'],
   ['link', 'Tautan'],
   ['url', 'Tautan'],
+  ['verification_link', 'Tautan'],
+  ['verify_link', 'Tautan'],
+  ['oobCode', 'Kode Verifikasi'],
+  ['oob_code', 'Kode Verifikasi'],
+  ['code', 'Kode'],
+  ['token', 'Token'],
+  ['code_verifikasi', 'Kode Verifikasi'],
   ['expires', 'Berlaku sampai'],
   ['expired_at', 'Berlaku sampai'],
 ];
@@ -310,19 +317,57 @@ const FIELD_LABELS = [
 function fieldLines(data) {
   const obj = asObject(data);
   const out = [];
+  const seen = new Set();
   for (const [key, label] of FIELD_LABELS) {
     if (!(key in obj)) continue;
     const value = obj[key];
     if (value === null || value === undefined || typeof value === 'object') continue;
-    out.push(`${label} : ${String(value)}`);
+    const line = `${label} : ${String(value)}`;
+    if (seen.has(line)) continue; // link/url & verification_link boleh sama — tampilkan sekali
+    seen.add(line);
+    out.push(line);
   }
   return out;
 }
 
 // ambil nilai kode/tautan dari baris detail untuk ditampilkan di kartu angka
 function pickCodeValue(lines) {
-  const hit = lines.find((l) => /^(Tautan|Link|URL|Kode|Token|Kode Verifikasi|UID)\s*:/i.test(l));
+  const hit = lines.find((l) => /^(Tautan|Link|URL|Kode Verifikasi|Kode|Token|UID)\s*:/i.test(l));
   return hit ? hit.replace(/^[^:]+:\s*/, '').trim() : null;
+}
+
+// ekstrak kode/tautan verifikasi dari respons API mentah (bentuk apa pun)
+// prioritas: verification_link > link/url > oobCode > code > token > uid
+function pickVerifCode(raw) {
+  const obj = asObject(raw);
+  const keys = ['verification_link', 'verify_link', 'link', 'url',
+    'oobCode', 'oob_code', 'code', 'code_verifikasi', 'token', 'uid'];
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== null && v !== undefined && v !== '' && typeof v !== 'object') {
+      return String(v).trim();
+    }
+  }
+  return null;
+}
+
+// status verifikasi: API bisa mengembalikan verified/is_verified/status
+// dengan nilai boolean, string "verified"/"true", atau angka 1
+function isVerifiedPayload(raw) {
+  const obj = asObject(raw);
+  for (const k of ['verified', 'is_verified']) {
+    if (k in obj) {
+      const v = obj[k];
+      if (v === true || v === 1 || v === '1' || v === 'true' || v === 'verified' || v === 'success') return true;
+      if (v === false || v === 0 || v === '0' || v === 'false' || v === 'pending' || v === 'failed' || v === 'unverified') return false;
+    }
+  }
+  if ('status' in obj) {
+    const s = String(obj.status || '').toLowerCase();
+    if (['verified', 'success', 'ok', 'true', '1', 'active', 'terverifikasi'].includes(s)) return true;
+    if (['pending', 'failed', 'false', '0', 'unverified', 'invalid', 'expired', 'not_found', 'error'].includes(s)) return false;
+  }
+  return null; // tidak pasti — biarkan penangan memakai default optimis lama
 }
 
 /* ---------- Bot 1: Verif AM Prem ---------- */
@@ -374,10 +419,31 @@ async function verifReply(raw) {
       return errBlock('Tautan tidak dapat dikirim', e.message);
     }
     if (body.success === false) return errBlock('Tautan tidak dapat dikirim', body.error);
-    const detail = fieldLines(body.data !== undefined ? body.data : body).filter((l) => !/^Email/.test(l));
-    const codeLine = detail.find((l) => /^(Tautan|Link|URL|Kode|Token|Kode Verifikasi|UID)\s*:/i.test(l));
-    const codeValue = codeLine ? pickCodeValue([codeLine]) : email;
-    const restDetail = codeLine ? detail.filter((l) => l !== codeLine) : detail;
+    const payload = body.data !== undefined ? body.data : body;
+    const detail = fieldLines(payload).filter((l) => !/^Email/.test(l));
+    // kode/tautan: prioritas field eksplisit, lalu baris detail, jangan jatuh ke email
+    const codeValue = pickVerifCode(payload)
+      || pickCodeValue(detail)
+      || null;
+    const restDetail = detail.filter((l) => {
+      const v = pickCodeValue([l]);
+      return !(codeValue && v && v === codeValue);
+    });
+    if (!codeValue) {
+      return [
+        '⚠️ Tautan terkirim — tapi kode tidak terbaca',
+        '',
+        `Email   : ${email}`,
+        'Status  : Email verifikasi dikirim, namun API tidak mengembalikan tautan/kode.',
+        '',
+        'Langkah selanjutnya:',
+        '1. Buka kotak masuk email (cek folder Spam/Promosi).',
+        '2. Salin tautan verifikasi atau kode oobCode dari email.',
+        `3. Kirim: cek ${email} <token>`,
+        '',
+        ...(restDetail.length ? restDetail : []),
+      ].join('\n');
+    }
     return [
       '✅ Tautan verifikasi terkirim',
       '',
@@ -422,6 +488,20 @@ async function verifReply(raw) {
     if (body.success === false) return errBlock('Verifikasi belum berhasil', body.error);
     const data = body.data !== undefined ? body.data : body;
     const detail = fieldLines(data);
+    const verdict = isVerifiedPayload(data);
+    if (verdict === false) {
+      return [
+        '❌ Verifikasi belum berhasil',
+        '',
+        `Email   : ${email}`,
+        'Token   :',
+        angkaFence(token),
+        ...(detail.length ? detail : ['Status  : Token belum terverifikasi / tidak valid.']),
+        '',
+        'Pastikan token dari email terbaru, lalu coba lagi.',
+        'Balas "menu" bila butuh perintah lain.',
+      ].join('\n');
+    }
     return [
       '✅ Verifikasi berhasil',
       '',

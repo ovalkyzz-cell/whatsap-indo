@@ -3534,8 +3534,18 @@ function termAppend(kind, text) {
   const out = $('termOut');
   if (!out) return null;
   const div = document.createElement('div');
-  div.className = 'term-line term-' + kind;
-  div.textContent = text;
+  const body = String(text == null ? '' : text);
+  // balasan bot memakai penanda ❌ / ⚠️ / ✅ — tampilkan sebagai baris error bila gagal
+  let effKind = kind;
+  if (kind === 'res' && /^(❌|⚠️)\s/.test(body)) effKind = 'err';
+  div.className = 'term-line term-' + effKind;
+  // render blok kode / kartu angka seperti di chat (bukan teks mentah ```…)
+  if (effKind === 'res' && body.includes('```')) {
+    div.innerHTML = renderMsgBody(body);
+    div.classList.add('term-rich');
+  } else {
+    div.textContent = body;
+  }
   out.appendChild(div);
   out.scrollTop = out.scrollHeight;
   return div;
@@ -3561,9 +3571,14 @@ async function termRun(cmd) {
       if (out) out.innerHTML = '';
       return;
     }
-    termAppend(data.error ? 'err' : 'res', data.error ? '✕ ' + data.error : (data.output || '(tanpa keluaran)'));
-    termAccess = data;
-    termRenderQuota();
+    const text = data.error ? '✕ ' + data.error : (data.output || '(tanpa keluaran)');
+    const isErr = !!data.error || /^❌\s/.test(String(data.output || ''));
+    termAppend(isErr ? 'err' : 'res', text);
+    // respons sukses tetap memuat sisa kuota (allowed/plan/limit/used/…)
+    if (data.allowed !== undefined || data.plan !== undefined || data.isAdmin !== undefined) {
+      termAccess = data;
+      termRenderQuota();
+    }
   } catch (e) {
     if (loading) loading.remove();
     termAppend('err', '✕ ' + e.message);
@@ -3585,6 +3600,26 @@ function openTerminal() {
   const inp = $('termInput');
   if (inp) inp.focus();
 }
+
+// salin kode dari blok di terminal (tombol Copy pada .code-block / .numcard)
+const termOutEl = $('termOut');
+if (termOutEl) termOutEl.addEventListener('click', async (e) => {
+  const copyBtn = e.target.closest('[data-copy]');
+  if (!copyBtn) return;
+  const wrap = copyBtn.closest('.code-block, .numcard');
+  const codeEl = wrap && wrap.querySelector('code');
+  if (!codeEl) return;
+  const okCopy = await copyToClipboard(codeEl.innerText);
+  if (!okCopy) { toast('Gagal menyalin — coba klik kanan lalu Salin'); return; }
+  copyBtn.classList.add('copied');
+  const label = copyBtn.querySelector('.cb-copy-text');
+  if (label) label.textContent = 'Copied';
+  toast('Disalin ke papan klip');
+  setTimeout(() => {
+    copyBtn.classList.remove('copied');
+    if (label) label.textContent = 'Copy';
+  }, 1600);
+});
 
 (function initTerminalUI() {
   const form = $('termForm');

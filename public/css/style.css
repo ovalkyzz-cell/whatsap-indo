@@ -2867,6 +2867,12 @@ html[data-accent="batu"][data-theme="dark"]   { --wa-accent-text: #94a3b8; --wa-
 .term-line.term-cmd { color: var(--wa-teal); font-weight: 700; }
 .term-line.term-res { color: #d1d7d8; }
 .term-line.term-err { color: #ff8a80; }
+/* output kaya (blok kode / kartu angka) — rapikan margin agar rapi di latar gelap */
+.term-line.term-rich { white-space: normal; word-break: normal; }
+.term-line.term-rich .msg-text { color: #d1d7d8; }
+.term-line.term-rich .code-block,
+.term-line.term-rich .numcard { margin: 6px 0 8px; }
+.term-line.term-rich a { color: #53bdeb; }
 .term-quick {
   display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
   background: #111b21; border-top: 1px solid #222d36;
