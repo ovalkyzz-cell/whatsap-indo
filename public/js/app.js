@@ -8155,6 +8155,37 @@ $('btnMic').addEventListener('click', startRecording);
 $('btnRecCancel').addEventListener('click', () => stopRecording(false));
 $('btnRecSend').addEventListener('click', () => stopRecording(true));
 
+/* ================= splash screen =================
+   Halaman pembuka animasi RTC tampil sebelum login/app.
+   Setelah animasi selesai (~6.2s), splash fade-out lalu alur boot lanjut. */
+function waitForSplash() {
+  const splash = $('splashView');
+  if (!splash) return Promise.resolve();
+  document.documentElement.classList.add('splash-active');
+  return new Promise((resolve) => {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      splash.classList.add('splash-done');
+      document.documentElement.classList.remove('splash-active');
+      const remove = () => { try { splash.remove(); } catch { /* noop */ } resolve(); };
+      // tunggu transisi opacity selesai, dengan fallback timer
+      let removed = false;
+      const done = () => {
+        if (removed) return;
+        removed = true;
+        remove();
+      };
+      splash.addEventListener('transitionend', done, { once: true });
+      setTimeout(done, reduce ? 40 : 900);
+    };
+    // durasi animasi desain: cinematicZoom 6s + subtext berakhir di ~6s
+    setTimeout(finish, reduce ? 60 : 6200);
+  });
+}
+
 /* ================= init ================= */
 (async function init() {
   bindMessageActions(); // satu listener delegasi untuk semua tombol pesan
@@ -8163,6 +8194,7 @@ $('btnRecSend').addEventListener('click', () => stopRecording(true));
   bindViewportKeyboard(); // composer tetap di atas keyboard saat mengetik
   void loadHomeBg();
   void registerSW();
+  await waitForSplash(); // tampilkan splash dulu, baru login/app
   const deepChat = new URLSearchParams(location.search).get('chat');
   if (S.token) {
     try {

@@ -1,0 +1,202 @@
+/* =========================================
+   SPLASH SCREEN — RTC Ultra Smooth Centered Focus
+   Overlay penuh di atas auth/app; hilang otomatis setelah animasi.
+   ========================================= */
+
+.splash-view {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  background-color: #050507;
+  font-family: 'Montserrat', 'Segoe UI', sans-serif;
+  overflow: hidden;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: opacity 0.85s cubic-bezier(0.19, 1, 0.22, 1), visibility 0s linear 0.85s;
+}
+
+.splash-view.splash-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Cegah scroll di bawah splash */
+html.splash-active, html.splash-active body {
+  overflow: hidden !important;
+  background: #050507 !important;
+}
+
+/* Bias cahaya tengah */
+.splash-view .ambient-center {
+  position: absolute;
+  width: 50vw;
+  height: 50vw;
+  background: radial-gradient(circle, rgba(118, 129, 158, 0.05) 0%, transparent 60%);
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Wrapper: cinematic zoom */
+.splash-view .center-focus-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: scale(0.9);
+  opacity: 0;
+  animation: splashCinematicZoom 6s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+}
+
+@keyframes splashCinematicZoom {
+  0% { transform: scale(0.85); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ---- RTC ---- */
+.splash-view .rtc-word {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 25px;
+}
+
+.splash-view .letter {
+  position: relative;
+  font-size: 8rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -2px;
+}
+
+.splash-view .placeholder {
+  visibility: hidden;
+}
+
+.splash-view .part {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #ffffff 0%, #76819e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  opacity: 0;
+}
+
+.splash-view .part.top { clip-path: polygon(0 0, 100% 0, 100% 50.5%, 0 50.5%); }
+.splash-view .part.bottom { clip-path: polygon(0 49.5%, 100% 49.5%, 100% 100%, 0 100%); }
+
+.splash-view .letter:nth-child(1) .top { animation: splashMergeTop 4s cubic-bezier(0.19, 1, 0.22, 1) 0.3s forwards; }
+.splash-view .letter:nth-child(1) .bottom { animation: splashMergeBottom 4s cubic-bezier(0.19, 1, 0.22, 1) 0.3s forwards; }
+.splash-view .letter:nth-child(2) .top { animation: splashMergeTop 4s cubic-bezier(0.19, 1, 0.22, 1) 0.5s forwards; }
+.splash-view .letter:nth-child(2) .bottom { animation: splashMergeBottom 4s cubic-bezier(0.19, 1, 0.22, 1) 0.5s forwards; }
+.splash-view .letter:nth-child(3) .top { animation: splashMergeTop 4s cubic-bezier(0.19, 1, 0.22, 1) 0.7s forwards; }
+.splash-view .letter:nth-child(3) .bottom { animation: splashMergeBottom 4s cubic-bezier(0.19, 1, 0.22, 1) 0.7s forwards; }
+
+@keyframes splashMergeTop {
+  0% { transform: translateY(-25px); opacity: 0; filter: blur(12px); }
+  100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+}
+
+@keyframes splashMergeBottom {
+  0% { transform: translateY(25px); opacity: 0; filter: blur(12px); }
+  100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+}
+
+/* ---- Garis pemisah ---- */
+.splash-view .separator {
+  width: 0px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #76819e, transparent);
+  margin-bottom: 20px;
+  opacity: 0;
+  animation: splashSmoothExpand 3.5s cubic-bezier(0.19, 1, 0.22, 1) 1.5s forwards;
+}
+
+@keyframes splashSmoothExpand {
+  0% { width: 0px; opacity: 0; }
+  100% { width: 280px; opacity: 0.4; }
+}
+
+/* ---- Subtext ---- */
+.splash-view .subtext-group {
+  position: relative;
+  font-size: 1.05rem;
+  font-weight: 400;
+  color: #76819e;
+  text-transform: uppercase;
+  letter-spacing: 5px;
+  text-align: center;
+  margin-right: -5px;
+}
+
+.splash-view .subtext-group .highlight { font-weight: 800; color: #ffffff; }
+.splash-view .subtext-group .dot { color: #526085; margin: 0 8px; }
+
+.splash-view .sub-part {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.splash-view .sub-part.top {
+  clip-path: polygon(0 0, 100% 0, 100% 50.5%, 0 50.5%);
+  animation: splashMergeSubTop 4s cubic-bezier(0.19, 1, 0.22, 1) 2.0s forwards;
+}
+
+.splash-view .sub-part.bottom {
+  clip-path: polygon(0 49.5%, 100% 49.5%, 100% 100%, 0 100%);
+  animation: splashMergeSubBottom 4s cubic-bezier(0.19, 1, 0.22, 1) 2.0s forwards;
+}
+
+@keyframes splashMergeSubTop {
+  0% { transform: translateY(-15px); opacity: 0; filter: blur(8px); }
+  100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+}
+
+@keyframes splashMergeSubBottom {
+  0% { transform: translateY(15px); opacity: 0; filter: blur(8px); }
+  100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+}
+
+/* Responsif layar kecil */
+@media (max-width: 520px) {
+  .splash-view .letter { font-size: 5.2rem; letter-spacing: -1px; }
+  .splash-view .subtext-group { font-size: 0.78rem; letter-spacing: 3px; }
+  .splash-view .rtc-word { gap: 8px; margin-bottom: 18px; }
+  .splash-view .separator { margin-bottom: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-view,
+  .splash-view .center-focus-wrapper,
+  .splash-view .part,
+  .splash-view .separator,
+  .splash-view .sub-part {
+    animation-duration: 0.001ms !important;
+  }
+  .splash-view .center-focus-wrapper,
+  .splash-view .part,
+  .splash-view .separator,
+  .splash-view .sub-part {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+  .splash-view .separator { width: 280px; }
+}
