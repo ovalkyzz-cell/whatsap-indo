@@ -522,6 +522,8 @@ function renderChatList() {
 
 function renderChatListNow() {
   const q = $('searchInput').value.trim().toLowerCase();
+  const el = $('chatList');
+  const prevTop = el ? el.scrollTop : 0;
   // chat yang dihapus (hidden) tidak ikut tampil — tetap disimpan di S.chats
   // supaya bisa dibuka lewat kontak & "hidup" lagi saat pesan baru masuk
   const scope = S.chats.filter((c) => !c.hidden && (sideTab === 'groups' ? c.type === 'group' : true));
@@ -529,7 +531,6 @@ function renderChatListNow() {
     if (!q) return true;
     return chatTitle(c).toLowerCase().includes(q) || (c.peer?.email || '').toLowerCase().includes(q);
   });
-  const el = $('chatList');
 
   const itemHtml = (c) => {
     const last = c.lastMessage;
@@ -600,6 +601,7 @@ function renderChatListNow() {
   if (q) {
     el.innerHTML = matches.map(itemHtml).join('');
     wire(el);
+    el.scrollTop = prevTop;
     updateNavBadges();
     return;
   }
@@ -619,6 +621,7 @@ function renderChatListNow() {
   html += main.map(itemHtml).join('');
   el.innerHTML = html;
   wire(el);
+  el.scrollTop = prevTop;
   const archBar = $('archBar');
   if (archBar) archBar.addEventListener('click', () => { UI.archivedOpen = !UI.archivedOpen; renderChatList(); });
   updateNavBadges();
@@ -1411,10 +1414,12 @@ function updateNearBottom() {
 function syncScrollFab() {
   const btn = $('btnScrollDown');
   if (!btn) return;
-  btn.classList.toggle('hidden', UI.nearBottom && !UI.newWhileUp);
+  const show = !UI.nearBottom || UI.newWhileUp > 0;
+  btn.classList.toggle('show', show);
+  btn.setAttribute('aria-hidden', show ? 'false' : 'true');
   const b = $('sdBadge');
   if (b) {
-    b.classList.toggle('hidden', !UI.newWhileUp);
+    b.classList.toggle('show', UI.newWhileUp > 0);
     b.textContent = UI.newWhileUp > 99 ? '99+' : String(UI.newWhileUp);
   }
 }
@@ -6139,7 +6144,8 @@ function renderAdmUsers(users) {
   $('admUsers').querySelectorAll('[data-grant]').forEach((b) => {
     b.addEventListener('click', () => {
       $('admEmail').value = b.dataset.grant;
-      $('adminDrawer').scrollTo({ top: 0, behavior: 'smooth' });
+      const adminBody = document.querySelector('.admin-body') || $('adminDrawer');
+      adminBody.scrollTo({ top: 0, behavior: 'smooth' });
       $('admEmail').focus();
     });
   });

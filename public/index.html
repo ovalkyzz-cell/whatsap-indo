@@ -532,9 +532,9 @@
         <div class="older-loading hidden" id="olderLoading" aria-live="polite">Memuat pesan lama…</div>
         <div class="messages" id="messages"></div>
 
-        <button class="scroll-down hidden" id="btnScrollDown" type="button" title="Ke pesan terbaru" aria-label="Ke pesan terbaru">
+        <button class="scroll-down" id="btnScrollDown" type="button" title="Ke pesan terbaru" aria-label="Ke pesan terbaru" aria-hidden="true">
           <svg viewBox="0 0 24 24" class="ico"><use href="#ic-arrow-down" /></svg>
-          <span class="sd-badge hidden" id="sdBadge">0</span>
+          <span class="sd-badge" id="sdBadge">0</span>
         </button>
 
         <footer class="composer">
@@ -587,7 +587,9 @@
     <!-- New chat / contact search drawer -->
     <div class="drawer hidden" id="newChatDrawer">
       <header class="drawer-header">
-        <button class="icon-btn" id="btnCloseDrawer">‹</button>
+        <button class="icon-btn drawer-close" id="btnCloseDrawer" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
         <strong>Chat baru</strong>
         <button class="icon-btn drawer-action" id="btnNewGroup" title="Buat grup"><svg viewBox="0 0 24 24" class="ico"><use href="#ic-users" /></svg></button>
       </header>
@@ -607,7 +609,9 @@
     <!-- ============ GRUP BARU ============ -->
     <div class="drawer hidden" id="groupDrawer">
       <header class="drawer-header">
-        <button class="icon-btn" id="btnCloseGroup">‹</button>
+        <button class="icon-btn drawer-close" id="btnCloseGroup" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
         <strong>Grup baru</strong>
       </header>
       <div class="group-form">
@@ -642,7 +646,9 @@
     <!-- ============ BUAT STATUS ============ -->
     <div class="drawer hidden" id="statusComposer">
       <header class="drawer-header">
-        <button class="icon-btn" id="btnCloseStatus">‹</button>
+        <button class="icon-btn drawer-close" id="btnCloseStatus" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
         <strong>Buat Status</strong>
       </header>
       <div class="status-body">
@@ -675,10 +681,10 @@
     <!-- ============ MENU (sidebar pojok kanan atas) ============ -->
     <div class="drawer drawer-right hidden" id="menuDrawer">
       <header class="drawer-header">
-        <strong>Menu</strong>
-        <button class="icon-btn drawer-close" id="btnCloseMenu" title="Tutup">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <button class="icon-btn drawer-close" id="btnCloseMenu" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
         </button>
+        <strong>Menu</strong>
       </header>
 
       <div class="menu-profile">
@@ -779,7 +785,9 @@
     <!-- ============ DAFTAR BOT (Khusus Premium) ============ -->
     <div class="drawer drawer-right hidden" id="botCatDrawer">
       <div class="drawer-header">
-        <button class="icon-btn drawer-close" id="btnCloseBotCat" title="Kembali">‹</button>
+        <button class="icon-btn drawer-close" id="btnCloseBotCat" title="Kembali">
+          <svg viewBox="0 0 24 24" class="ico"><use href="#ic-back" /></svg>
+        </button>
         <strong>Daftar Bot</strong>
         <span class="bc-count" id="bcCount"></span>
       </div>

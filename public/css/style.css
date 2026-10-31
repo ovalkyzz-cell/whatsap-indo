@@ -703,10 +703,10 @@ html[data-theme="dark"] .auth-tabs { background: rgba(255,255,255,.03); }
   animation: slideInRight .26s cubic-bezier(.22, .9, .3, 1) both;
 }
 @keyframes slideInRight { from { transform: translateX(46px); opacity: .3; } to { transform: none; opacity: 1; } }
-.drawer-header strong { flex: 1; }
-.drawer-close { margin-left: auto; font-size: 0; }
+.drawer-header strong { flex: 1; min-width: 0; }
+.drawer-close { font-size: 0; }
 .drawer-close .ico { width: 22px; height: 22px; }
-.drawer-header .drawer-close + strong { flex: 0 1 auto; }
+.drawer-header > .drawer-close:first-child { margin-right: -6px; }
 
 /* menu */
 .menu-profile {
@@ -991,7 +991,7 @@ html[data-theme="dark"] .contact-body .contact-card { box-shadow: 0 2px 8px rgba
 .menu-btn.open { background: rgba(var(--wa-accent-rgb), .16); color: var(--wa-accent-text); }
 .drawer-header .icon-btn:hover, .contact-hero .avatar:hover { transform: none; }
 @media (hover: none) {
-  .btn-primary:hover, .btn-ghost:hover, .scroll-down:hover,
+  .btn-primary:hover, .btn-ghost:hover, .scroll-down.show:hover,
   .bc-card:hover, .plan-card:hover { transform: none; }
 }
 
@@ -2056,18 +2056,26 @@ html[data-theme="dark"] .msg-text a { color: #53bdeb; }
   position: absolute; right: 22px; bottom: 82px; width: 44px; height: 44px; border-radius: 50%;
   background: var(--wa-panel); color: var(--wa-text-2); border: 1px solid var(--wa-border);
   box-shadow: 0 4px 14px rgba(11, 20, 26, .28); display: grid; place-items: center;
-  cursor: pointer; z-index: 12; transition: transform .2s ease, background .2s ease;
-  animation: fabIn .32s cubic-bezier(.34, 1.56, .64, 1) both;
+  cursor: pointer; z-index: 12;
+  opacity: 0; transform: translateY(14px) scale(.85); pointer-events: none;
+  transition: opacity .4s cubic-bezier(.22,1,.36,1), transform .4s cubic-bezier(.22,1,.36,1),
+              background .2s ease, box-shadow .2s ease;
 }
-.scroll-down:hover { background: var(--wa-hover); transform: translateY(-2px); }
-.scroll-down:active { transform: scale(.94); }
+.scroll-down.show {
+  opacity: 1; transform: translateY(0) scale(1); pointer-events: auto;
+}
+.scroll-down.show:hover { background: var(--wa-hover); transform: translateY(-2px) scale(1); }
+.scroll-down.show:active { transform: scale(.94); }
 .scroll-down .ico { width: 22px; height: 22px; }
-@keyframes fabIn { from { opacity: 0; transform: scale(.5) translateY(12px); } to { opacity: 1; transform: none; } }
 .sd-badge {
   position: absolute; top: -5px; right: -5px; min-width: 20px; height: 20px; padding: 0 5px;
   background: #ef5350; color: #fff; font-size: 11px; font-weight: 700; line-height: 20px;
   border-radius: 10px; box-sizing: border-box; border: 2px solid var(--wa-panel);
-  animation: badgePop .34s cubic-bezier(.34, 1.56, .64, 1) both;
+  opacity: 0; transform: scale(.5); pointer-events: none;
+  transition: opacity .3s ease, transform .35s cubic-bezier(.34,1.56,.64,1);
+}
+.sd-badge.show {
+  opacity: 1; transform: scale(1); pointer-events: auto;
 }
 
 /* ================= pemuat riwayat & skeleton ================= */
@@ -2377,6 +2385,14 @@ html[data-theme="dark"] .plan-card .plan-cta { box-shadow: 0 8px 18px rgba(0, 0,
 .st-export-btn .ico { width: 14px; height: 14px; }
 .st-export-btn.busy { opacity: .6; pointer-events: none; }
 @media (max-width: 560px) { .st-export-extra { display: none; } }
+@media (max-width: 480px) {
+  #storageDrawer .drawer-header { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  #storageDrawer .drawer-header strong { flex: 1 1 auto; }
+  .st-upload-btn { margin-left: 0; }
+  .st-upload-btn span { display: none; }
+  .st-upload-btn { padding: 7px 10px; }
+  .st-hdr-btn { margin-left: 0; padding: 6px 10px; font-size: 12px; }
+}
 
 .st-progress {
   margin: 12px 14px 0; padding: 12px 14px; border-radius: 14px;
