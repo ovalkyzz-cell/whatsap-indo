@@ -322,7 +322,10 @@ async function cleanupDbfile(file) {
   }
 }
 
-// Jatuhkan berkas dbfile bila tak lagi dirujuk pesan aktif maupun file tersimpan.
+// Jatuhkan berkas dbfile bila tak lagi dirujuk pesan aktif, file tersimpan,
+// maupun STATUS. Status memakai jalur unggahan yang sama (potongan/multipart)
+// sehingga tanpa pengecekan ini berkas yang sama bisa dibuang saat sebuah pesan
+// dihapus padahal masih dipakai status -> media status jadi 404.
 // pengembalian: { exists, dropped, freed }.
 async function maybeDropDbfile(url) {
   const id = dbfileIdOf(url);
@@ -333,8 +336,9 @@ async function maybeDropDbfile(url) {
   if (!file) return { exists: false, dropped: false, freed: 0 };
   const refs = await db.get(
     `SELECT (SELECT COUNT(*) FROM messages WHERE media_url = ? AND deleted_at IS NULL)
-          + (SELECT COUNT(*) FROM saved_files WHERE media_url = ?) AS n`,
-    url, url
+          + (SELECT COUNT(*) FROM saved_files WHERE media_url = ?)
+          + (SELECT COUNT(*) FROM statuses WHERE media_url = ?) AS n`,
+    url, url, url
   );
   if (Number(refs && refs.n) > 0) return { exists: true, dropped: false, freed: 0 };
   const freed = await cleanupDbfile(file);

@@ -8297,6 +8297,10 @@ function waitForSplash() {
   bindViewportKeyboard(); // composer tetap di atas keyboard saat mengetik
   void loadHomeBg();
   void registerSW();
+  // kerangka halaman masuk disiapkan SEBELUM splash: kartu sapaan tab daftar
+  // langsung tersembunyi & tampilan login siap di belakang animasi pembuka
+  // (splash bisa tertahan bila event transisi tidak pernah datang)
+  showAuth();
   await waitForSplash(); // tampilkan splash dulu, baru login/app
   const deepChat = new URLSearchParams(location.search).get('chat');
   if (S.token) {

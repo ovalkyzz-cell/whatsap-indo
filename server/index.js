@@ -1048,11 +1048,15 @@ async function listChats(userId) {
 
 app.get('/api/chats', auth.requireAuth, ah(async (req, res) => {
   let chats = await listChats(req.user.id);
-  // chat bot disembunyikan bagi yang kehilangan akses (bukan admin/premium)
-  if (!canUseBots(req.user)) chats = chats.filter((c) => !(c.peer && c.peer.isBot));
+  // HANYA chat pribadi dengan bot yang disembunyikan bagi yang kehilangan akses.
+  // Grup tidak ikut disaring: `peer` sebuah grup hanyalah salah satu anggota
+  // (bisa jadi botnya sendiri) sehingga menyaring berdasarkan peer membuat grup
+  // mendadak hilang dari daftar anggota non-premium secara acak.
+  const hideBotPeer = (c) => c.type === 'direct' && c.peer && c.peer.isBot;
+  if (!canUseBots(req.user)) chats = chats.filter((c) => !hideBotPeer(c));
   else {
     const excluded = await excludedBots(req.user);
-    if (excluded.size) chats = chats.filter((c) => !(c.peer && c.peer.isBot && excluded.has(c.peer.id)));
+    if (excluded.size) chats = chats.filter((c) => !(hideBotPeer(c) && excluded.has(c.peer.id)));
   }
   res.json({ chats });
 }));
@@ -1927,7 +1931,21 @@ app.post('/api/status', auth.requireAuth, ah(async (req, res) => {
 }));
 
 app.get('/api/status', auth.requireAuth, ah(async (req, res) => {
-  await db.run('DELETE FROM statuses WHERE expires_at < ?', Date.now());
+  // status kedaluwarsa dibuang beserta medianya: baris dbfile yang hanya
+  // dipakai status ikut dilepas supaya kuota pemilik tidak bocor 24 jam
+  // demi 24 jam (media yang masih dipakai pesan/file lain tetap dipertahankan)
+  const stale = await db.all(
+    'SELECT media_url FROM statuses WHERE expires_at < ? AND media_url IS NOT NULL',
+    Date.now()
+  );
+  if (stale.length) {
+    await db.run('DELETE FROM statuses WHERE expires_at < ?', Date.now());
+    await Promise.all(
+      stale.map((r) => storage.maybeDropDbfile(r.media_url).catch(() => undefined))
+    );
+  } else {
+    await db.run('DELETE FROM statuses WHERE expires_at < ?', Date.now());
+  }
 
   const mine = await db.all(
     'SELECT * FROM statuses WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC',
@@ -2145,6 +2163,8 @@ app.delete('/api/status/:id', auth.requireAuth, ah(async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Status tidak ditemukan' });
   if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Bukan status Anda' });
   await db.run('DELETE FROM statuses WHERE id = ?', row.id);
+  // media status yang tidak lagi dipakai pesan/file lain ikut dibuang & kuota dilepas
+  if (row.media_url) await storage.maybeDropDbfile(row.media_url).catch(() => undefined);
   res.json({ ok: true });
 }));
 

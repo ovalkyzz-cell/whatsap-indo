@@ -59,6 +59,16 @@ function missingKeyError() {
   err.permanent = true;
   return err;
 }
+
+// Pesan jujur & seketika ketika AI memang belum bisa menjawab karena konfigurasi
+// bot bermasalah — dipakai saat MAZVAL_API_KEY kosong dan saat galat key permanen.
+function aiConfigError(err) {
+  return [
+    '⚠️ AI belum bisa menjawab — konfigurasi bot bermasalah',
+    '',
+    String((err && err.message) || missingKeyError().message),
+  ].join('\n');
+}
 // AI: timeout lebih panjang karena api-mazval melakukan fallback internal hingga ±75 detik,
 // sedangkan total waktu satu pertanyaan dibatasi AI_BUDGET supaya admin tidak menunggu lama
 const AI_TIMEOUT = Math.max(Number(process.env.MAZVAL_API_TIMEOUT) || 45000, 75000);
@@ -929,6 +939,11 @@ async function aiReply(raw) {
   const active = model || AI_DEFAULT;
   const prompt = sanitizePrompt(question) + CODING_HINT;
 
+  // Tanpa MAZVAL_API_KEY tidak ada gunanya mencoba model — API pasti menolak.
+  // Jawab seketika dengan penyebab yang jelas (bukan diam ±2 menit melakukan
+  // retry buta lalu membalas "semua model gangguan" yang membingungkan).
+  if (!API_KEY) return aiConfigError();
+
   // jawaban AI wajib keluar: coba ulang model pilihan, lalu model cadangan lain
   // sebelum menyerah, semua dalam satu anggaran waktu supaya tidak bikin nunggu lama
   const chain = [active, ...AI_MODELS.filter((m) => m.path !== active.path)];
@@ -964,7 +979,7 @@ async function aiReply(raw) {
     }
   }
 
-  // JIKA TIDAK ADA API KEY atau semua model gagal, gunakan FREE AI
+  // JIKA semua model gagal sementara, gunakan FREE AI (tetap tanpa key api-mazval)
   if (!answer) {
     try {
       const remaining = AI_BUDGET - (Date.now() - startedAt);
@@ -980,18 +995,14 @@ async function aiReply(raw) {
     }
   }
 
+  // galat konfigurasi/key yang permanen tidak boleh ditutupi template offline:
+  // pengguna berhak tahu bahwa jawaban AI memang belum bisa diberikan
+  if (!answer && permanent) return aiConfigError(permanent);
+
   // TERAKHIR: gunakan template offline
   if (!answer) {
     answer = offlineAiResponse(question);
     used = { label: 'AI Offline (template)' };
-  }
-
-  if (!answer && permanent) {
-    return [
-      '⚠️ AI belum bisa menjawab — konfigurasi bot bermasalah',
-      '',
-      String(permanent.message),
-    ].join('\n');
   }
 
   const header = used.label === active.label

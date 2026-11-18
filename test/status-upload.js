@@ -343,6 +343,27 @@ async function testProductionLikeServer() {
     const text = await req('POST', '/api/status', { token, body: { type: 'text', body: 'Status teks uji' } });
     ok(text.status === 201, `POST status teks -> ${text.status}`);
 
+    /* C. media status tidak boleh mati karena rujukan lain dilepas,
+       dan ikut dibuang (kuota dilepas) begitu statusnya sendiri hilang */
+    const saved = await req('POST', '/api/storage/files', {
+      token,
+      body: { url: chunked.url, name: 'status.mp4', mime: 'video/mp4', size: big.length, type: 'video' },
+    });
+    ok(saved.status === 201 && saved.json.item, `media status didaftarkan ke galeri -> ${saved.status}`);
+
+    const unsave = await req('DELETE', `/api/storage/files/${saved.json.item.id}`, { token });
+    ok(unsave.status === 200, `rujukan galeri dilepas -> ${unsave.status}`);
+
+    const stillAlive = await fetch(`${BASE}${chunked.url}`);
+    ok(stillAlive.status === 200,
+      `media status TETAP hidup saat rujukan lain dilepas (bukan 404) -> ${stillAlive.status}`);
+
+    const dropStatus = await req('DELETE', `/api/status/${postVideo.json.status.id}`, { token });
+    ok(dropStatus.status === 200, `status video dihapus -> ${dropStatus.status}`);
+    const nowGone = await fetch(`${BASE}${chunked.url}`);
+    ok(nowGone.status === 404,
+      `media ikut dibuang setelah status terakhir hilang (kuota tidak bocor) -> ${nowGone.status}`);
+
     // bersihkan status yang dibuat test ini
     for (const st of [postVideo.json && postVideo.json.status, postImage.json && postImage.json.status, text.json && text.json.status]) {
       if (st && st.id) await req('DELETE', `/api/status/${st.id}`, { token });
