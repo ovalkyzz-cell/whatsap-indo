@@ -2800,9 +2800,28 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint tidak ditemukan' }));
 
+// Galat infrastruktur (driver DB, jaringan) tidak boleh dikirim mentah ke klien:
+// pesannya memuat nama role/host database & SQLSTATE yang tidak perlu diketahui
+// publik. Detail lengkap tetap dicatat di log server untuk diagnosis.
+const INTERNAL_NET_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'EHOSTUNREACH',
+]);
+function isInternalError(err) {
+  if (!err) return false;
+  const code = String(err.code || '');
+  if (/^[0-9A-Z]{5}$/.test(code)) return true; // SQLSTATE Postgres (mis. 28P01)
+  if (code.startsWith('SQLITE_')) return true; // galat driver SQLite
+  if (INTERNAL_NET_CODES.has(code)) return true;
+  return Boolean(err.severity || err.routine); // jejak driver Postgres
+}
+
 app.use((err, _req, res, _next) => {
   const status = err.status || 500;
-  if (status >= 500) console.error(err);
+  const internal = status >= 500 && isInternalError(err);
+  if (status >= 500) console.error(internal ? `[internal] ${err.message}` : err);
+  if (internal) {
+    return res.status(500).json({ error: 'Terjadi kesalahan pada server. Coba lagi nanti.' });
+  }
   res.status(status).json({
     error: err.message || 'Terjadi kesalahan',
     ...(err.code ? { code: err.code } : {}),
