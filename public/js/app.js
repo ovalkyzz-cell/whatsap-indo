@@ -2290,7 +2290,7 @@ async function tryRequestPerm(kind) {
   } catch (err) {
     const info = mediaErrorInfo(err, kind === 'contacts' ? 'contacts' : kind);
     toast(info.msg);
-    if (info.perm) openPermHelp(kind);
+    if (info.perm) openPermHelp(kind, err);
     return 'denied';
   } finally {
     void refreshPermUI();
@@ -2327,7 +2327,9 @@ const PERM_HELP = {
     title: 'Izin mikrofon',
     why: 'Mikrofon dibutuhkan agar lawan bicara dapat mendengar Anda. Izin hanya diminta ketika Anda menekan tombol panggil.',
     steps: [
+      ['Aplikasi terpasang (Android) — langkah tercepat', 'Buka dulu situs ini di Chrome lewat tab biasa, tekan tombol panggil lalu pilih "Izinkan". Izin yang diberikan di Chrome langsung dipakai aplikasi di layar utama.'],
       ['Chrome / Edge (Android & desktop)', 'Klik ikon gembok 🔒 di bilah alamat → Izin → Mikrofon → Izinkan, lalu muat ulang halaman.'],
+      ['Dialog tidak pernah muncul (sudah pernah ditolak)', 'Chrome ⋮ → Setelan → Pengaturan situs → Mikrofon → situs ini → Izinkan (atau "Hapus izin" lalu coba lagi). Chrome menahan permintaan ±1 minggu setelah izin ditolak berulang.'],
       ['Safari (iPhone / iPad)', 'Pengaturan → Safari → Mikrofon → Izinkan; atau pilih "Izinkan" pada dialog saat panggilan dimulai.'],
       ['Firefox', 'Klik ikon gembok di bilah alamat → hapus pembatasan situs → muat ulang halaman.'],
     ],
@@ -2337,7 +2339,9 @@ const PERM_HELP = {
     title: 'Izin kamera',
     why: 'Kamera hanya dipakai untuk panggilan video. Panggilan suara tidak pernah meminta kamera.',
     steps: [
+      ['Aplikasi terpasang (Android) — langkah tercepat', 'Buka dulu situs ini di Chrome lewat tab biasa, tekan tombol panggil lalu pilih "Izinkan". Izin yang diberikan di Chrome langsung dipakai aplikasi di layar utama.'],
       ['Chrome / Edge (Android & desktop)', 'Klik ikon gembok 🔒 di bilah alamat → Izin → Kamera → Izinkan, lalu muat ulang halaman.'],
+      ['Dialog tidak pernah muncul (sudah pernah ditolak)', 'Chrome ⋮ → Setelan → Pengaturan situs → Kamera → situs ini → Izinkan (atau "Hapus izin" lalu coba lagi). Chrome menahan permintaan ±1 minggu setelah izin ditolak berulang.'],
       ['Safari (iPhone / iPad)', 'Pengaturan → Safari → Kamera → Izinkan; atau pilih "Izinkan" saat panggilan video dimulai.'],
       ['Firefox', 'Klik ikon gembok di bilah alamat → hapus pembatasan situs → muat ulang halaman.'],
     ],
@@ -2392,7 +2396,7 @@ const PERM_STATE_TEXT = {
   unsupported: 'tidak didukung',
 };
 
-async function openPermHelp(kind) {
+async function openPermHelp(kind, err) {
   const info = PERM_HELP[kind];
   if (!info || !$('permHelpModal')) return;
   PERM.active = kind;
@@ -2401,6 +2405,7 @@ async function openPermHelp(kind) {
   $('permHelpWhy').textContent = info.why;
   const steps = $('permHelpSteps');
   const installed = isInstalledPwa();
+  const errName = (err && err.name) ? String(err.name) : '';
   const render = (state) => {
     const list = info.steps.slice();
     if (installed) {
@@ -2409,7 +2414,8 @@ async function openPermHelp(kind) {
         'Karena ini aplikasi terpasang, buka Pengaturan perangkat → Aplikasi → RTC-Core → Izin & Notifikasi (setelan situs di bilah alamat tidak ada di sini). Bila perlu, hapus aplikasi lalu pasang ulang dari menu browser.']);
     }
     steps.innerHTML = list.map(([plat, text]) => `<li><strong>${esc(plat)}</strong> — ${esc(text)}</li>`).join('')
-      + `<li><strong>Status saat ini</strong> — ${PERM_STATE_TEXT[state] || state}.</li>`;
+      + `<li><strong>Status saat ini</strong> — ${PERM_STATE_TEXT[state] || state}.</li>`
+      + (errName ? `<li><strong>Pesan dari browser</strong> — ${esc(errName)}${state === 'denied' ? ' (izin tersimpan "ditolak", jadi permintaan langsung ditolak tanpa dialog)' : ''}.</li>` : '');
   };
   render('memeriksa...');
   $('permHelpModal').classList.remove('hidden');
@@ -6666,7 +6672,7 @@ async function createPeer(call) {
     const kind = await mediaFailKind(call, err);
     const info = mediaErrorInfo(err, kind);
     abortCall(call, info.msg);
-    if (info.perm) openPermHelp(kind);
+    if (info.perm) openPermHelp(kind, err);
     throw err;
   }
 
