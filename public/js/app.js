@@ -2415,6 +2415,7 @@ async function openPermHelp(kind, err) {
     }
     steps.innerHTML = list.map(([plat, text]) => `<li><strong>${esc(plat)}</strong> — ${esc(text)}</li>`).join('')
       + `<li><strong>Status saat ini</strong> — ${PERM_STATE_TEXT[state] || state}.</li>`
+      + `<li><strong>Asal aplikasi</strong> — ${esc(String(location.origin))} (${installed ? 'aplikasi terpasang' : 'browser'}). Izin melekat pada alamat ini — izin di alamat lain tidak ikut berlaku.</li>`
       + (errName ? `<li><strong>Pesan dari browser</strong> — ${esc(errName)}${state === 'denied' ? ' (izin tersimpan "ditolak", jadi permintaan langsung ditolak tanpa dialog)' : ''}.</li>` : '');
   };
   render('memeriksa...');
@@ -6642,14 +6643,10 @@ async function mediaFailKind(call, err) {
 }
 
 async function createPeer(call) {
-  // Ambil daftar ICE dulu (TURN bila server mengaturnya). Sudah di-cache sejak
-  // aplikasi menyambung, jadi biasanya kembali tanpa jaringan.
-  const iceCfg = await getIceConfig();
-  if (S.call !== call) throw new Error('Panggilan sudah berakhir');
-
-  const pc = new RTCPeerConnection(iceCfg);
-  call.pc = pc;
-
+  /* Izin media diminta PALING AWAL, tepat dalam rentetan klik pengguna.
+     Aplikasi terpasang (PWA Android) kadang menolak tanpa dialog bila
+     permintaan datang setelah await jaringan — jadi getUserMedia didahulukan,
+     baru daftar ICE diambil, lalu RTCPeerConnection dibuat. */
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     const err = new Error('Akses kamera/mikrofon butuh HTTPS atau localhost');
     abortCall(call, err.message);
@@ -6680,6 +6677,17 @@ async function createPeer(call) {
     stream.getTracks().forEach((t) => t.stop());
     throw new Error('Panggilan sudah berakhir');
   }
+
+  // Ambil daftar ICE (TURN bila server mengaturnya). Sudah di-cache sejak
+  // aplikasi menyambung, jadi biasanya kembali tanpa jaringan.
+  const iceCfg = await getIceConfig();
+  if (S.call !== call) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error('Panggilan sudah berakhir');
+  }
+
+  const pc = new RTCPeerConnection(iceCfg);
+  call.pc = pc;
 
   call.localStream = stream;
   stream.getTracks().forEach((t) => pc.addTrack(t, stream));
