@@ -1633,6 +1633,9 @@ function connectSocket() {
     // koneksi pertama diserahkan ke startApp(); koneksi ulang perlu disinkronkan
     if (S.everConnected) void resyncAfterReconnect();
     S.everConnected = true;
+    // hanguskan daftar ICE lama & isi ulang supaya TURN (bila diatur) siap
+    // sebelum panggilan pertama — tanpa menunda klik pengguna nanti
+    if (S.token) { iceCache.at = 0; void getIceConfig(); }
   });
 
   socket.on('disconnect', () => {
@@ -6325,15 +6328,58 @@ async function loadHomeBg() {
 }
 
 /* ================= WebRTC calls ================= */
-/* Beberapa STUN publik andal — menembus NAT umum tanpa menunggu TURN
-   yang bisa menunda gathering bila tidak dapat dijangkau. */
-const ICE = {
+/* Daftar STUN lokal — CADANGAN bila server belum mengatur TURN atau gagal
+   mengambil kredensialnya. Beberapa STUN publik andal menembus NAT umum
+   tanpa menunggu TURN yang bisa menunda gathering bila tidak terjangkau. */
+const ICE_LOCAL = {
   iceServers: [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
     { urls: ['stun:stun.cloudflare.com:3478', 'stun:global.stun.twilio.com:3478'] },
     { urls: 'stun:stun.nextcloud.com:3478' },
   ],
 };
+const ICE_TTL_MS = 30 * 60 * 1000;      // daftar segar dipakai ulang 30 menit
+const ICE_RETRY_MS = 5 * 60 * 1000;     // setelah gagal, coba lagi 5 menit kemudian
+const iceCache = { cfg: null, at: 0, ok: false, turn: false, inflight: null };
+
+/* Ambil konfigurasi ICE dari server. Kunci/rahasia TURN tinggal di server —
+   yang sampai ke sini hanya daftar siap pakai. Gagal mengambil TIDAK PERNAH
+   mematikan panggilan: selalu jatuh ke ICE_LOCAL (STUN), persis perilaku lama. */
+function getIceConfig(force) {
+  const now = Date.now();
+  if (!force && iceCache.inflight) return iceCache.inflight;
+  if (!force && iceCache.cfg && now - iceCache.at < (iceCache.ok ? ICE_TTL_MS : ICE_RETRY_MS)) {
+    return Promise.resolve(iceCache.cfg);
+  }
+  iceCache.inflight = (async () => {
+    try {
+      // fetch mentah, BUKAN api(): kegagalan di sini tak boleh mengeluarkan
+      // pengguna (api() akan logout saat 401) — cukup jatuh ke STUN lokal.
+      const res = await fetch('/api/calls/ice', {
+        headers: S.token ? { Authorization: 'Bearer ' + S.token } : {},
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+        iceCache.cfg = { iceServers: data.iceServers };
+        iceCache.ok = true;
+        iceCache.turn = data.turn === true;
+        iceCache.at = Date.now();
+        return iceCache.cfg;
+      }
+      throw new Error('respons kosong');
+    } catch {
+      iceCache.cfg = ICE_LOCAL;
+      iceCache.ok = false;
+      iceCache.turn = false;
+      iceCache.at = Date.now();
+      return ICE_LOCAL;
+    } finally {
+      iceCache.inflight = null;
+    }
+  })();
+  return iceCache.inflight;
+}
 const RING_TIMEOUT_MS = 60000;    // maksimal menunggu jawaban
 const CONNECT_TIMEOUT_MS = 25000; // maksimal menunggu koneksi WebRTC terbentuk
 const DROP_GRACE_MS = 8000;       // toleransi 'disconnected' sebelum menutup panggilan
@@ -6390,7 +6436,8 @@ function blankCall(fields) {
   return {
     startedAt: null, timer: null, ringTimer: null, connectTimer: null, dropTimer: null,
     pendingSignals: [], pc: null, localStream: null, peerReady: null, speaker: true,
-    iceRestarted: false,
+    iceRestarted: false, iceAttempts: 0, iceLastRecover: null,
+    qualityTimer: null, videoKbps: 0, goodStreak: 0,
     ...fields,
   };
 }
@@ -6589,7 +6636,12 @@ async function mediaFailKind(call, err) {
 }
 
 async function createPeer(call) {
-  const pc = new RTCPeerConnection(ICE);
+  // Ambil daftar ICE dulu (TURN bila server mengaturnya). Sudah di-cache sejak
+  // aplikasi menyambung, jadi biasanya kembali tanpa jaringan.
+  const iceCfg = await getIceConfig();
+  if (S.call !== call) throw new Error('Panggilan sudah berakhir');
+
+  const pc = new RTCPeerConnection(iceCfg);
   call.pc = pc;
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -6658,6 +6710,21 @@ async function createPeer(call) {
     }
   };
 
+  /* Pulihkan koneksi: coba bangkitkan ICE (maks 3 percobaan), kalau tetap
+     gagal baru tutup panggilan. Dipanggil dari dua lapisan status karena
+     sebagian browser hanya melaporkan 'failed' di salah satunya — penanda
+     waktu mencegah percobaan terbakar ganda. */
+  const recoverIce = () => {
+    if (S.call !== call) return;
+    if (tryIceRestart(call, pc)) {
+      setCallState('Menyambungkan ulang...');
+      armConnectTimeout(call);
+    } else {
+      setCallState('Koneksi gagal');
+      finishCall(call, 'Koneksi panggilan gagal');
+    }
+  };
+
   pc.onconnectionstatechange = () => {
     if (S.call !== call) return;
     const st = pc.connectionState;
@@ -6666,15 +6733,9 @@ async function createPeer(call) {
       clearTimeout(call.ringTimer);
       setCallState('Tersambung');
       if (!call.startedAt) startCallTimer();
+      startQualityMonitor(call, pc);
     } else if (st === 'failed') {
-      // bangkitkan ICE sekali; kalau tetap gagal baru tutup
-      if (!call.iceRestarted && tryIceRestart(call, pc)) {
-        setCallState('Menyambungkan ulang...');
-        armConnectTimeout(call);
-        return;
-      }
-      setCallState('Koneksi gagal');
-      finishCall(call, 'Koneksi panggilan gagal');
+      recoverIce();
     } else if (st === 'disconnected') {
       setCallState('Koneksi terputus...');
       clearTimeout(call.dropTimer);
@@ -6684,15 +6745,199 @@ async function createPeer(call) {
     }
   };
 
+  // sebagian browser (terutama lama) hanya menandai gagal di lapisan ICE
+  pc.oniceconnectionstatechange = () => {
+    if (S.call !== call) return;
+    if (pc.iceConnectionState === 'failed' && pc.connectionState !== 'failed') recoverIce();
+  };
+
   return pc;
 }
 
-/* Coba bangkitkan kembali ICE sekali saat koneksi gagal.
-   Hanya pemanggil yang memulai (hindari glare); penerima menjawab offer baru. */
+/* ---- kualitas & bitrate adaptif ---- */
+/* Tangga bitrate video (kbps). Titik awal 1.5 Mbps, lalu digeser oleh
+   hasil pembacaan getStats() — turun saat lemah, naik lagi saat membaik. */
+const VIDEO_LADDER_KBPS = [500, 1000, 1500, 2000];
+const VIDEO_START_STEP = 2;             // 1500 kbps
+const QUALITY_POLL_MS = 3000;
+const MAX_ICE_ATTEMPTS = 3;             // 2x bangkitkan ICE + 1x paksa relay
+
+/* Klasifikasi murni (diuji langsung): 'good' | 'mid' | 'weak' | 'unknown' */
+function classifyQuality(sample) {
+  const rtt = sample && sample.rttMs;
+  const loss = sample && sample.lossPct;
+  if (rtt == null && loss == null) return 'unknown';
+  const r = rtt == null ? 0 : rtt;
+  const l = loss == null ? 0 : loss;
+  if (l < 2 && r < 150) return 'good';
+  if (l < 8 && r < 400) return 'mid';
+  return 'weak';
+}
+
+/* Kumpulkan laporan dari objek apa pun yang mirip RTCStatsReport
+   (Map werift maupun RTCStatsReport browser — keduanya punya .values()). */
+function statsList(report) {
+  if (!report) return [];
+  if (Array.isArray(report)) return report;
+  if (typeof report.values === 'function') { try { return Array.from(report.values()); } catch { /* noop */ } }
+  if (typeof report[Symbol.iterator] === 'function') { try { return Array.from(report); } catch { /* noop */ } }
+  return [];
+}
+
+/* Ringkasan murni dari daftar stat — supaya bisa diuji tanpa RTCPeerConnection. */
+function summarizeCallStats(list) {
+  let rttMs = null;
+  let recvTotal = 0;
+  let recvLost = 0;
+  let sendTotal = 0;
+  let sendLost = 0;
+  let bytesSent = 0;
+  let prev = null;
+
+  for (const s of list || []) {
+    if (!s || typeof s !== 'object') continue;
+    if (s.type === 'candidate-pair' && s.state === 'succeeded' && typeof s.currentRoundTripTime === 'number') {
+      // pakai pasangan yang sedang dipakai (nominated bila ada)
+      if (rttMs == null || s.nominated) rttMs = s.currentRoundTripTime * 1000;
+    } else if (s.type === 'inbound-rtp' && s.kind !== 'audio') {
+      recvTotal += Number(s.packetsReceived) || 0;
+      recvLost += Number(s.packetsLost) || 0;
+    } else if (s.type === 'outbound-rtp' && s.kind !== 'audio') {
+      sendTotal += Number(s.packetsSent) || 0;
+      bytesSent += Number(s.bytesSent) || 0;
+      if (typeof s.targetBitrate === 'number' && s.targetBitrate > 0) prev = s.targetBitrate;
+    } else if (s.type === 'remote-inbound-rtp' && s.kind !== 'audio') {
+      // hilangnya paket KITA sebagaimana dilihat lawan (jalur kami -> lawan)
+      sendLost += Number(s.packetsLost) || 0;
+    }
+  }
+
+  const recvKnown = recvTotal + recvLost > 0;
+  const sendKnown = sendTotal + sendLost > 0;
+  const recvPct = recvKnown ? (recvLost / (recvTotal + recvLost)) * 100 : null;
+  const sendPct = sendKnown ? (sendLost / (sendTotal + sendLost)) * 100 : null;
+  let lossPct = null;
+  if (recvPct != null && sendPct != null) lossPct = Math.max(recvPct, sendPct);
+  else lossPct = recvPct != null ? recvPct : sendPct;
+
+  return {
+    rttMs: rttMs == null ? null : Math.round(rttMs),
+    lossPct: lossPct == null ? null : Math.round(lossPct * 10) / 10,
+    outKbps: prev == null ? null : Math.round(prev / 1000),
+    bytesSent,
+  };
+}
+
+function setCallQuality(level, detail) {
+  const el = document.getElementById('callQuality');
+  if (!el) return;
+  if (!level) {
+    el.className = 'call-quality hidden';
+    el.title = '';
+    return;
+  }
+  el.className = 'call-quality q-' + level;
+  el.title = detail || '';
+}
+
+/* Terapkan batas bitrate pada seluruh pengirim video. Browser yang tak
+   mendukung setParameters dibiarkan (tanpa error, tanpa efek samping). */
+async function applyVideoBitrate(pc, kbps) {
+  if (!pc || typeof pc.getSenders !== 'function') return;
+  for (const sender of pc.getSenders()) {
+    if (!sender || !sender.track || sender.track.kind !== 'video') continue;
+    if (typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function') continue;
+    let params;
+    try { params = sender.getParameters(); } catch { continue; }
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = kbps * 1000;
+    try { await sender.setParameters(params); } catch { /* browser menolak parameter */ }
+  }
+}
+
+function stopQualityMonitor(call) {
+  if (!call) return;
+  if (call.qualityTimer) clearInterval(call.qualityTimer);
+  call.qualityTimer = null;
+  setCallQuality(null);
+}
+
+function startQualityMonitor(call, pc) {
+  if (!call || !pc) return;
+  stopQualityMonitor(call);
+  call.videoKbps = VIDEO_LADDER_KBPS[VIDEO_START_STEP];
+  call.goodStreak = 0;
+  if (call.kind === 'video') void applyVideoBitrate(pc, call.videoKbps);
+  call.qualityTimer = setInterval(() => { void sampleQuality(call, pc); }, QUALITY_POLL_MS);
+  void sampleQuality(call, pc);
+}
+
+async function sampleQuality(call, pc) {
+  if (S.call !== call || !pc) { stopQualityMonitor(call); return; }
+  let report;
+  try { report = await pc.getStats(); } catch { return; }
+  if (S.call !== call) return;
+
+  const sum = summarizeCallStats(statsList(report));
+  const level = classifyQuality(sum);
+  const bits = [];
+  if (sum.rttMs != null) bits.push('RTT ' + sum.rttMs + ' ms');
+  if (sum.lossPct != null) bits.push('kehilangan ' + sum.lossPct + '%');
+  if (sum.outKbps != null) bits.push('±' + sum.outKbps + ' kbps');
+  if (call.kind === 'video' && call.videoKbps) bits.push('batas ' + call.videoKbps + ' kbps');
+  setCallQuality(level === 'unknown' ? 'mid' : level, bits.join(' · '));
+
+  if (call.kind !== 'video' || level === 'unknown') return;
+
+  // hysteresis: dua sampel berturut-turut sebelum menggeser tangga
+  if (level === 'weak') {
+    call.goodStreak = 0;
+    const idx = VIDEO_LADDER_KBPS.indexOf(call.videoKbps);
+    const next = VIDEO_LADDER_KBPS[Math.max(0, (idx < 0 ? VIDEO_START_STEP : idx) - 1)];
+    if (next !== call.videoKbps) {
+      call.videoKbps = next;
+      await applyVideoBitrate(pc, next);
+    }
+  } else if (level === 'good') {
+    call.goodStreak = (call.goodStreak || 0) + 1;
+    if (call.goodStreak >= 2) {
+      call.goodStreak = 0;
+      const idx = VIDEO_LADDER_KBPS.indexOf(call.videoKbps);
+      const next = VIDEO_LADDER_KBPS[Math.min(VIDEO_LADDER_KBPS.length - 1, (idx < 0 ? VIDEO_START_STEP : idx) + 1)];
+      if (next !== call.videoKbps) {
+        call.videoKbps = next;
+        await applyVideoBitrate(pc, next);
+      }
+    }
+  } else {
+    call.goodStreak = 0;
+  }
+}
+
+/* ---- pemulihan koneksi ---- */
+/* Urutan percobaan saat koneksi gagal/disconnected:
+     1-2 : bangkitkan ICE (restartIce + offer iceRestart) — sisi pemanggil saja
+     3   : paksa jalur relay (TURN) bila server menyediakannya
+   Hanya pemanggil yang memulai offer (hindari glare); penerima menjawab
+   offer baru lewat handleSignal yang sama. */
 function tryIceRestart(call, pc) {
-  if (!call || !pc || call.iceRestarted) return false;
-  if (call.incoming) return false;
+  if (!call || !pc || call.incoming) return false; // penerima tak memulai offer
+  // kegagalan yang dilaporkan dua lapisan dalam 3 detik = satu percobaan saja
+  if (call.iceLastRecover && Date.now() - call.iceLastRecover < 3000) return true;
+  if (call.iceAttempts >= MAX_ICE_ATTEMPTS) return false;
+  call.iceAttempts += 1;
   call.iceRestarted = true;
+  call.iceLastRecover = Date.now();
+
+  const forceRelay = call.iceAttempts >= MAX_ICE_ATTEMPTS && iceCache.turn === true;
+  if (forceRelay) {
+    try {
+      if (typeof pc.setConfiguration === 'function') {
+        pc.setConfiguration({ iceTransportPolicy: 'relay' });
+      }
+    } catch { /* browser tak mengizinkan perubahan kebijakan — tetap coba restart */ }
+  }
+
   try { if (typeof pc.restartIce === 'function') pc.restartIce(); } catch { /* noop */ }
   void (async () => {
     try {
@@ -6931,6 +7176,7 @@ function closeCall() {
   const call = S.call;
   stopRingTone(); // dering/getar berhenti apa pun penyebab penutupan
   if (!call) return;
+  stopQualityMonitor(call);
   clearInterval(call.timer);
   clearTimeout(call.ringTimer);
   clearTimeout(call.connectTimer);

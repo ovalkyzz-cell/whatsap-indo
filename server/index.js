@@ -13,6 +13,7 @@ const helpers = require('./helpers');
 const vault = require('./vault');
 const presence = require('./presence');
 const calls = require('./calls');
+const ice = require('./ice');
 const bus = require('./bus');
 const settings = require('./settings');
 const antispam = require('./antispam');
@@ -1106,6 +1107,19 @@ app.get('/api/calls', auth.requireAuth, ah(async (req, res) => {
     });
   }
   res.json({ calls: out });
+}));
+
+// Konfigurasi ICE untuk panggilan. Kunci/rahasia TURN tinggal di server —
+// klien hanya menerima daftar siap pakai. Bila TURN belum diatur, server
+// mengembalikan STUN saja (perilaku lama) sehingga panggilan tetap jalan.
+app.get('/api/calls/ice', auth.requireAuth, ah(async (req, res) => {
+  const cfg = await ice.buildIceConfig();
+  res.json({
+    iceServers: cfg.iceServers,
+    turn: cfg.turn,
+    // cache-buster ringan supaya klien tahu kapan perlu memuat ulang
+    ts: Date.now(),
+  });
 }));
 
 // ---------- grup ----------

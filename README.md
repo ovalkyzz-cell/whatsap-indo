@@ -114,6 +114,10 @@ Variabel lingkungan opsional:
 - `CALL_ACTIVE_MAX_MS` — batas panggilan aktif sebelum dipaksa ditutup sapu bersih
   (default `21600000` = 6 jam)
 - `CALL_HISTORY_DAYS` — retensi riwayat panggilan di tabel `calls` (default `30`)
+- `CALL_TURN`, `TURN_URL`/`TURN_USER`/`TURN_PASS`, `TURN_ICE_JSON`, `METERED_API_KEY`,
+  `METERED_APP`, `METERED_CRED_URL`, `METERED_TTL_SEC`, `METERED_RETRY_SEC` — konfigurasi
+  **TURN** panggilan (default: tanpa TURN, hanya STUN); rincian di
+  [TURN, kualitas & adaptasi bitrate](#turn-kualitas--adaptasi-bitrate)
 
 ### Instal sebagai aplikasi (desktop & Android)
 
@@ -453,8 +457,10 @@ plaintext, dan penanda statis halaman.
 
 ### Panggilan (WebRTC)
 
-Panggilan suara & video 1-to-1 berjalan langsung antar browser (**WebRTC P2P**, hanya STUN
-Google/Twilio — tanpa TURN). Pintu masuknya: **tombol telepon di header chat** (suara/video)
+Panggilan suara & video 1-to-1 berjalan langsung antar browser (**WebRTC P2P**). Tanpa
+konfigurasi apa pun jalurnya **STUN saja** (Google/Cloudflare/Twilio/Nextcloud); begitu
+diberi TURN lewat env (lihat *"TURN, kualitas & adaptasi bitrate"* di bawah) koneksi yang
+tadinya gagal di jaringan ketat ikut tersambung. Pintu masuknya: **tombol telepon di header chat** (suara/video)
 dan **tombol *Suara* / *Video* di panel Info Kontak** — disembunyikan otomatis untuk bot & grup.
 
 Sinyal berjalan lewat Socket.IO (`call:*`) di `server/index.js`, dengan catatan panggilan
@@ -509,6 +515,54 @@ Perilaku pelindung:
 
 Test `e2e.js` bagian `[11]` memastikan modul, handler, tabel, tombol, modal, gaya CSS, dan
 alur sinyal `call:invite → call:incoming → call:hangup → call:ended` semuanya ada & bekerja.
+
+#### TURN, kualitas & adaptasi bitrate
+
+Sinyal panggilan tetap lewat Socket.IO; **konfigurasi ICE** diambil klien dari
+`GET /api/calls/ice` (dibangun `server/ice.js`) dan di-cache 30 menit di sisi klien
+(refresh 5 menit bila gagal). Prioritas:
+
+1. `CALL_TURN=off` → **tanpa TURN**, hanya STUN.
+2. `TURN_ICE_JSON` → array JSON mentah, dipakai apa adanya.
+3. `TURN_URL` (+ `TURN_USER` / `TURN_PASS`) → **satu entri per URL** (bukan gabungan),
+   pemisah koma/spasi; kredensial dipakai bersama semua URL.
+4. `METERED_API_KEY` (+ `METERED_APP`) → **REST Metered**, hasilnya di-cache
+   (`METERED_TTL_SEC`, default 600 detik) dan diulang otomatis tiap `METERED_RETRY_SEC`
+   (default 30 detik); endpoint-nya
+   `https://<METERED_APP>.metered.live/api/v1/turn/credentials?apiKey=<KEY>`.
+5. tidak ada → **fallback selalu STUN** (`source: 'stun-fallback'`), request tidak pernah gagal.
+
+```bash
+# contoh statis
+TURN_URL=turn:turn.example.com:3478 TURN_USER=app TURN_PASS=secret
+
+# contoh dinamis (Metered) — API key ada di dashboard: TURN Server → Show API Key
+METERED_API_KEY=xxxxxxxx METERED_APP=nama-aplikasi
+```
+
+**Catatan Metered:** kunci bertanda `pk_live_...` adalah *Realtime Messaging*
+publishable key — **bukan** kunci TURN dan tidak akan diterima di endpoint di atas.
+Yang dipakai adalah REST API key dari menu **TURN Server**. Kunci yang salah/tidak
+valid menghasilkan `401`, dicatat sebagai `source: 'stun-fallback'`, dan panggilan
+tetap jalan (hanya lewat STUN).
+
+**Kualitas & adaptasi bitrate.** Setiap 3 detik klien membaca `pc.getStats()` →
+`summarizeCallStats()` → `classifyQuality()` (`good` / `mid` / `weak` / `unknown`) →
+indikator tiga batang di header panggilan (`#callQuality`).
+
+- video memakai **tangga bitrate** `500 → 1000 → 1500 → 2000` kbps, mulai dari langkah
+  kedua (1500) dan menaikkan/menurunkan lewat `RTCRtpSender.setParameters()`;
+- percobaan **ICE restart** saat `connectionState`/`iceConnectionState` macet, maksimal
+  **3 kali** dengan jeda anti-tumpuk 3 detik; pada percobaan **ke-3**, kalau TURN
+  tersedia (`turn: true`), koneksi dipaksa `iceTransportPolicy: 'relay'`.
+  Penerima panggilan (`call.incoming`) tidak pernah memulai restart agar tidak terjadi
+  tawar-menawar (glare) — pemanggil yang memimpin.
+
+Env terkait: `METERED_TTL_SEC`, `METERED_RETRY_SEC`, `METERED_CRED_URL` (override
+endpoint), `TURN_URL`/`TURN_USER`/`TURN_PASS`, `TURN_ICE_JSON`, `CALL_TURN`.
+
+Test terkait: `test/iceconfig.js` (unit `server/ice.js` + fungsi klien di jsdom) dan
+`test/callmedia.js` bagian V1/V2 (pemantauan kualitas, tangga bitrate, relay).
 
 ### Keamanan masuk, persetujuan & panel admin
 

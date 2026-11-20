@@ -345,6 +345,32 @@ async function main() {
   ok(bb.run('RING.timer === null') === true, 'B: dering berhenti saat terhubung');
   ok(bb.run('__els.btnToggleCam.disabled') === true, 'B: tombol kamera nonaktif pada panggilan suara');
 
+  // lapisan kualitas: pemantau getStats berjalan dan indikator benar-benar terisi
+  await waitUntil(ba.run, '__els.callQuality.className.indexOf("call-quality") === 0', 8000);
+  ok(ba.run('__els.callQuality.className.indexOf("call-quality") === 0') === true,
+    'A: indikator kualitas terisi setelah pembacaan getStats pertama', ba.run('__els.callQuality.className'));
+  ok(ba.run('S.call.qualityTimer !== null') === true, 'A: pemantauan kualitas berjalan (interval 3 detik)');
+  ok(ba.run('S.call.qualityTimer !== null') === true && ba.run('typeof S.call.videoKbps === "number"'),
+    'A: tangga bitrate disiapkan meski panggilan suara', ba.run('S.call.videoKbps'));
+  const sumA = await ba.run(`(async () => {
+    const rep = await S.call.pc.getStats();
+    const list = statsList(rep);
+    const s = summarizeCallStats(list);
+    return { n: list.length, rtt: s.rttMs, loss: s.lossPct, level: classifyQuality(s) };
+  })()`);
+  ok(!!sumA && sumA.n > 0, `A: getStats werift mengembalikan laporan (${sumA ? sumA.n : 0} entri)`);
+  ok(!!sumA && ['good', 'mid', 'weak', 'unknown'].includes(sumA.level),
+    `A: klasifikasi kualitas terbentuk ('${sumA && sumA.level}', rtt=${sumA && sumA.rtt}, loss=${sumA && sumA.loss})`);
+  // percobaan ICE ke-3 memaksa relay — buktikan werift menerima kebijakan itu
+  const relayOk = ba.run(`(() => {
+    const p = new RTCPeerConnection({ iceServers: [] });
+    p.setConfiguration({ iceTransportPolicy: 'relay' });
+    const yes = p.config && p.config.iceTransportPolicy === 'relay';
+    try { p.close(); } catch (e) { /* noop */ }
+    return yes;
+  })()`);
+  ok(relayOk === true, 'werift menerima iceTransportPolicy:relay (percobaan ICE ke-3)');
+
   // mikrofon A dimatikan -> trek benar-benar nonaktif
   await ba.__els.btnToggleMic.click();
   ok(ba.run('S.call.localStream.getAudioTracks()[0].enabled') === false, 'A: klik mikrofon -> trek audio nonaktif');
@@ -391,6 +417,21 @@ async function main() {
   ok(bb.run('S.call.localStream.getVideoTracks()[0].enabled') === false, 'B: klik kamera -> trek video nonaktif');
   await bb.__els.btnToggleCam.click();
   ok(bb.run('S.call.localStream.getVideoTracks()[0].enabled') === true, 'B: kamera hidup kembali');
+
+  // bitrate adaptif: tangga terpasang & setParameters werift benar-benar menerima
+  await waitUntil(bb.run, 'typeof S.call.videoKbps === "number" && S.call.videoKbps > 0', 8000);
+  const ladder = [500, 1000, 1500, 2000];
+  ok(ladder.includes(bb.run('S.call.videoKbps')),
+    `B: tangga bitrate video aktif (${bb.run('S.call.videoKbps')} kbps)`);
+  const bit = await bb.run(`(async () => {
+    await applyVideoBitrate(S.call.pc, 700);
+    const s = S.call.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
+    if (!s || typeof s.getParameters !== 'function') return 'no-sender';
+    const p = s.getParameters();
+    return p && p.encodings && p.encodings[0] ? p.encodings[0].maxBitrate : 'no-enc';
+  })()`);
+  ok(bit === 700000, `setParameters werift menerima maxBitrate (${bit})`);
+
   await bb.__els.btnHangup.click();
   await waitUntil(ba.run, 'S.call === null', 8000);
   ok(ba.run('S.call === null') && bb.run('S.call === null'), 'panggilan video ditutup bersih di kedua sisi');

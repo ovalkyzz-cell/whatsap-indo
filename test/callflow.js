@@ -290,6 +290,22 @@ async function stateOf(token, callId) {
 
   sockA.disconnect();
   sockB.disconnect();
+
+  /* ---------- [8] konfigurasi ICE (SEBELUM logout: sesi masih sah) ---------- */
+  console.log('\n[8] GET /api/calls/ice menyajikan daftar ICE siap pakai');
+  const iceR = await api('/api/calls/ice', { token: userA.token });
+  ok(iceR.status === 200, `endpoint terautentikasi (HTTP ${iceR.status})`);
+  const servers = (iceR.data && iceR.data.iceServers) || [];
+  ok(Array.isArray(servers) && servers.length > 0, `iceServers terisi (${servers.length} entri)`);
+  ok(servers.every((s) => s && s.urls), 'setiap entri punya urls (bisa string/array)');
+  ok(typeof iceR.data.turn === 'boolean', `bendera turn dikirim (${iceR.data.turn})`);
+  ok(typeof iceR.data.ts === 'number' && iceR.data.ts > 0, 'cap waktu ikut dikirim untuk cache-buster');
+  // tanpa kunci TURN di server -> STUN saja, tetap lengkap
+  ok(iceR.data.turn === false || servers.some((s) => String(s.urls).includes('turn:')),
+    'tanpa TURN: daftar STUN tetap; dengan TURN: entri turn ikut ada');
+  const iceNoAuth = await api('/api/calls/ice');
+  ok(iceNoAuth.status === 401, `tanpa token ditolak (HTTP ${iceNoAuth.status})`);
+
   try { await api('/api/auth/logout', { method: 'POST', token: userA.token }); } catch { /* sesi ditutup */ }
   try { await api('/api/auth/logout', { method: 'POST', token: userB.token }); } catch { /* sesi ditutup */ }
 
